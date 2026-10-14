@@ -56,6 +56,19 @@ npm test                        # the whole gate, including the byte-identity pr
 `tools/recover.mjs` is **read-only** with respect to the installed bundles. It never
 modifies, moves or copies them.
 
+## Where the fleet stands today
+
+**[RECOVERY-STATUS.md](RECOVERY-STATUS.md)** is the coverage table, and it is **generated**
+by `tools/recovery-status.mjs` from the differ's own output — so its numbers are measured,
+and `test/status.test.mjs` fails if it ever stops matching a fresh run. At this revision:
+**112 of 144 named symbols recovered, 55 of them instruction-identical, 7,452 of the
+fleet's 19,161 authored instructions (38.9%)**, across 13,607 lines of recovered source.
+Six effects are at 100% instruction coverage and two have no recovered source at all.
+
+```bash
+npm run status                  # regenerate RECOVERY-STATUS.md
+```
+
 ## What is *not* recovered
 
 Be clear-eyed about this:

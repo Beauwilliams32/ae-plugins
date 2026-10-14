@@ -7,6 +7,7 @@
   "scripts": {
     "recover": "node tools/recover.mjs && node tools/render-specs.mjs && node tools/render-pipl.mjs && node tools/decode-flags.mjs",
     "check": "for f in tools/*.mjs test/*.test.mjs; do node --check \"$f\" || exit 1; done",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "status": "node tools/recovery-status.mjs"
   }
 }
