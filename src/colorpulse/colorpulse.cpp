@@ -354,4 +354,143 @@ RGB brightestRegionColor(const RGB* pixels, int width, int height, int step) {
   return best;
 }
 
+// ---------------------------------------------------------------------------
+// dominantColor(const RGB*, size_t, int)
+//
+// __ZN10colorpulse13dominantColorEPKNS_3RGBEmi, 248 instructions, recovered in full.
+//
+//     cbz  x0, <ret> / cbz x1, <ret>              ; pixels == nullptr, count == 0
+//     subs w22, w2, #0x1 / b.lt <ret>             ; levels < 1
+//     umull x9, w2, w2 / mul x8, x9, x8           ; bins = levels^3
+//     lsr  x9, x8, #0x3e / cbnz <throw>           ; the vector's length check
+//     lsl  x20, x8, #0x2 / bl __Znwm / bl _bzero  ; std::vector<int>(bins), zeroed
+//
+// The quantiser appears TWICE in the body and once more on the count == 1 fast path:
+//
+//     fcmp  s3, s1 / fcsel s5, s1, s3, gt         ; min(v, 1)
+//     fcmp  s3, #0.0 / fcsel s3, s2, s5, mi       ; (v < 0) ? 0 : that   -> clampf
+//     fmul  s3, s3, s0                            ; * (float)levels
+//     fcvtzs w11, s3                              ; TRUNCATE toward zero
+//     cmp   w22, w11 / csel w11, w22, w11, lt     ; min(levels-1, that)
+//
+// then the index is built with two multiply-adds:
+//
+//     madd w11, w11, w2, w12                      ; ri*levels + gi
+//     madd w11, w11, w2, w13                      ; *levels + bi
+//
+// i.e. `ri*levels^2 + gi*levels + bi`, BLUE FASTEST.
+//
+// The argmax is `w11 = -1` with a strictly-greater comparison, so the LOWEST bin index
+// wins a tie:
+//
+//     mov w11, #-0x1
+//     ldr w12, [x0, x9, lsl #2] / cmp w12, w11 / csel w8, w9, w8, gt / csel w11, w12, w11, gt
+//
+// and the tail is the reciprocal form again, over a double accumulation that the compiler
+// packs as two doubles in one vector register:
+//
+//     ucvtf d0, x9 / fmov d3, #1.0 / fdiv d3, d3, d0
+//     fmul.2d v2, v2, v3[0]      ; r and g together
+//     fcvtn   v0.2s, v2.2d       ; narrowed in ONE instruction
+//     fmul    d1, d1, d3 / fcvt s2, d1   ; b on its own
+//
+// `cbz x9, <zero>` guards a `matched == 0` second pass, and the free happens on BOTH that
+// path and the normal one, so the histogram is never leaked.
+// ---------------------------------------------------------------------------
+RGB dominantColor(const RGB* pixels, size_t count, int levels) {
+  RGB out{0.0f, 0.0f, 0.0f};
+  if (pixels == nullptr) return out;
+  if (count == 0) return out;
+  if (levels < 1) return out;
+
+  const size_t bins = static_cast<size_t>(levels) * static_cast<size_t>(levels)
+                      * static_cast<size_t>(levels);
+  std::vector<int> hist(bins);
+  const float lv = static_cast<float>(levels);
+
+  // The quantiser, shared by both passes. `clampf` is the recovered helper, so the clamp
+  // shape matches the bundle's two `fcsel`s rather than a hand-rolled min/max.
+  const auto binIndex = [&](const RGB& p) {
+    const int ri = std::min(levels - 1,
+        static_cast<int>(clampf(p.r, 0.0f, 1.0f) * lv));
+    const int gi = std::min(levels - 1,
+        static_cast<int>(clampf(p.g, 0.0f, 1.0f) * lv));
+    const int bi = std::min(levels - 1,
+        static_cast<int>(clampf(p.b, 0.0f, 1.0f) * lv));
+    return ri * levels * levels + gi * levels + bi;
+  };
+
+  for (size_t i = 0; i < count; ++i) {
+    ++hist[static_cast<size_t>(binIndex(pixels[i]))];
+  }
+
+  // argmax: strictly greater from -1, so the FIRST of any tie wins.
+  int best = 0;
+  int bestCount = -1;
+  for (size_t i = 0; i < bins; ++i) {
+    if (hist[i] > bestCount) {
+      bestCount = hist[i];
+      best = static_cast<int>(i);
+    }
+  }
+
+  // Second pass: the MEAN of the pixels that landed in the winning bin.
+  double sr = 0.0;
+  double sg = 0.0;
+  double sb = 0.0;
+  size_t matched = 0;
+  for (size_t i = 0; i < count; ++i) {
+    const RGB& p = pixels[i];
+    if (binIndex(p) == best) {
+      sr += static_cast<double>(p.r);
+      sg += static_cast<double>(p.g);
+      sb += static_cast<double>(p.b);
+      ++matched;
+    }
+  }
+  if (matched == 0) return out;
+
+  const double inv = 1.0 / static_cast<double>(matched);
+  out.r = static_cast<float>(sr * inv);
+  out.g = static_cast<float>(sg * inv);
+  out.b = static_cast<float>(sb * inv);
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// sampleColor(const RGB*, int, int, Mode)
+//
+// __ZN10colorpulse11sampleColorEPKNS_3RGBEiiNS_4ModeE, 215 instructions, recovered in full.
+//
+//     mov  x8, x1                      ; stash width, because x1 becomes the count
+//     cmp  w2, #0x0
+//     ccmp w1, #0x0, #0x4, gt          ; (height > 0 && width > 0), SIGNED compares
+//     umull x9, w2, w1                 ; count = height * width
+//     csel x1, x9, xzr, gt             ; count, or 0 when either is non-positive
+//     cmp  w3, #0x3 / b.eq 0x1368
+//     cmp  w3, #0x2 / b.ne 0x1374
+//     mov  w2, #0x8 / b dominantColor                 ; TAIL CALL, and 8 is the level count
+//     0x1368: mov x1, x8 / mov w3, #0x4
+//             b brightestRegionColor                  ; TAIL CALL, and 4 is the step
+//     0x1374: <the INLINED averageColor body, 201 instructions>
+//
+// The two `b`s are TAIL CALLS — the callee's result is already in s0/s1/s2 and the frame
+// has not been allocated — so `averageColor` is the only one of the three this function
+// carries inline. That is what makes this 215 instructions rather than 600: two of the
+// three paths cost a branch.
+//
+// The `csinc`/`ccmp` pair makes the count ZERO when either dimension is non-positive,
+// rather than computing a negative product and casting it to a huge size_t. Signed
+// comparisons (`gt`), so a negative dimension takes the zero arm.
+// ---------------------------------------------------------------------------
+RGB sampleColor(const RGB* pixels, int width, int height, Mode mode) {
+  const size_t count = (width > 0 && height > 0)
+      ? static_cast<size_t>(width) * static_cast<size_t>(height)
+      : 0;
+
+  if (mode == Mode::BrightestRegion) return brightestRegionColor(pixels, width, height, 4);
+  if (mode == Mode::Dominant) return dominantColor(pixels, count, 8);
+  return averageColor(pixels, count);
+}
+
 }  // namespace colorpulse

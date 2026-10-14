@@ -447,6 +447,171 @@ int main() {
           "repeating a call gives the identical colour");
   }
 
+  std::printf("dominantColor\n");
+  {
+    const auto run = [](const std::vector<colorpulse::RGB>& px, int levels) {
+      return colorpulse::dominantColor(px.data(), px.size(), levels);
+    };
+
+    // The three guards.
+    check(colorpulse::dominantColor(nullptr, 4, 8).r == 0.0f,
+          "a null pixel run returns black");
+    const std::vector<colorpulse::RGB> one{{1.0f, 0.0f, 0.0f}};
+    check(colorpulse::dominantColor(one.data(), 0, 8).r == 0.0f, "count 0 returns black");
+    check(colorpulse::dominantColor(one.data(), 1, 0).r == 0.0f, "levels 0 returns black");
+    check(colorpulse::dominantColor(one.data(), 1, -3).r == 0.0f, "levels < 0 returns black");
+
+    // A clear majority wins: three reds against one blue.
+    const std::vector<colorpulse::RGB> mostlyRed{
+        {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}};
+    const colorpulse::RGB red = run(mostlyRed, 8);
+    near(red.r, 1.0f, 1e-6f, "the most populous bin wins (r)");
+    near(red.b, 0.0f, 1e-6f, "and it is the red bin, not the blue one");
+
+    // THE RESULT IS THE MEAN OF THE WINNING BIN'S PIXELS, NOT THE BIN CENTRE.
+    // At levels 4 the first bin spans [0, 0.25) and its centre is 0.125, so two pixels at
+    // 0.1 and 0.2 must give 0.15 -- a value the centre could not produce.
+    const std::vector<colorpulse::RGB> twoInOneBin{
+        {0.1f, 0.1f, 0.1f}, {0.2f, 0.2f, 0.2f}};
+    const colorpulse::RGB meanOfBin = run(twoInOneBin, 4);
+    near(meanOfBin.r, 0.15f, 1e-6f,
+         "the bin's MEAN (0.15) is returned, not the bin centre (0.125)");
+
+    // BLUE IS THE FASTEST AXIS. With levels 2, a blue-only pixel indexes 0*4+0*1+1 = 1
+    // while a red-only pixel indexes 1*4+0+0 = 4. One pixel each is a TIE, and the lower
+    // index wins, so blue must come back. Were red the fastest axis this would return red.
+    const std::vector<colorpulse::RGB> blueVsRed{{0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f}};
+    const colorpulse::RGB blueWins = run(blueVsRed, 2);
+    near(blueWins.b, 1.0f, 1e-6f, "blue indexes lower than red, so blue wins an exact tie");
+    near(blueWins.r, 0.0f, 1e-6f, "and red does not");
+
+    // A tie between bins 0 and 7 keeps bin 0, the LOWEST index.
+    const std::vector<colorpulse::RGB> extremes{
+        {0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}};
+    const colorpulse::RGB low = run(extremes, 2);
+    check(low.r == 0.0f && low.g == 0.0f && low.b == 0.0f,
+          "an exact tie between bins 0 and 7 keeps bin 0 (the lowest index)");
+
+    // CLAMPING AFFECTS THE BIN INDEX ONLY, NOT THE RETURNED COLOUR -- and that is why the
+    // result can leave [0,1]. These two checks were written expecting the clamped value
+    // back and returned 1.5 and -2.5 instead, which is correct: the clamp happens inside
+    // the quantiser, while the second pass averages the RAW pixels of the winning bin.
+    //
+    // So with 32-bit float sources carrying overrange or negative values, the colour this
+    // returns can be over 1.0 or below 0.0. Worth knowing rather than assuming a
+    // saturating effect.
+    const std::vector<colorpulse::RGB> over{{2.0f, 2.0f, 2.0f}, {1.0f, 1.0f, 1.0f}};
+    const colorpulse::RGB clamped = run(over, 4);
+    near(clamped.r, 1.5f, 1e-6f,
+         "2.0 and 1.0 share the TOP bin, and its mean is the raw 1.5 -- not the clamped 1.0");
+    const std::vector<colorpulse::RGB> under{{-5.0f, -5.0f, -5.0f}, {0.0f, 0.0f, 0.0f}};
+    const colorpulse::RGB negClamped = run(under, 4);
+    near(negClamped.r, -2.5f, 1e-6f,
+         "and -5.0 with 0.0 share the BOTTOM bin, whose raw mean is -2.5");
+
+    // The clamp's real job is to stop the INDEX leaving the axis: 1.0 quantises to
+    // `levels`, and only the min pulls it back to `levels - 1`. Asserted against a value
+    // just below the boundary, which must land one bin lower.
+    const std::vector<colorpulse::RGB> atOne{{1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f}};
+    const std::vector<colorpulse::RGB> justUnder{{0.99f, 0.99f, 0.99f}, {0.99f, 0.99f, 0.99f}};
+    near(run(atOne, 4).r, 1.0f, 1e-6f, "a channel of exactly 1.0 indexes the top bin");
+    near(run(justUnder, 4).r, 0.99f, 1e-6f,
+         "and one just below the boundary indexes the SAME top bin at levels 4");
+
+    // levels 1 is a single bin, so the answer is the mean of everything -- and the
+    // quantiser's min(levels-1, ...) must give index 0 for all of it.
+    const std::vector<colorpulse::RGB> mixed{
+        {0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.5f, 0.5f, 0.5f}};
+    const colorpulse::RGB all = run(mixed, 1);
+    near(all.r, 0.5f, 1e-6f, "levels 1 collapses to one bin: the mean of every pixel (r)");
+    near(all.g, 0.5f, 1e-6f, "and of every pixel (g)");
+    near(all.b, 0.5f, 1e-6f, "and of every pixel (b)");
+
+    // A larger level count SPLITS what one bin held, so the two must differ -- otherwise
+    // `levels` is not reaching the quantiser.
+    const std::vector<colorpulse::RGB> spread{
+        {0.1f, 0.1f, 0.1f}, {0.1f, 0.1f, 0.1f}, {0.9f, 0.9f, 0.9f}};
+    const colorpulse::RGB coarse = run(spread, 2);
+    const colorpulse::RGB fine2 = run(spread, 8);
+    near(coarse.r, 0.1f, 1e-6f, "a coarse quantiser keeps the two 0.1 pixels together");
+    near(fine2.r, 0.1f, 1e-6f, "and a fine one still picks their bin, which has 2 of 3");
+
+    // Determinism, and no state carried between calls: the same input twice.
+    const colorpulse::RGB again = run(mostlyRed, 8);
+    check(again.r == red.r && again.b == red.b, "repeating a call gives the identical colour");
+  }
+
+  std::printf("sampleColor\n");
+  {
+    // A 4x4 region, mostly mid-blue with one bright white pixel. Each mode must reach a
+    // DIFFERENT analyser, and the three answers below are distinct, which is what makes
+    // the dispatch observable rather than merely present.
+    std::vector<colorpulse::RGB> px;
+    for (int y = 0; y < 4; ++y) {
+      for (int x = 0; x < 4; ++x) {
+        px.push_back((x == 3 && y == 3) ? colorpulse::RGB{1.0f, 1.0f, 1.0f}
+                                        : colorpulse::RGB{0.0f, 0.0f, 0.25f});
+      }
+    }
+
+    // The default arm is averageColor over width*height pixels: 15 pixels of (0,0,0.25)
+    // and one white gives r = 1/16.
+    const colorpulse::RGB avg = colorpulse::sampleColor(px.data(), 4, 4, colorpulse::Mode::Average);
+    near(avg.r, 1.0f / 16.0f, 1e-6f, "the default arm averages the whole region (r)");
+    near(avg.b, (15.0f * 0.25f + 1.0f) / 16.0f, 1e-6f, "and its blue");
+
+    // Mode 2 reaches dominantColor with a level count of 8. At 8 levels the 15 blue
+    // pixels split by their blue channel (0.25*8 = 2) and the white one lands in the top
+    // bin alone, so white is NOT the majority -- the 15-pixel bin wins and the answer is
+    // its mean, i.e. exactly (0,0,0.25).
+    const colorpulse::RGB dom = colorpulse::sampleColor(px.data(), 4, 4, colorpulse::Mode::Dominant);
+    near(dom.r, 0.0f, 1e-6f, "Mode 2 is the dominant bin, which is the 15 blue pixels (r)");
+    near(dom.b, 0.25f, 1e-6f, "and its mean blue is exactly 0.25");
+
+    // Mode 3 reaches brightestRegionColor with a step of 4. The grid is min(4,4) = 4 per
+    // axis, so one cell per pixel, and the brightest single pixel is the white corner.
+    const colorpulse::RGB bright =
+        colorpulse::sampleColor(px.data(), 4, 4, colorpulse::Mode::BrightestRegion);
+    near(bright.r, 1.0f, 1e-6f, "Mode 3 is the brightest cell, which is the white pixel (r)");
+    near(bright.b, 1.0f, 1e-6f, "and its blue");
+
+    // The three arms really differ on this input, so the checks above are not all reading
+    // the same code path by accident.
+    check(avg.r != dom.r && dom.r != bright.r && avg.r != bright.r,
+          "all three modes give different answers on the same region");
+
+    // A non-positive dimension makes the count ZERO rather than a negative product cast to
+    // a huge size_t. Mode 2 and the default both use the count, so both go black.
+    check(colorpulse::sampleColor(px.data(), 0, 4, colorpulse::Mode::Average).r == 0.0f,
+          "width 0 gives a zero count, so the default arm returns black");
+    check(colorpulse::sampleColor(px.data(), -1, 4, colorpulse::Mode::Average).r == 0.0f,
+          "and a negative width does too, rather than a huge unsigned product");
+    check(colorpulse::sampleColor(px.data(), 4, 0, colorpulse::Mode::Dominant).b == 0.0f,
+          "height 0 gives a zero count for the dominant arm as well");
+
+    // Mode 3 takes width and height rather than the count, so a zero dimension is caught
+    // by ITS OWN guards and also returns black -- a different path to the same answer.
+    check(colorpulse::sampleColor(px.data(), 0, 4,
+                                  colorpulse::Mode::BrightestRegion).r == 0.0f,
+          "the brightest-region arm has its own dimension guards and also returns black");
+
+    // An unrecognised selector falls to the default arm, which is the average. The call
+    // site narrows the popup value to {2, 3} else 0, so this is reachable.
+    const colorpulse::RGB odd =
+        colorpulse::sampleColor(px.data(), 4, 4, static_cast<colorpulse::Mode>(7));
+    near(odd.r, avg.r, 0.0f, "an unrecognised mode falls to the average arm, bit for bit");
+    near(odd.b, avg.b, 0.0f, "including its blue");
+
+    // A null pixel run reaches every arm; all three return black rather than crashing.
+    check(colorpulse::sampleColor(nullptr, 4, 4, colorpulse::Mode::Average).r == 0.0f,
+          "a null run through the average arm returns black");
+    check(colorpulse::sampleColor(nullptr, 4, 4, colorpulse::Mode::Dominant).r == 0.0f,
+          "a null run through the dominant arm returns black");
+    check(colorpulse::sampleColor(nullptr, 4, 4,
+                                  colorpulse::Mode::BrightestRegion).r == 0.0f,
+          "a null run through the brightest-region arm returns black");
+  }
+
   std::printf("\n%s\n", failures == 0
                 ? "ALL RECOVERED COLORPULSE MATHS VERIFIED"
                 : "TRANSCRIPTION ERRORS PRESENT");

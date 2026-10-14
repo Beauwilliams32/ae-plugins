@@ -7,16 +7,18 @@
 // Recovered from the demangled symbol table and disassembly of ColorPulse.plugin.
 // The original C++ was destroyed on 2026-10-13 with no remote and no backup.
 //
-// SCOPE. Eight of ten. `clampf`, `smoothScalar`, `luma709`, `smoothColor`,
-// `saturationBoost` (88 instructions), `regionBounds` (57), `averageColor` (201) and
-// `brightestRegionColor` (223) are recovered in full. Two are NOT: `dominantColor` (248)
-// and `sampleColor` (215). Nothing is stubbed for them — and `sampleColor` CANNOT be
-// implemented before `dominantColor`, which it tail-calls; that is a dependency, not a
-// decision.
+// NAMESPACE-COMPLETE: every `colorpulse::` symbol in the bundle is transcribed, so
+// tools/codegen-diff.mjs reports zero unrecovered symbols for this directory.
+// test/codegen.test.mjs asserts that marker and that measurement agree.
+//
+// SCOPE. All TEN `colorpulse::` functions are recovered in full (1123 instructions). The
+// host integration — `EffectMain` and the anonymous-namespace helper `GridFromWorld8`
+// (91 instructions) — is identified only, and nothing is stubbed for it.
 
 #pragma once
 
 #include <cstddef>
+#include <vector>
 
 namespace colorpulse {
 
@@ -170,9 +172,46 @@ RGB averageColor(const RGB* pixels, size_t count);
 RGB brightestRegionColor(const RGB* pixels, int width, int height, int step);
 
 // ---------------------------------------------------------------------------
-// [PARTLY RECOVERED — the dispatcher, read but NOT implemented]
+// [exact] The mean colour of the MOST POPULOUS quantisation bin.
 //
-//     RGB sampleColor(const RGB* pixels, int width, int height, Mode mode);
+//     if (pixels == nullptr || count == 0 || levels < 1) return {0,0,0}
+//     bins = levels^3                     ; as size_t
+//     std::vector<int> hist(bins)         ; zero-initialised
+//     index(r,g,b) = ri*levels^2 + gi*levels + bi
+//     ri = min(levels-1, (int)(clampf(p.r, 0, 1) * (float)levels))   -- and gi, bi
+//
+//     pass 1: hist[index(p)] += 1 for every pixel
+//     best   = argmax over hist, FIRST index wins on a tie (the scan is `-1` initialised
+//              and strictly greater, so it keeps the lowest bin)
+//     pass 2: sum the r/g/b of every pixel whose index equals `best`, in DOUBLE
+//     inv    = 1.0 / matched
+//     return { sumR*inv, sumG*inv, sumB*inv }
+//
+// THE RETURN IS A MEAN OF THE WINNING BIN'S PIXELS, NOT THE BIN CENTRE. The bundle walks
+// the pixel list a SECOND time to gather them. Reporting the bin centre instead would be
+// the obvious shortcut and would be visibly wrong: an 8-level bin is a 1/8-wide cube.
+//
+// BLUE IS THE FASTEST AXIS — `index = ri*levels^2 + gi*levels + bi` — which is the
+// opposite end from `.cube` LUT data (red fastest) elsewhere in this fleet, so it is worth
+// being explicit rather than assuming the neighbouring convention.
+//
+// The quantiser truncates (`fcvtzs`) and clamps through the recovered `clampf`, so a
+// channel of exactly 1.0 maps to `levels` and is then pulled back to `levels - 1` by the
+// min. Both are needed: without the clamp a negative channel would index backwards, and
+// without the min a 1.0 channel would index one past the end of the axis.
+//
+// THE CLAMP APPLIES TO THE BIN INDEX ONLY, so the RETURNED COLOUR CAN LEAVE [0, 1]. The
+// second pass averages the RAW pixels of the winning bin, so an overrange pixel and a
+// white pixel share the top bin and come back as their raw mean. Two self-checks were
+// written expecting the clamped value and returned 1.5 and -2.5 instead, which is right.
+// A caller working in 32-bit float must not assume this saturates.
+// ---------------------------------------------------------------------------
+RGB dominantColor(const RGB* pixels, size_t count, int levels);
+
+// ---------------------------------------------------------------------------
+// [exact] The colour analyser selector.
+//
+// Declared here and defined in the .cpp; the signature is the mangled one.
 //
 // `sampleColor` is a DISPATCHER, and reading it was worth more than the function: it
 // enumerates `Mode` and pins the arguments of the two analysers that are still unread.
@@ -209,15 +248,18 @@ RGB brightestRegionColor(const RGB* pixels, int width, int height, int step);
 //   * `dominantColor` takes (pixels, COUNT, third) with a third of 8, and its body guards
 //     `count == 0` and `third < 1`. It allocates a histogram and uses `std::vector<int>`.
 //
-// The two tail calls are why this declaration has no definition: the bundle's own
-// `sampleColor` is 215 instructions, of which about 201 are `averageColor` inlined and
-// the remainder is this dispatch. It goes in AFTER the two it calls, not around them.
+// The two tail calls are why this could not be written until both callees were: the
+// bundle's own `sampleColor` is 215 instructions, of which about 201 are `averageColor`
+// INLINED and the remainder is this dispatch, with both other paths emitted as real tail
+// calls. That dependency is why `dominantColor` was recovered first.
 // ---------------------------------------------------------------------------
 enum class Mode : int {
   Average = 0,           // and the default arm
   Dominant = 2,
   BrightestRegion = 3,
 };
+
+RGB sampleColor(const RGB* pixels, int width, int height, Mode mode);
 
 // ---------------------------------------------------------------------------
 // [exact] Scalar clamp. The SEVENTH copy of this idiom in the fleet.

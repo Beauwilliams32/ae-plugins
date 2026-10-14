@@ -1,8 +1,7 @@
 // Gate for the recovered colorpulse:: namespace.
 //
-// PARTIAL BY DESIGN: eight of ten functions. `dominantColor` and `sampleColor` are
-// absent rather than stubbed, and a test below asserts that. `brightestRegionColor`,
-// `averageColor` and `regionBounds` were on that list until they were read.
+// The namespace is COMPLETE: all ten functions. The host integration is not, and a test
+// below keeps that visible.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -35,45 +34,43 @@ test("recovered colorpulse source compiles and its maths verifies", (t) => {
     assert.match(out, /ALL RECOVERED COLORPULSE MATHS VERIFIED/, `self-check failed:\n${out}`);
     assert.doesNotMatch(out, /\bFAIL\b/, out);
     const passes = (out.match(/^  PASS/gm) ?? []).length;
-    assert.ok(passes >= 88, `expected >= 35 checks, saw ${passes}`);
+    assert.ok(passes >= 120, `expected >= 35 checks, saw ${passes}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("the colorpulse namespace does not claim what it has not recovered", () => {
-  // A stub would compile and link and make the namespace look complete while
-  // implementing colour analysis that was never read.
+test("the colorpulse namespace is complete, and the host integration is not", () => {
+  // This test used to assert the opposite: that the unrecovered functions stayed ABSENT,
+  // because a stub would have made the namespace look finished while implementing colour
+  // analysis nobody had read. All ten are now transcribed, so the assertion inverts — and
+  // it inverts only because the bodies were read, not because the pressure to look
+  // finished went away. `sampleColor` in particular could not be written until
+  // `dominantColor` existed, since it tail-calls it.
   const impl = readFileSync(path.join(SRC, "colorpulse.cpp"), "utf8");
-  for (const fn of ["sampleColor", "dominantColor"]) {
-    assert.doesNotMatch(impl, new RegExp(`\\b${fn}\\s*\\(`),
-      `${fn} appears implemented but its body was never read`);
-  }
-  // The header must name every function it has NOT recovered, so the scope line cannot
-  // drift away from the implementation. Asserting on the names rather than on a stock
-  // phrase: the phrase changed when the count did, and the names did not.
-  const scope = readFileSync(path.join(SRC, "colorpulse.h"), "utf8");
-  assert.match(scope, /Two are NOT/, "the header must state that two are unrecovered");
-  for (const fn of ["dominantColor", "sampleColor"]) {
-    assert.match(scope, new RegExp("`" + fn + "`"),
-      `the header must name ${fn} as unrecovered`);
-  }
-
-  // The recovered ones must now be PRESENT, and the scope line must reflect the count.
-  assert.match(impl, /\bregionBounds\s*\(/, "regionBounds must be implemented");
-  assert.match(impl, /\baverageColor\s*\(/, "averageColor must be implemented");
-  assert.match(impl, /\bbrightestRegionColor\s*\(/,
-    "brightestRegionColor must be implemented");
   const header = readFileSync(path.join(SRC, "colorpulse.h"), "utf8");
-  assert.match(header, /Eight of ten/, "the header's scope line must reflect the count");
 
-  // The sampleColor FINDING must stay: it is the only place `Mode`'s values and the two
-  // analysers' arguments are recorded, and losing it would cost a future pass real work.
-  assert.match(header, /enum class Mode : int/, "the Mode enum must be declared");
-  assert.match(header, /TAIL CALL, depth 8/, "and the dominantColor call and its depth kept");
-  assert.match(header, /brightestRegionColor\(pixels, width, height, 4\)/,
-    "and the brightestRegionColor call and its step kept");
-  // It must NOT be presented as implemented, because it cannot link without the other two.
-  assert.match(header, /read but NOT implemented/,
-    "the dispatcher is read, not recovered — the header must say so");
+  for (const fn of ["clampf", "smoothScalar", "luma709", "smoothColor",
+                    "saturationBoost", "regionBounds", "averageColor",
+                    "brightestRegionColor", "dominantColor", "sampleColor"]) {
+    assert.match(impl, new RegExp(`\\b${fn}\\s*\\(`), `${fn} must be implemented`);
+  }
+  assert.match(header, /All TEN `colorpulse::` functions are recovered in full/,
+    "the header must say the namespace is complete");
+  assert.match(header, /NAMESPACE-COMPLETE/,
+    "and must carry the marker test/codegen.test.mjs cross-checks against the differ");
+
+  // The HOST integration is still unrecovered, and that has to stay visible: the whole
+  // namespace being done makes it easy to read the namespace as the effect.
+  for (const fn of ["EffectMain", "GridFromWorld8"]) {
+    assert.doesNotMatch(impl, new RegExp(`\\b${fn}\\s*\\(`),
+      `${fn} is host integration and its body was never read`);
+  }
+  assert.match(header, /identified only/,
+    "the header must state that the host integration is unrecovered");
+
+  // The Mode enum's VALUES are part of the recovery and must not drift: they come from the
+  // dispatcher's comparisons, and 2/3 are the only two it tests.
+  assert.match(header, /Dominant = 2/, "Mode::Dominant must stay 2");
+  assert.match(header, /BrightestRegion = 3/, "Mode::BrightestRegion must stay 3");
 });

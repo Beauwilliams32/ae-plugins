@@ -60,7 +60,7 @@ modifies, moves or copies them.
 
 Be clear-eyed about this:
 
-- **Most function bodies.** Eight namespaces are recovered (see below); the other
+- **Most function bodies.** Nine namespaces are recovered (see below); the other
   effects' DSP is still machine code. Names and signatures are free, behaviour needs
   per-function disassembly, and that is the bulk of the remaining work.
 - **`lutblend::parseCube`** (1924 instructions) is identified but unread, along with
@@ -97,7 +97,7 @@ Two findings already worth acting on:
 
 ## Recovered source
 
-Eight recovered namespaces, all transcribed from the disassembly with per-function commentary
+Nine recovered namespaces, all transcribed from the disassembly with per-function commentary
 citing the instructions that establish each behaviour:
 
 | Module | Contents | State |
@@ -107,7 +107,7 @@ citing the instructions that establish each behaviour:
 | `speedramp::` | `easeValue`, `easeIntegral`, `speedAt`, `mapTime`, `computeBlend`, plus `RampParams` and `FrameBlend` | **complete — all 5 functions, 261 instructions** |
 | `lutblend::` | `clampf`, `lerpf`, `luma709`, `CubeLUT::valid`, `sampleLUT`, `makeIdentity`, `applyLUTBlend`, plus the `CubeLUT` layout | **7 of 8** (`parseCube` pending — 1924 instructions, the largest function in the fleet) |
 | `echo::` | `clampf`, `blendPixel`, `compositeOver`, `buildLadder`, `sampleBilinear`, `transformBilinear`, plus the corrected `ImageF` layout and `BlendMode` | **complete — all 6 functions**. Recovering `transformBilinear` also CORRECTED `ImageF`: `data` had been modelled as a raw `float*` on the strength of a read that a `std::vector`'s begin pointer produces identically. The host integration is unread |
-| `colorpulse::` | `clampf`, `smoothScalar`, `luma709`, `smoothColor`, `saturationBoost`, `regionBounds`, `averageColor`, `brightestRegionColor`, plus the `RGB`/`Rect` layouts and the `Region`/`Mode` selectors | **8 of 10, and all five scalar ones are INSTRUCTION-IDENTICAL**. `sampleColor` is read as a DISPATCHER but not implemented, because it tail-calls `dominantColor`, which is still unread |
+| `colorpulse::` | The whole analyser: `clampf`, `smoothScalar`, `luma709`, `smoothColor`, `saturationBoost`, `regionBounds`, `averageColor`, `brightestRegionColor`, `dominantColor`, `sampleColor`, plus the `RGB`/`Rect` layouts and the `Region`/`Mode` selectors | **complete — all 10 functions, 1123 instructions**, and five are INSTRUCTION-IDENTICAL. The host integration is unread |
 | `aff::` | The AutoFlickerFix DSP: `clampf`, `dbToGainClamp`, `computeGain`, `centerRegion`, `meanOf`, `medianOf`, `trimmedMean` (both overloads), `medianFilter`, `temporalTarget`, plus the `GainClamp` and `RegionBounds` layouts | **complete — all 10 functions, 719 instructions, 7 of them INSTRUCTION-IDENTICAL**. The host integration (`EffectMain`, `SampleWorldStat`, `DrawStatsBar`) is unread |
 | `spectra::` | FFT, Hann window, STFT, band analysis, falloff envelope, `downmixToMono`, plus `Spectrogram` | **complete — all 13 functions, shared by 4 effects**, and 7 of them INSTRUCTION-IDENTICAL. The host integration is unread |
 
