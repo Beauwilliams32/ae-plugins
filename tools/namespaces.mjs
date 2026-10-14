@@ -27,6 +27,7 @@ export const BUNDLES = {
   colorpulse: "ColorPulse",
   autoflickerfix: "AutoFlickerFix",
   beatsnap: "BeatSnap",
+  pathscribe: "PathScribe",
 };
 
 /** Recovered namespace directories, discovered from the tree. */
