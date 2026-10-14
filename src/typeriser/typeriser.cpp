@@ -1,9 +1,8 @@
 // typeriser.cpp — recovered implementations for the TypeRiser karaoke timing core.
 //
 // Only RECOVERED functions appear here. The TypeRiser bundle exports 12 authored
-// functions in this namespace and 10 are below; wrapWords (52 instructions) and
-// wordStyle (164 instructions) are identified but not transcribed, and are
-// absent rather than stubbed.
+// functions in this namespace and 11 are below; wordStyle (164 instructions) is
+// identified but not transcribed, and is absent rather than stubbed.
 //
 // The SRT path is complete end to end: parseSrt -> parseTimingLine ->
 // parseTimestamp -> trim, with splitWords and cueIndexAt alongside it.
@@ -790,6 +789,68 @@ std::vector<Cue> parseSrt(const std::string& input) {
   std::stable_sort(cues.begin(), cues.end(),
                    [](const Cue& a, const Cue& b) { return a.start < b.start; });
   return cues;
+}
+
+// ---------------------------------------------------------------------------
+// wrapWords(const std::vector<float>&, float, float) -> std::vector<int>
+//
+// __ZN9typeriser9wrapWordsE..., 52 instructions, recovered in full — the whole
+// function fits on one screen, and the arithmetic is five instructions wide.
+//
+//     mov  x19, x8                 ; the result vector<int>, returned by value
+//     ldp  x22, x8, [x0]           ; wordWidths.begin / .end
+//     subs x20, x8, x22 / b.eq     ; byte size == count * 4; empty in -> empty out
+//     asr  x23, x20, #2            ; count
+//     mov.16b v8, v1               ; s8 = the SECOND float argument
+//     mov.16b v9, v0               ; s9 = the FIRST float argument
+//     bl   operator new / bzero    ; a zero-filled vector<int> of `count` slots
+//     ldr  s0, [x22]               ; s0 = wordWidths[0]  -- the running total
+//     str  wzr, [x21]              ; result[0] = 0
+//     cmp  x20, #0x4 / b.eq <done> ; a single word never breaks
+//
+//   then, once per remaining word (0x1fdc..0x1ffc):
+//     ldr   s1, [x10], #0x4        ; s1 = wordWidths[i]
+//     fadd  s0, s9, s0             ; running += the first float
+//     fadd  s0, s0, s1             ; running += wordWidths[i]
+//     fcmp  s0, s8
+//     fcsel s0, s1, s0, gt         ; if (running > second) running = wordWidths[i]
+//     cinc  w8, w8, gt             ; if (running > second) ++line
+//     str   w8, [x11], #0x4        ; result[i] = line
+//
+//   The two floats are therefore ADDITIVE and THRESHOLD in that order: the first
+//   is charged between adjacent words, the second is the limit. Note the reset
+//   assigns `s1` (the word width) and NOT `s9 + s1`, so the separator is not
+//   charged at the start of a line — the standard greedy wrap.
+//
+// Three details worth keeping:
+//   * `fcmp` + `fcsel ... gt` is a STRICT greater-than, so a line measuring
+//     exactly the limit is kept rather than broken. `>=` would break it.
+//   * The result is `std::vector<int>` — confirmed by the out-of-line throw at
+//     0x2018 being vector<int>::__throw_length_error, not vector<float>'s.
+//   * bzero fills the allocation before the loop writes it. Combined with
+//     result[0] = 0, an EMPTY input returns an empty vector and a one-word input
+//     returns {0}, never an uninitialised or partially-written vector.
+//
+// The original parameter NAMES are not recoverable — only the roles. They are
+// named for what the arithmetic does with them.
+// ---------------------------------------------------------------------------
+std::vector<int> wrapWords(const std::vector<float>& wordWidths,
+                           float separatorWidth, float maxWidth) {
+  std::vector<int> lines(wordWidths.size(), 0);
+  if (wordWidths.empty()) return lines;
+
+  float running = wordWidths[0];
+  int line = 0;
+
+  for (size_t i = 1; i < wordWidths.size(); ++i) {
+    running = separatorWidth + running + wordWidths[i];
+    if (running > maxWidth) {
+      running = wordWidths[i];
+      ++line;
+    }
+    lines[i] = line;
+  }
+  return lines;
 }
 
 

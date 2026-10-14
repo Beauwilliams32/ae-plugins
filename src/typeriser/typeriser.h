@@ -167,4 +167,27 @@ int cueIndexAt(const std::vector<Cue>& cues, long long t);
 // ---------------------------------------------------------------------------
 std::vector<Cue> parseSrt(const std::string& text);
 
+// ---------------------------------------------------------------------------
+// [exact] Greedy line breaking. Returns, for each word, the 0-based index of the
+// line it belongs to.
+//
+// The two float parameters are ADDITIVE and THRESHOLD, in that order: the first
+// is added between adjacent words (a space/separator width) and the second is
+// the width a line must not exceed. The compiled formula is
+//
+//     running = separatorWidth + running + wordWidths[i]
+//     if (running > maxWidth) { running = wordWidths[i]; ++line; }
+//
+// with `running` seeded to wordWidths[0]. Two details the code pins down:
+//   * the comparison is a STRICT `>` where "greater" is `fcmp` + `gt`, so a line
+//     that measures exactly maxWidth is kept, not broken;
+//   * on a break `running` is reset to wordWidths[i] ALONE, so the separator is
+//     not charged at the start of a line.
+//
+// The names of the two floats are not recoverable from the code — only their
+// roles are. They are named here for what they do.
+// ---------------------------------------------------------------------------
+std::vector<int> wrapWords(const std::vector<float>& wordWidths,
+                           float separatorWidth, float maxWidth);
+
 }  // namespace typeriser

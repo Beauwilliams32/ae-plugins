@@ -385,6 +385,82 @@ int main() {
   }
 
 
+  std::printf("typeriser::wrapWords\n");
+  {
+    // A naive reference written the way the DOC describes the rule, so the
+    // compiled version is checked against prose rather than against itself.
+    auto naive = [](const std::vector<float>& w, float sep, float maxw) {
+      std::vector<int> out(w.size(), 0);
+      if (w.empty()) return out;
+      float running = w[0];
+      int line = 0;
+      for (size_t i = 1; i < w.size(); ++i) {
+        float next = sep + running + w[i];
+        if (next > maxw) { running = w[i]; ++line; }
+        else { running = next; }
+        out[i] = line;
+      }
+      return out;
+    };
+    auto same = [](const std::vector<int>& a, const std::vector<int>& b) {
+      return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin());
+    };
+
+    // Exact cases.
+    check(typeriser::wrapWords({}, 1.f, 10.f).empty(), "no words -> no lines");
+    check(same(typeriser::wrapWords({5.f}, 1.f, 10.f), {0}), "one word is always line 0");
+
+    auto two = typeriser::wrapWords({6.f, 6.f}, 1.f, 10.f);
+    check(same(two, {0, 1}), "6 + sep 1 + 6 = 13 > 10, so the second word wraps");
+
+    auto tight = typeriser::wrapWords({5.f, 4.f}, 1.f, 10.f);
+    check(same(tight, {0, 0}), "5 + sep 1 + 4 = 10 is NOT > 10, so it stays (strict >)");
+
+    auto over = typeriser::wrapWords({5.f, 4.5f}, 1.f, 10.f);
+    check(same(over, {0, 1}), "10.5 > 10 does wrap — the boundary case either side");
+
+    auto three = typeriser::wrapWords({3.f, 3.f, 3.f}, 1.f, 7.f);
+    check(same(three, {0, 0, 1}), "3+1+3=7 fits, then 7+1+3=11 wraps");
+
+    // The reset drops the separator: after a break the first word on the new
+    // line is measured ALONE. 8 + sep 1 + 3 would be 12 > 10, but 3 fits.
+    auto reset = typeriser::wrapWords({8.f, 3.f, 3.f}, 1.f, 10.f);
+    check(same(reset, {0, 1, 1}), "after a break the new line measures the word alone");
+
+    // A zero separator degenerates to a plain cumulative sum.
+    auto nosep = typeriser::wrapWords({4.f, 4.f, 4.f}, 0.f, 10.f);
+    check(same(nosep, {0, 0, 1}), "separator 0: 4+4 fits in 10, +4 does not");
+
+    // Property sweep against the naive reference.
+    bool all_agree = true;
+    size_t cases = 0;
+    for (float sep : {0.f, 0.5f, 1.f, 3.f}) {
+      for (float maxw : {4.f, 10.f, 25.f, 100.f}) {
+        for (size_t n = 0; n <= 24; ++n) {
+          std::vector<float> w;
+          for (size_t i = 0; i < n; ++i)
+            w.push_back(1.f + static_cast<float>((i * 7 + n * 3) % 9));
+          ++cases;
+          if (!same(typeriser::wrapWords(w, sep, maxw), naive(w, sep, maxw)))
+            all_agree = false;
+        }
+      }
+    }
+    check(all_agree, "wrapWords agrees with the naive rule across 400 input shapes");
+    check(cases == 400, "the property sweep actually ran 400 cases");
+
+    // Monotonicity: line indices never go backwards.
+    bool monotone = true;
+    for (size_t n = 1; n <= 40; ++n) {
+      std::vector<float> w(n, 2.f);
+      auto got = typeriser::wrapWords(w, 1.f, 9.f);
+      for (size_t i = 1; i < got.size(); ++i)
+        if (got[i] < got[i - 1]) monotone = false;
+    }
+    check(monotone, "line indices are non-decreasing");
+  }
+
+
   std::printf("typeriser::splitWords\n");
   {
     auto eq = [](const std::vector<std::string>& got, std::initializer_list<const char*> want) {
