@@ -445,7 +445,7 @@ float rawBandLevel(const std::vector<float>& spectrum,
 
 
 // ---------------------------------------------------------------------------
-// bandValues(const Spectrogram& spectrogram, const BandSpec& band, double time)
+// bandValues(const Spectrogram& spectrogram, const BandSpec& band, double hopRateHz)
 //
 // __ZN7spectra10bandValuesE..., 105 instructions, recovered in full. This is the
 // top of the analysis chain: rawBandLevel() scores one frame, and this walks
@@ -457,19 +457,20 @@ float rawBandLevel(const std::vector<float>& spectrum,
 //     fcmp d0, #0.0 / ccmp w1,#1  ; require time > 0 AND frameCount >= 1
 //     b.lt <return empty>
 //     bl  vector::resize          ; result.resize(frameCount)
-//     fmov d0, #1.0 / fdiv d0,d0,d8   ; 1.0 / time
-//     fcvt s9, d0                 ; s9 = (float)(1/time)   -> frames per second
+//     fmov d0, #1.0 / fdiv d0,d0,d8   ; 1.0 / hopRate
+//     fcvt s9, d0                 ; s9 = (float)(1/hopRate) -> SECONDS per hop
 //     ldr  s0, [x19, #0x28]       ; band.falloffTime
 //     fmov s1, 0x38d1b717         ; 1e-4f  (guard against a zero falloff)
 //     fcsel s12, s1, s0, mi       ; falloff = max(falloffTime, 1e-4f)
 //     ldr  x21, [x20, #0x10]      ; spectrogram.frames.data()
 //     fneg s0, s9 / fdiv s0, s0, s12 / bl _expf
 //                                 ; s8 = expf(-(1/time) / falloff)  <- decay factor
-//     fdiv s12, s9, s12           ; s12 = (1/time) / falloff         <- linear step
+//     fdiv s12, s9, s12           ; s12 = (1/hopRate) / falloff     <- linear step
 //
 //   Note the two different quantities built from the same ratio: an EXPONENTIAL
 //   factor for mode 3 and an additive STEP for mode 2. Using one for both would
-//   look plausible and be wrong.
+//   look plausible and be wrong. Both are in "fraction of the falloff time per
+//   hop", which is why the units above matter.
 //
 // PER-FRAME LOOP (0x1988..0x19fc). Each frame is a std::vector<float>, so the
 //   stride is 24 bytes (0x18), not the element size:
@@ -502,17 +503,20 @@ float rawBandLevel(const std::vector<float>& spectrum,
 //   So the 0..1 envelope is remapped into the band's output range; that range is
 //   what the effect then bakes as keyframes.
 // ---------------------------------------------------------------------------
-std::vector<float> bandValues(const Spectrogram& spectrogram, const BandSpec& band, double time) {
+std::vector<float> bandValues(const Spectrogram& spectrogram, const BandSpec& band, double hopRateHz) {
   std::vector<float> out;
-  if (!(time > 0.0)) return out;
+  if (!(hopRateHz > 0.0)) return out;
   if (spectrogram.frameCount < 1) return out;
 
   out.assign(static_cast<size_t>(spectrogram.frameCount), 0.0f);
 
-  const float fps = static_cast<float>(1.0 / time);
+  // The compiled code calls this 1/time; it is really SECONDS PER HOP, because
+  // the caller passes a hop RATE. The falloff maths below only makes sense in
+  // those units, so the name says so. The arithmetic is unchanged.
+  const float secondsPerHop = static_cast<float>(1.0 / hopRateHz);
   const float falloff = band.falloffTime < 1e-4f ? 1e-4f : band.falloffTime;
-  const float decay = std::exp(-fps / falloff);
-  const float step = fps / falloff;
+  const float decay = std::exp(-secondsPerHop / falloff);
+  const float step = secondsPerHop / falloff;
 
   float prev = 0.0f;
   for (int i = 0; i < spectrogram.frameCount; ++i) {
@@ -533,7 +537,7 @@ std::vector<float> bandValues(const Spectrogram& spectrogram, const BandSpec& ba
         else value = level + (prev - level) * decay;
         break;
       case 4: {  // None (Integrate)
-        const float acc = level * fps + prev;
+        const float acc = level * secondsPerHop + prev;
         const float hi = acc > 1.0f ? 1.0f : acc;
         value = acc < 0.0f ? 0.0f : hi;
         break;
@@ -562,7 +566,7 @@ std::vector<float> bandValues(const Spectrogram& spectrogram, const BandSpec& ba
 // 1. GUARDS (0xe94..0xed4). All of these return an empty Spectrogram:
 //        cbz x0 / cbz x1                 ; mono and frame count non-null
 //        ldr d0,[x2] / fcmp / b.ls       ; sampleRate > 0
-//        ldr d1,[x2,#0x10] / fcmp / b.ls ; hopDivisor > 0
+//        ldr d1,[x2,#0x10] / fcmp / b.ls ; hopRateHz > 0
 //        subs w8,w26,#1 / b.lt           ; fftSize >= 1
 //        and w8,w26,w8 / cbnz            ; and a power of two, INLINED here
 //        cmp w26,#2 / b.lo               ; and at least 2
@@ -623,13 +627,13 @@ Spectrogram analyse(const float* mono, size_t frames, const AnalysisConfig& conf
 
   const double sampleRate = config.sampleRate;
   const int fftSize = config.fftSize;
-  const double hopDivisor = config.hopDivisor;
+  const double hopRateHz = config.hopRateHz;
   if (!(sampleRate > 0.0)) return out;
-  if (!(hopDivisor > 0.0)) return out;
+  if (!(hopRateHz > 0.0)) return out;
   if (fftSize < 2) return out;
   if (!isPowerOfTwo(fftSize)) return out;
 
-  const double samplesPerHop = sampleRate / hopDivisor;
+  const double samplesPerHop = sampleRate / hopRateHz;
   out.hzPerBin = sampleRate / static_cast<double>(fftSize);
   out.binCount = fftSize / 2;
 
@@ -679,6 +683,47 @@ Spectrogram analyse(const float* mono, size_t frames, const AnalysisConfig& conf
       const float m = im[static_cast<size_t>(k)];
       row[static_cast<size_t>(k)] = scale * std::sqrt(r * r + m * m);
     }
+  }
+  return out;
+}
+
+
+// ---------------------------------------------------------------------------
+// analyseBands(const float* mono, size_t frames, const AnalysisConfig& config,
+//              const std::vector<BandSpec>& bands)
+//
+// __ZN7spectra12analyseBandsE..., 109 instructions, recovered in full. The top of
+// the chain: it runs the STFT once and then scores every band against it, which
+// is exactly the shape of the compiled code.
+//
+//     1a7c: bl  spectra::analyse(mono, frames, config)   ; ONE transform for all bands
+//     ...   allocate count * 24 bytes                    ; sizeof(vector<float>)
+//     1adc: ldr d0, [x20, #0x10]                         ; config.hopRateHz
+//     1aec: bl  spectra::bandValues(spectrogram, band, d0)
+//
+// Two things this settles:
+//
+//   * The transform is shared across bands, so adding a band costs the per-frame
+//     envelope walk and nothing more. Reimplementing this by calling analyse per
+//     band would be correct but N times slower.
+//   * config.hopRateHz is passed straight to bandValues as its third argument,
+//     which is what proves that field is a hop RATE rather than an overlap
+//     factor. See AnalysisConfig in spectra.h.
+//
+// The element size also confirms BandSpec is 48 bytes: the count is derived as
+// (bytes >> 4) / 3, i.e. bytes / 16 / 3 == bytes / 48, matching the twelve 4-byte
+// fields recovered earlier. The result is one vector<float> per band, each
+// frameCount long.
+// ---------------------------------------------------------------------------
+std::vector<std::vector<float>> analyseBands(const float* mono,
+                                             size_t frames,
+                                             const AnalysisConfig& config,
+                                             const std::vector<BandSpec>& bands) {
+  const Spectrogram spectrogram = analyse(mono, frames, config);
+  std::vector<std::vector<float>> out;
+  out.reserve(bands.size());
+  for (const BandSpec& band : bands) {
+    out.push_back(bandValues(spectrogram, band, config.hopRateHz));
   }
   return out;
 }

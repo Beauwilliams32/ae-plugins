@@ -31,7 +31,9 @@ is merely identified.
 | `spectra::analyse` (STFT: centred frames, zero pad, Hann, magnitude) | `src/spectra/spectra.cpp` | **Recovered + verified** — covers 2 effects | `selfcheck.cpp` (Hann fingerprint) |
 | `AnalysisConfig` layout (sampleRate/hopDivisor) | `src/spectra/spectra.h` | **Recovered**; @0x10's unit deliberately left open | `selfcheck.cpp` |
 | SpectraKeys chain: downmix→window→fft→magnitude→band→envelope | `src/spectra/` | **Complete, end to end** | 98 compiled checks |
-| `spectra::analyseBands` | `specs/SpectraKeys.md` | **Identified only** | none yet |
+| `spectra::analyseBands` (one transform, per-band rows) | `src/spectra/spectra.cpp` | **Recovered + verified** | `selfcheck.cpp` |
+| `AnalysisConfig.hopRateHz` is a hop RATE (settled by two uses) | `src/spectra/spectra.h` | **Recovered** | `selfcheck.cpp` |
+| `Spectrogram` zero-initialisation (required by analyse's guards) | `src/spectra/spectra.h` | **Recovered** from analyse's zeroing prologue | `selfcheck.cpp` (would crash without it) |
 | `spectra::downmixToMono` | `specs/SpectraKeys.md` | **Identified only** | none yet |
 | `spectra::Spectrogram::hzToBin` | `src/spectra/spectra.cpp` | **Recovered + verified** | `selfcheck.cpp` via `test/spectra.test.mjs` |
 | `Spectrogram` field layout (binCount @0, hzPerBin @8) | `src/spectra/spectra.h` | **Recovered** from `hzToBin`'s loads | `selfcheck.cpp` |

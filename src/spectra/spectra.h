@@ -63,17 +63,25 @@ struct BandSpec {
 // @0 is a SAMPLE RATE: hzPerBin = @0 / fftSize goes straight into the Spectrogram,
 // so @0 must be Hz.
 //
-// @0x10 is a hop DIVISOR, and deliberately not named after a unit. analyse
-// computes samplesPerHop = @0 / @0x10 and then frameCount = ceil(frames /
-// samplesPerHop). A hop RATE in Hz fits that (samplesPerHop = sampleRate /
-// hopRate), but so does a fixed overlap factor such as fftSize/2. analyse alone
-// cannot distinguish them, so the field is named for how it is used and the
-// meaning is left open. Naming it "hopSeconds" was WRONG — dividing by seconds
-// gives 1/s^2, which is why a test passing 0.008 produced a frame count of 1.
+// @0x10 is a HOP RATE in Hz, and that is now established rather than assumed:
+// analyseBands passes this same field to bandValues as its third argument, and
+// the two uses only agree on one physical meaning.
+//
+//   analyse     : samplesPerHop  = sampleRate / @0x10     -> samples per hop
+//   bandValues  : secondsPerHop  = 1 / @0x10              -> time step for falloff
+//
+// Dividing a rate gives samples per hop; inverting a rate gives seconds per hop.
+// A hop rate of 125 Hz at 8 kHz is 64 samples and 8 ms per hop, which is
+// coherent. A fixed overlap factor would make the second use meaningless, since
+// falloff is measured in seconds.
+//
+// (An earlier note here named this "hopSeconds", which is wrong: dividing by
+// seconds gives 1/s^2, which is how a test passing 0.008 ended up producing a
+// frame count of 1.)
 struct AnalysisConfig {
   double sampleRate;  // [recovered] offset 0, in Hz
   int fftSize;        // [recovered] offset 8, must be a power of two and >= 2
-  double hopDivisor;  // [recovered] offset 0x10; samplesPerHop = sampleRate / this
+  double hopRateHz;   // [recovered] offset 0x10; hops per second (see above)
 };
 
 // [inferred] A short-time magnitude spectrogram: one magnitude row per frame.
@@ -95,9 +103,19 @@ class Spectrogram {
   // count. The double divides the frequency, so it is the Hz-per-bin width.
   // That makes this the first part of this class that is recovered rather than
   // guessed — the remaining fields below are still [inferred].
-  int binCount;     // [recovered] offset 0
-  int frameCount;   // [recovered] offset 4   (bandValues resizes its result to this)
-  double hzPerBin;  // [recovered] offset 8  (0 or negative is a guarded no-op)
+  // [recovered] The compiled analyse() ZEROES the return object before doing
+  // anything else:
+  //     str xzr, [x8, #0x20]   ; both 16-byte halves...
+  //     stp q0,  q0,  [x8]     ; ...covering the whole 0x28-byte header
+  // That is load-bearing, not incidental. Every guard in analyse() returns early,
+  // and those paths must hand back a Spectrogram whose frameCount is 0 so that
+  // callers (bandValues, analyseBands) treat it as empty. Leaving these
+  // indeterminate made bandValues trust a garbage frameCount, allocate it, and
+  // run off the end of an empty frames vector — a segfault, caught by the
+  // analyseBands test.
+  int binCount = 0;       // [recovered] offset 0
+  int frameCount = 0;     // [recovered] offset 4
+  double hzPerBin = 0.0;  // [recovered] offset 8  (0 or negative is a guarded no-op)
   // frames @0x10: contiguous vector<float>, stride 24 bytes (sizeof a vector)
 
   // [inferred] placement unknown; only its existence and element type come from
@@ -135,17 +153,20 @@ std::vector<float> downmixToMono(const float* interleaved, size_t frames, int ch
 
 Spectrogram analyse(const float* mono, size_t frames, const AnalysisConfig& config);
 
-std::vector<float> analyseBands(const float* mono,
-                                size_t frames,
-                                const AnalysisConfig& config,
-                                const std::vector<BandSpec>& bands);
+// One result row per band, each frameCount long. The element type is
+// vector<float>, which is what pins the 24-byte stride in the compiled loop.
+std::vector<std::vector<float>> analyseBands(const float* mono,
+                                             size_t frames,
+                                             const AnalysisConfig& config,
+                                             const std::vector<BandSpec>& bands);
 
 float rawBandLevel(const std::vector<float>& spectrum,
                    const Spectrogram& spectrogram,
                    const BandSpec& band);
 
 // Per-frame band levels with the effect's falloff/decay applied, mapped through
-// the band's output range. `time` is in seconds and sets the frame rate as 1/time.
+// the band's output range. `hopRateHz` is AnalysisConfig::hopRateHz; the compiled
+// code inverts it to get seconds per hop, which is the falloff time step.
 std::vector<float> bandValues(const Spectrogram& spectrogram, const BandSpec& band, double time);
 
 }  // namespace spectra

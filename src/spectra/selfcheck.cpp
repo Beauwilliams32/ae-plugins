@@ -390,7 +390,7 @@ int main() {
     spectra::AnalysisConfig cfg{};
     cfg.sampleRate = 8000.0;   // 8 kHz keeps the arithmetic easy to read
     cfg.fftSize = 64;
-    cfg.hopDivisor = 125.0;    // samplesPerHop = 8000/125 = 64
+    cfg.hopRateHz = 125.0;    // samplesPerHop = 8000/125 = 64
 
     // 512 samples at 8 kHz with 64 samples per hop gives exactly 8 frames.
     const size_t N = 512;
@@ -457,8 +457,78 @@ int main() {
       check(spectra::analyse(mono.data(), N, bad).frames.empty(), "non-power-of-two fftSize returns empty");
       spectra::AnalysisConfig bad2 = cfg; bad2.sampleRate = 0.0;
       check(spectra::analyse(mono.data(), N, bad2).frames.empty(), "zero sampleRate returns empty");
-      spectra::AnalysisConfig bad3 = cfg; bad3.hopDivisor = 0.0;
+      spectra::AnalysisConfig bad3 = cfg; bad3.hopRateHz = 0.0;
       check(spectra::analyse(mono.data(), N, bad3).frames.empty(), "zero hop returns empty");
+    }
+  }
+
+
+  std::printf("analyseBands (one transform, many bands)\n");
+  {
+    spectra::AnalysisConfig cfg{};
+    cfg.sampleRate = 8000.0; cfg.fftSize = 64; cfg.hopRateHz = 125.0;  // 64 samples/hop, 8 ms
+
+    const size_t N = 512;                       // 8 frames
+    std::vector<float> mono(N, 0.0f);
+    const double binHz = 4.0 * 8000.0 / 64.0;   // 500 Hz, exactly bin 4
+    for (size_t t = 0; t < N; ++t)
+      mono[t] = static_cast<float>(std::sin(2.0 * M_PI * binHz * static_cast<double>(t) / 8000.0));
+
+    auto mkband = [](float lo, float hi) {
+      spectra::BandSpec b{};
+      b.lowHz = lo; b.highHz = hi; b.mode = 1;          // Peak
+      b.thresholdDb = -100.0f; b.floorDb = -100.0f; b.ceilingDb = 0.0f; b.gainDb = 0.0f;
+      b.outputMin = 0.0f; b.outputMax = 1.0f;
+      b.falloffMode = 1; b.falloffTime = 1.0f; b.binarise = false;
+      return b;
+    };
+
+    // One band around the tone, one in a silent region.
+    std::vector<spectra::BandSpec> bands{ mkband(400.0f, 600.0f), mkband(3000.0f, 3400.0f) };
+    const auto out = spectra::analyseBands(mono.data(), N, cfg, bands);
+
+    check(out.size() == 2, "one result row per band");
+    check(out[0].size() == 8, "each row is frameCount long");
+    check(out[1].size() == 8, "and so is the second");
+
+    // The band spanning the tone must be loud; the band in silence must be at the
+    // floor. This is the property that matters: bands are independent.
+    bool toneLoud = true, silenceQuiet = true;
+    for (float v : out[0]) if (v < 0.5f) toneLoud = false;
+    for (float v : out[1]) if (v > 1e-6f) silenceQuiet = false;
+    check(toneLoud, "the band containing the tone reads loud in every frame");
+    check(silenceQuiet, "the band in silence reads zero in every frame");
+
+    // Consistency: analyseBands must agree with analyse + bandValues called by
+    // hand. This is what catches a wrong hopRate being forwarded.
+    {
+      const spectra::Spectrogram sp = spectra::analyse(mono.data(), N, cfg);
+      const std::vector<float> manual = spectra::bandValues(sp, bands[0], cfg.hopRateHz);
+      bool same = manual.size() == out[0].size();
+      if (same) for (size_t i = 0; i < manual.size(); ++i) if (manual[i] != out[0][i]) same = false;
+      check(same, "matches analyse() + bandValues() called separately (hop rate forwarded correctly)");
+    }
+
+    // Empty band list yields an empty result rather than crashing.
+    {
+      const std::vector<spectra::BandSpec> none;
+      check(spectra::analyseBands(mono.data(), N, cfg, none).empty(), "no bands yields an empty result");
+    }
+
+    // An invalid config makes analyse() return its zeroed Spectrogram, whose
+    // frameCount is 0. analyseBands does NOT skip bands in that case — the
+    // compiled loop calls bandValues for every band regardless — and bandValues
+    // returns an empty vector when frameCount is 0. So the result is one EMPTY
+    // row per band, not an empty result. That distinction is also what the
+    // zero-initialisation of Spectrogram protects: without it this path read an
+    // indeterminate frameCount and crashed.
+    {
+      spectra::AnalysisConfig bad = cfg; bad.fftSize = 48;   // not a power of two
+      const auto rows = spectra::analyseBands(mono.data(), N, bad, bands);
+      check(rows.size() == bands.size(), "an invalid config still yields one row per band");
+      bool allEmpty = true;
+      for (const auto& r : rows) if (!r.empty()) allEmpty = false;
+      check(allEmpty, "and every such row is empty, because frameCount is 0");
     }
   }
 
