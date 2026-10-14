@@ -60,7 +60,7 @@ modifies, moves or copies them.
 
 Be clear-eyed about this:
 
-- **Most function bodies.** Ten namespaces are recovered (see below); the other
+- **Most function bodies.** Eleven namespaces are recovered (see below); the other
   effects' DSP is still machine code. Names and signatures are free, behaviour needs
   per-function disassembly, and that is the bulk of the remaining work.
 - **`lutblend::parseCube`** (1924 instructions) is identified but unread, along with
@@ -79,7 +79,7 @@ Be clear-eyed about this:
   is untested. See `plugins/*/README.md` for exactly what is and is not claimed.
 
 So this repository contains a **complete architectural specification** of the fleet,
-ten recovered source namespaces, and two effects that build into loadable bundles —
+eleven recovered source namespaces, and two effects that build into loadable bundles —
 **not** a finished or verified product.
 
 ## The fleet
@@ -98,7 +98,7 @@ Two findings already worth acting on:
 
 ## Recovered source
 
-Ten recovered namespaces, all transcribed from the disassembly with per-function commentary
+Eleven recovered namespaces, all transcribed from the disassembly with per-function commentary
 citing the instructions that establish each behaviour:
 
 | Module | Contents | State |
@@ -113,6 +113,7 @@ citing the instructions that establish each behaviour:
 | `spectra::` | FFT, Hann window, STFT, band analysis, falloff envelope, `downmixToMono`, plus `Spectrogram` | **complete — all 13 functions, shared by 4 effects**, and 7 of them INSTRUCTION-IDENTICAL. The host integration is unread |
 | `beatsnap::` | The onset-detection core: `clampf`, `isPowerOfTwo`, `medianOfWindow`, `adaptiveThreshold`, `hannWindow`, `fftRadix2`, `downmixToMono` | **7 of 11** — `computeFlux` (416), `renderValues` (190), `pickOnsets` (136) and `detectOnsets` (47) are outstanding. `medianOfWindow` is **instruction-identical** (58/58), and the five shared-DSP copies are checked by divergence parity against the `spectra::` originals rather than by assuming a copy of a copy is faithful |
 | `chromakey::` | The colour and statistics layer: `clampf`, `rgbToYCbCr` (Rec.601), `sensitivityToThreshold`, `chromaDistance`, `hueAngle`, `angularDiff`, `percentile`, `percentileUnsorted`, `gradientMagnitude` | **9 of 15** namespace symbols — the denominator is the differ's own count, which sees one symbol per template instantiation, so `analyzeFrame<T>` and `renderView<T>` account for two each. Outstanding: `spillScore` (82), `uniformityScore` (203) and those four instantiations. `StoreReadout` is outside the namespace and takes a `PF_InData*`, so it stays out of `src/`. Six of the nine are **instruction-identical**, `rgbToYCbCr` among them at 25 of 25 |
+| `noisefield::` | The noise's definition and its normalisation: `clampf`, `clampi`, `fbmAmplitudeSum`, and `kGrad3` — the twelve edge gradients of Perlin's improved noise, read out of the bundle's `__TEXT,__const` | **3 of 10** functions, all three **instruction-identical**, plus the gradient table verified against the bundle's own bytes. `noise3` (183), `fbm3` (51), `PermTable::build` (109), `fieldAt` (226), `curlField` (163) and the two `apply<T>` loops (408/412) are outstanding — the table is recovered first because a noise built on different gradients is a different effect with the same names |
 
 Three fleet-wide duplications are recorded rather than silently deduplicated, because
 each was verified rather than assumed:
