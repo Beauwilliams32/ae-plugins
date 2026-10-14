@@ -76,7 +76,42 @@ ccmp / b.eq             ; 3. isPowerOfTwo(n), via the helper above
 ```
 
 Condition 2 compares *byte lengths*, so it is a size equality check, not a
-capacity check. The butterfly body is large and has not been recovered.
+capacity check.
+
+The body is 101 instructions, and its **structure** is now recovered even though
+the exact indexing is not yet transcribed instruction-by-instruction. Evidence:
+
+- **Exactly one external call: `___sincosf_stret`.** The twiddles are computed by
+  a single combined sin+cos, not separate `sinf`/`cosf` calls. There is no other
+  call in the function.
+- **The angle immediate is `0xc0c90fdb`, which is `-2*pi`** — the negative twin of
+  the `0x40c90fdb` (`+2*pi`) found in `hannWindow`. A forward FFT needs
+  `exp(-2*pi*i*k/N)`, so the sign is the forward convention and no conjugation is
+  required afterwards.
+- **`fneg s2, s0` immediately after the call** negates the sine result, which is
+  consistent with using `-sin` from the twiddle pair rather than post-negating.
+- **The stride arithmetic is `lsr x9, x22, #1` (= N/2, the butterfly's partner
+  offset) and `lsl x10, x22, #2` (= N*4 bytes, the per-stage stride).** The loads
+  then read `[x13]` and `[x13, x9, lsl #2]` for the real part and the same pair
+  for the imaginary part — i.e. `a[k]` and `a[k + N/2]`, the decimation-in-time
+  pairing.
+- **The opcode mix is the butterfly and nothing else:** 4 `fmadd`, 3 `fmul`,
+  2 `fadd`, 2 `fsub`, 1 `fnmul`, 1 `fneg`. That is one complex
+  multiply-accumulate (2 `fmadd` + 2 `fmul`) feeding a sum/difference pair
+  (2 `fadd` + 2 `fsub`), plus the `-sin` handling.
+
+So: an **iterative radix-2 decimation-in-time Cooley-Tukey FFT**, forward
+convention, twiddles from a single `sincosf`.
+
+**What is NOT established:** the exact twiddle table indexing per stage (whether
+it steps by `N/2^stage` or recomputes), whether bit-reversal is performed inside
+this function or by the caller, and how many stages the loop nest actually runs.
+
+That distinction matters for the code: **no implementation of `fftRadix2` is
+provided.** Implementing a textbook radix-2 FFT and labelling it "recovered" would
+be a claim this evidence does not support, and an unverified FFT would be worse
+than an honest gap. The remaining work is instruction-level transcription of the
+loop nest, then property tests against a naive DFT.
 
 ### `SK_DrawSpectrumIntoFrame` — the render pipeline
 
