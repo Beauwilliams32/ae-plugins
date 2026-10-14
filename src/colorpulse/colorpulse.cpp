@@ -255,4 +255,103 @@ RGB averageColor(const RGB* pixels, size_t count) {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// brightestRegionColor(const RGB*, int, int, int)
+//
+// __ZN10colorpulse20brightestRegionColorEPKNS_3RGBEiii, 223 instructions, recovered in
+// full.
+//
+//     cmp  w3, #0x1 / csinc w11, w3, wzr, gt   ; step = max(step, 1)
+//     cmp  w1, w11 / csel w10, w1, w11, lo     ; cols = min(width,  step)
+//     cmp  w2, w11 / csel w11, w2, w11, lo     ; rows = min(height, step)
+//     fmov s1, #-1.00000000                    ; bestLuma starts BELOW every real luma
+//
+//     mul  w3, w9, w2 / udiv w3, w3, w11       ; y0 = gy * height / rows
+//     add  w9, w9, #0x1
+//     mul  w4, w9, w2 / udiv w4, w4, w11       ; y1 = (gy+1) * height / rows
+//     udiv w5, w8, w11                         ; w5 is y0 AGAIN -- the compiler kept a
+//                                              ; second copy rather than reusing w3
+//     cmp  w3, w4 / b.ge <next column>         ; an empty row skips the whole row
+//
+//     mul  w7, w6, w1 / udiv w7, w7, w10       ; x1, from gx+1
+//     mul  w19, w19, w1 / udiv w19, w19, w10   ; x0, from gx
+//
+// The `udiv`s are UNSIGNED divisions on values the guards have already made positive, and
+// they FLOOR. That matters for the cell boundaries: with height 300 and rows 4 the bands
+// are [0,75) [75,150) [150,225) [225,300), but with height 10 and rows 4 they are
+// [0,2) [2,5) [5,7) [7,10) -- the boundaries are computed independently per edge rather
+// than by accumulating a step, so no rounding error can accumulate.
+//
+// The cell mean reuses the reciprocal form:
+//
+//     ucvtf d17, x27 / fdiv d17, d3, d17       ; inv = 1.0 / count
+//     fmul  d16, d16, d17 / fcvt s16, d16      ; r
+//     fmul  d7, d7, d17 / fcvt s7, d7          ; g
+//     fmul  d6, d6, d17 / fcvt s6, d6          ; b
+//     fmov  s17, w13 / fmul  s17, s7, s17      ; g * 0.7152
+//     fmov  s18, w14 / fmadd s17, s16, s18, s17 ; r * 0.2126 + that
+//     fmov  s18, w15 / fmadd s17, s6, s18, s17  ; b * 0.0722 + that
+//     fcmp  s17, s1 / b.le <next cell>          ; strictly greater, so ties keep the FIRST
+//
+// and the tail substitutes zero when nothing won:
+//
+//     fcmp s1, #0.0 / fcsel s0, s0, s2, ge      ; s2 was zeroed just above
+//
+// The comparison is `b.le` on the negative, i.e. `if (luma > bestLuma)`, so a cell whose
+// luma EQUALS the running best does not displace it. On a uniform region every cell ties
+// and the top-left cell is returned.
+// ---------------------------------------------------------------------------
+RGB brightestRegionColor(const RGB* pixels, int width, int height, int step) {
+  if (pixels == nullptr) return RGB{0.0f, 0.0f, 0.0f};
+  if (width < 1) return RGB{0.0f, 0.0f, 0.0f};
+  if (height < 1) return RGB{0.0f, 0.0f, 0.0f};
+
+  const int cells = step > 1 ? step : 1;
+  const int cols = width < cells ? width : cells;
+  const int rows = height < cells ? height : cells;
+
+  RGB best{0.0f, 0.0f, 0.0f};
+  float bestLuma = -1.0f;
+
+  for (int gy = 0; gy < rows; ++gy) {
+    const int y0 = static_cast<int>((static_cast<long long>(gy) * height) / rows);
+    const int y1 = static_cast<int>((static_cast<long long>(gy + 1) * height) / rows);
+    if (y0 >= y1) continue;
+
+    for (int gx = 0; gx < cols; ++gx) {
+      const int x0 = static_cast<int>((static_cast<long long>(gx) * width) / cols);
+      const int x1 = static_cast<int>((static_cast<long long>(gx + 1) * width) / cols);
+
+      double sr = 0.0;
+      double sg = 0.0;
+      double sb = 0.0;
+      long long n = 0;
+      for (int y = y0; y < y1; ++y) {
+        const size_t rowBase = static_cast<size_t>(y) * static_cast<size_t>(width);
+        for (int x = x0; x < x1; ++x) {
+          const RGB& p = pixels[rowBase + static_cast<size_t>(x)];
+          sr += static_cast<double>(p.r);
+          sg += static_cast<double>(p.g);
+          sb += static_cast<double>(p.b);
+          ++n;
+        }
+      }
+      if (n == 0) continue;
+
+      const double inv = 1.0 / static_cast<double>(n);
+      const RGB mean{static_cast<float>(sr * inv),
+                     static_cast<float>(sg * inv),
+                     static_cast<float>(sb * inv)};
+      const float luma = luma709(mean);
+      if (luma > bestLuma) {
+        bestLuma = luma;
+        best = mean;
+      }
+    }
+  }
+
+  if (!(bestLuma >= 0.0f)) return RGB{0.0f, 0.0f, 0.0f};
+  return best;
+}
+
 }  // namespace colorpulse

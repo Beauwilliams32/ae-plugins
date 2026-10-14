@@ -7,12 +7,12 @@
 // Recovered from the demangled symbol table and disassembly of ColorPulse.plugin.
 // The original C++ was destroyed on 2026-10-13 with no remote and no backup.
 //
-// SCOPE. Seven of ten. `clampf`, `smoothScalar`, `luma709`, `smoothColor`,
-// `saturationBoost` (88 instructions), `regionBounds` (57) and `averageColor` (201) are
-// recovered in full. Three are NOT: `brightestRegionColor` (223), `dominantColor` (248)
+// SCOPE. Eight of ten. `clampf`, `smoothScalar`, `luma709`, `smoothColor`,
+// `saturationBoost` (88 instructions), `regionBounds` (57), `averageColor` (201) and
+// `brightestRegionColor` (223) are recovered in full. Two are NOT: `dominantColor` (248)
 // and `sampleColor` (215). Nothing is stubbed for them — and `sampleColor` CANNOT be
-// implemented before the other two, because it tail-calls both; that is a dependency, not
-// a decision.
+// implemented before `dominantColor`, which it tail-calls; that is a dependency, not a
+// decision.
 
 #pragma once
 
@@ -129,6 +129,45 @@ Rect regionBounds(Region region, int width, int height);
 // before `fadd`. Summing in float would lose low bits over a large region.
 // ---------------------------------------------------------------------------
 RGB averageColor(const RGB* pixels, size_t count);
+
+// ---------------------------------------------------------------------------
+// [exact] The colour of the BRIGHTEST CELL of a region, on a `step` x `step` grid.
+//
+//     step = max(step, 1)
+//     rows = min(height, step), cols = min(width, step)
+//     bestLuma = -1.0f                      ; so the first non-empty cell always wins
+//     for gy in [0, rows):
+//       y0 = gy * height / rows,  y1 = (gy+1) * height / rows
+//       if (y0 >= y1) continue              ; an empty row skips all its columns
+//       for gx in [0, cols):
+//         x0 = gx * width / cols,  x1 = (gx+1) * width / cols
+//         cell = mean of the pixels in [y0,y1) x [x0,x1)   ; double sum, reciprocal mean
+//         if (cell is empty) continue
+//         luma = luma709(cell)
+//         if (luma > bestLuma) { bestLuma = luma; best = cell }
+//     return bestLuma >= 0 ? best : {0,0,0}
+//
+// `step` is a NUMBER OF DIVISIONS PER AXIS, not a cell size. `cols = min(width, step)` is
+// how many COLUMNS the grid has, so step 1 is a single cell covering the whole region —
+// its mean — and a step at or above the axis length is one cell per pixel. Two self-checks
+// were written from the opposite reading first and failed, which is why it is spelled out.
+//
+// So it returns a REGION MEAN, not an individual pixel: the grid cell that is brightest
+// on average supplies its own average colour. Cell boundaries are `axis * index / count`
+// — integer division, floor, computed independently per edge, so no error accumulates.
+//
+// THE `-1` INITIALISER IS LOad-BEARING and explains the final guard. Colours are
+// non-negative, so a luma is too, and `bestLuma = -1` guarantees the first non-empty
+// cell is taken even if its luma is exactly 0 (a black cell). If NO cell is ever
+// non-empty, `bestLuma` stays at -1 and the tail's `fcmp s1, #0.0` / `fcsel ... ge`
+// substitutes zero — which is why that guard exists rather than an unconditional return.
+//
+// `luma709` is INLINED here by the bundle, with the same constant order as the standalone
+// function: `g * 0.7152 + r * 0.2126`, then `+ b * 0.0722`. This transcription CALLS it
+// rather than repeating the expression, which is bit-identical because the constants and
+// the association both match.
+// ---------------------------------------------------------------------------
+RGB brightestRegionColor(const RGB* pixels, int width, int height, int step);
 
 // ---------------------------------------------------------------------------
 // [PARTLY RECOVERED — the dispatcher, read but NOT implemented]

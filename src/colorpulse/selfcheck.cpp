@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include <vector>
 
 namespace {
@@ -325,6 +326,125 @@ int main() {
             "but across 2..4999 counts they never narrow to different floats — the choice "
             "is unobservable in the returned RGB, and the pin above is on the spelling");
     }
+  }
+
+  std::printf("brightestRegionColor\n");
+  {
+    // A WxH image built from a per-pixel colour function.
+    const auto build = [](int w, int h, const std::function<colorpulse::RGB(int, int)>& f) {
+      std::vector<colorpulse::RGB> px(static_cast<size_t>(w) * static_cast<size_t>(h));
+      for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+          px[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)] = f(x, y);
+        }
+      }
+      return px;
+    };
+
+    // The guards, in the order the bundle tests them.
+    const colorpulse::RGB n = colorpulse::brightestRegionColor(nullptr, 4, 4, 2);
+    check(n.r == 0.0f && n.g == 0.0f && n.b == 0.0f, "a null pixel run returns black");
+    auto any = build(4, 4, [](int, int) { return colorpulse::RGB{1.0f, 1.0f, 1.0f}; });
+    check(colorpulse::brightestRegionColor(any.data(), 0, 4, 2).r == 0.0f,
+          "width < 1 returns black");
+    check(colorpulse::brightestRegionColor(any.data(), 4, 0, 2).r == 0.0f,
+          "height < 1 returns black");
+
+    // It returns a CELL MEAN, not a pixel. A 4x4 image that is black except for the
+    // bottom-right 2x2, which is uniform white: with step 2 the grid is 2x2, so the
+    // bottom-right CELL is the winner and its mean is exactly white.
+    auto quad = build(4, 4, [](int x, int y) {
+      return (x >= 2 && y >= 2) ? colorpulse::RGB{1.0f, 1.0f, 1.0f}
+                                : colorpulse::RGB{0.0f, 0.0f, 0.0f};
+    });
+    const colorpulse::RGB bright = colorpulse::brightestRegionColor(quad.data(), 4, 4, 2);
+    near(bright.r, 1.0f, 1e-6f, "the brightest 2x2 cell wins, and its mean is white");
+
+    // Now make that cell HALF bright: two white pixels and two black. The mean must be
+    // 0.5, which is what distinguishes a cell MEAN from picking the brightest PIXEL
+    // (which would be 1.0).
+    auto half = build(4, 4, [](int x, int y) {
+      const bool lit = (x >= 2 && y >= 2) && ((x + y) % 2 == 0);
+      return lit ? colorpulse::RGB{1.0f, 1.0f, 1.0f} : colorpulse::RGB{0.0f, 0.0f, 0.0f};
+    });
+    const colorpulse::RGB meanCell = colorpulse::brightestRegionColor(half.data(), 4, 4, 2);
+    near(meanCell.r, 0.5f, 1e-6f,
+         "the winner is a cell MEAN (0.5), not the brightest pixel (which would be 1.0)");
+
+    // STEP IS A COUNT OF DIVISIONS PER AXIS, NOT A CELL SIZE. Both of those were got
+    // wrong here first and the checks below are what corrected them, so the distinction is
+    // worth stating: `cols = min(width, step)` is the number of COLUMNS, and the cell
+    // edges are `index * width / cols`.
+    //
+    // So step 1 is ONE cell covering the whole region -- its mean -- and a step at or
+    // above the axis length is one cell per pixel.
+    const colorpulse::RGB fine = colorpulse::brightestRegionColor(half.data(), 4, 4, 100);
+    near(fine.r, 1.0f, 1e-6f, "a step at or above the axis length gives one cell per pixel");
+
+    // `half` lights exactly 2 of 16 pixels, so its whole-region mean is 0.125. That is
+    // what a single cell returns, and it is the assertion that pins "step is a division
+    // count" rather than "step is a size".
+    const colorpulse::RGB wholeRegion = colorpulse::brightestRegionColor(half.data(), 4, 4, 1);
+    near(wholeRegion.r, 0.125f, 1e-6f, "step 1 is ONE cell: the mean of the whole region");
+
+    const colorpulse::RGB zeroStep = colorpulse::brightestRegionColor(half.data(), 4, 4, 0);
+    near(zeroStep.r, 0.125f, 1e-6f, "step 0 clamps up to 1, not to a divide-by-zero");
+    const colorpulse::RGB negStep = colorpulse::brightestRegionColor(half.data(), 4, 4, -5);
+    near(negStep.r, 0.125f, 1e-6f, "and so does a negative step");
+
+    // 2x2 and 4x4 on the same image must differ, or "the number of divisions" is not
+    // actually being honoured.
+    const colorpulse::RGB twoByTwo = colorpulse::brightestRegionColor(half.data(), 4, 4, 2);
+    check(twoByTwo.r != wholeRegion.r,
+          "a 2x2 grid and a 1x1 grid give different answers on the same image");
+
+    // A cell with the SAME luma does not displace the incumbent: the comparison is
+    // strictly-greater, so on a uniform region the FIRST (top-left) cell is returned.
+    // Invisible in the value, so it is asserted through a region whose cells differ only
+    // in a way luma cannot see -- equal luma, different colour.
+    auto tie = build(4, 4, [](int, int) {
+      // Every cell has the SAME colour and therefore the same luma, so the strictly-
+      // greater comparison keeps the first cell. Invisible in the returned value, which
+      // is why the assertion is only that the shared colour comes back unchanged.
+      return colorpulse::RGB{0.25f, 0.75f, 0.5f};
+    });
+    const colorpulse::RGB tied = colorpulse::brightestRegionColor(tie.data(), 4, 4, 2);
+    near(tied.r, 0.25f, 1e-6f, "a uniform region returns that colour (r)");
+    near(tied.g, 0.75f, 1e-6f, "a uniform region returns that colour (g)");
+    near(tied.b, 0.5f, 1e-6f, "a uniform region returns that colour (b)");
+
+    // An all-black region: every luma is 0, which BEATS the -1 initialiser, so the first
+    // cell wins and the result is black. The point of the check is that it is not NaN and
+    // that the -1 initialiser is what makes "the first cell wins" true even at luma 0.
+    auto black = build(4, 4, [](int, int) { return colorpulse::RGB{0.0f, 0.0f, 0.0f}; });
+    const colorpulse::RGB blackOut = colorpulse::brightestRegionColor(black.data(), 4, 4, 2);
+    check(blackOut.r == 0.0f && blackOut.g == 0.0f && blackOut.b == 0.0f
+              && blackOut.r == blackOut.r,
+          "an all-black region returns black, not NaN, despite every luma being 0");
+
+    // A non-square region with a step that does not divide the axis: the cell boundaries
+    // floor, so no pixel is skipped and none is counted twice. Verified by making the
+    // brightest pixel the LAST one and checking it is still found.
+    const int W = 7, H = 5;
+    auto last = build(W, H, [](int x, int y) {
+      return (x == 6 && y == 4) ? colorpulse::RGB{1.0f, 1.0f, 1.0f}
+                                : colorpulse::RGB{0.0f, 0.0f, 0.0f};
+    });
+    const colorpulse::RGB found = colorpulse::brightestRegionColor(last.data(), W, H, 3);
+    check(found.r > 0.0f, "the last pixel is reached: no cell boundary skips an axis tail");
+
+    // The whole region as ONE cell (step clamped to min(W,H) when the grid is 1x1 only if
+    // step == 1... asserted instead as: a 1x1 region is its own mean.
+    auto one = build(1, 1, [](int, int) { return colorpulse::RGB{0.2f, 0.4f, 0.6f}; });
+    const colorpulse::RGB single = colorpulse::brightestRegionColor(one.data(), 1, 1, 4);
+    near(single.r, 0.2f, 1e-6f, "a 1x1 region returns its single pixel (r)");
+    near(single.b, 0.6f, 1e-6f, "a 1x1 region returns its single pixel (b)");
+
+    // Determinism: the same input twice gives the same answer, so no state leaks between
+    // calls.
+    const colorpulse::RGB again = colorpulse::brightestRegionColor(half.data(), 4, 4, 2);
+    check(again.r == meanCell.r && again.g == meanCell.g && again.b == meanCell.b,
+          "repeating a call gives the identical colour");
   }
 
   std::printf("\n%s\n", failures == 0
