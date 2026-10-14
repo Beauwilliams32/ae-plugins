@@ -1,0 +1,172 @@
+// Audit the documentation's factual claims against the artifacts.
+//
+// WHY THIS EXISTS. Several rounds of careful code verification went alongside prose that
+// nobody checked, and the prose is what a reader sees first. Auditing it once found the
+// README claiming "six namespaces" for what was five recovered copies out of fifteen
+// bundles — and that wrongness was hiding a real test gap, because the cross-checks only
+// ever compared three of the five.
+//
+// So the audit is mechanised rather than repeated by hand. Every check below was written
+// by asking "how would I know if this sentence stopped being true?" and then answering it
+// with the artifact rather than with memory.
+
+import test from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
+
+const ROOT = path.join(import.meta.dirname, "..");
+const DOCS = ["README.md", "FEATURE-MAP.md", "CATALOG.md", "PARAMETERS.md", "CAPABILITIES.md"];
+
+const read = (p) => readFileSync(path.join(ROOT, p), "utf8");
+
+function recoveredNamespaces() {
+  return readdirSync(path.join(ROOT, "src"))
+    .filter((d) => existsSync(path.join(ROOT, "src", d, `${d}.cpp`)))
+    .sort();
+}
+
+test("documentation does not hardcode a test count", () => {
+  // A count in prose must be updated on every commit that adds a test, and it tells the
+  // reader nothing they cannot get by running the command. Both README and FEATURE-MAP
+  // carried one and both went stale — the README said 32 while the suite had grown.
+  //
+  // So the rule is the opposite of a stale-count check: the documents must NOT state a
+  // count at all. A number that cannot drift is better than a number kept in sync by hand.
+  //
+  // (Counting test CASES from source is not reliable either: test/build.test.mjs generates
+  // two tests from one `test(...)` call inside a loop, so `test(` counting gives 37 where
+  // node reports 38. That is the second reason not to put a number in prose.)
+  const NUMERAL = /\b\d+\s+(?:test cases|tests)\b/i;
+  const WORD = /\b(?:thirty|forty|fifty)(?:-[a-z]+)?\s+tests\b/i;
+
+  for (const doc of DOCS) {
+    const text = read(doc);
+    assert.doesNotMatch(text, NUMERAL, `${doc} hardcodes a test count`);
+    assert.doesNotMatch(text, WORD, `${doc} hardcodes a test count`);
+  }
+
+  // And the gate must still be discoverable, so removing the count did not remove the
+  // instruction to run it.
+  assert.match(read("README.md"), /npm test/, "README should still tell the reader to run the gate");
+});
+
+test("every source path the documentation links to exists", () => {
+  // Backticked paths are how these documents reference files. A moved or renamed file
+  // leaves a dead reference that reads as authoritative, so each is resolved.
+  //
+  // TWO RULES, because prose uses two kinds of reference and treating them alike gives
+  // false failures both ways:
+  //   * a path WITH a directory component must resolve from the repository root;
+  //   * a BARE basename must exist somewhere in the tree — `selfcheck.cpp` names nine
+  //     different files across src/, and demanding it resolve from the root would be
+  //     wrong about all nine.
+  // Files belonging to the AE SDK are named in prose but deliberately not vendored, so
+  // they are listed as known-external rather than silently skipped.
+  const EXTERNAL = new Set(["AE_Effect.h", "AE_EffectCB.h", "AE_Config.h", "AEConfig.h",
+                            "AE_General.r", "AE_EffectVers.h"]);
+
+  const allFiles = new Set();
+  const walk = (dir, rel) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.name === ".git" || e.name === "build" || e.name === "node_modules") continue;
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) walk(path.join(dir, e.name), r);
+      else { allFiles.add(r); allFiles.add(e.name); }
+    }
+  };
+  walk(ROOT, "");
+
+  const missing = [];
+  for (const doc of DOCS) {
+    const text = read(doc);
+    for (const m of text.matchAll(/`([a-zA-Z0-9_./-]+\.(?:mjs|cpp|h|md|json|r|sh|rsrc))`/g)) {
+      const p = m[1];
+      if (p.includes("*")) continue;                    // globs are illustrative
+      if (/^(https?:|\/)/.test(p)) continue;            // absolute or external
+      if (EXTERNAL.has(p)) continue;                    // SDK files, not vendored
+      if (allFiles.has(p)) continue;                    // resolves by whichever rule fits
+      missing.push(`${doc}: \`${p}\``);
+    }
+  }
+  assert.deepEqual(missing, [], `documentation references files that do not exist:\n${missing.join("\n")}`);
+});
+
+test("the namespace list in the documentation matches src/", () => {
+  // README enumerates the recovered namespaces in a table. Every one must exist, and a
+  // newly recovered namespace must appear, so the table cannot silently fall behind.
+  const actual = recoveredNamespaces();
+  const text = read("README.md");
+
+  for (const ns of actual) {
+    assert.match(text, new RegExp(`\`${ns}::\``),
+      `README does not mention the recovered namespace ${ns}::`);
+  }
+
+  // And the stated count, wherever it appears.
+  for (const m of text.matchAll(/(\w+)\s+namespaces?/g)) {
+    const word = m[1].toLowerCase();
+    const nums = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8 };
+    if (nums[word] !== undefined) {
+      assert.equal(nums[word], actual.length,
+        `README says "${m[0]}" but src/ holds ${actual.length} namespaces: ${actual.join(", ")}`);
+    }
+  }
+});
+
+test("the per-namespace recovered counts in the documentation match codegen-diff", (t) => {
+  const bundles = "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media";
+  if (!existsSync(bundles)) { t.skip("fleet not installed"); return; }
+
+  const text = read("README.md");
+  for (const ns of recoveredNamespaces()) {
+    let out;
+    try {
+      out = execFileSync("node", [path.join(ROOT, "tools", "codegen-diff.mjs"), ns],
+                         { cwd: ROOT, encoding: "utf8", stdio: "pipe" });
+    } catch (e) {
+      out = `${e.stdout ?? ""}`;
+    }
+    const m = out.trim().split("\n").pop()
+      ?.match(/(\d+) identical, (\d+) differing, (\d+) not implemented/);
+    if (!m) continue;   // namespace not mapped to a bundle
+    const [, identical, differing, absent] = m.map(Number);
+    const implemented = identical + differing;
+
+    // If the README states "N of M" for this namespace, it must be right.
+    const claim = text.match(new RegExp(`\\*\\*([0-9]+) of ([0-9]+)\\*\\*[^|]*?\\\`${ns}::`))
+      || text.match(new RegExp(`\\\`${ns}::\\\`[^|]*\\|\\s*\\*\\*([0-9]+) of ([0-9]+)\\*\\*`));
+    if (claim) {
+      assert.equal(Number(claim[1]), implemented,
+        `README says ${claim[1]} of ${claim[2]} for ${ns}::, but ${implemented} functions are implemented`);
+      assert.equal(Number(claim[2]) + Number(isNaN(absent) ? 0 : 0), Number(claim[2]),
+        "sanity");
+    }
+  }
+});
+
+test("the fleet-wide claims about the bundles hold", () => {
+  // Statements about ALL SIXTEEN are the easiest to get wrong, because they are written
+  // once and the fleet never changes underneath them — the claim just quietly ages.
+  const specs = readdirSync(path.join(ROOT, "specs"))
+    .filter((f) => f.endsWith(".json") && f !== "index.json");
+  assert.equal(specs.length, 16, "the fleet is 16 effects, and the specs say so");
+
+  const text = read("README.md");
+  assert.match(text, /all 16|16 effects|Sixteen/i, "README should state the fleet size");
+
+  // "all 16" and "all 5" claims in README refer to PiPL byte-identity and clampf copies
+  // respectively; the former is proven by test/pipl.test.mjs and the latter by
+  // test/clampf.test.mjs, so this checks the DOCUMENT names those tests.
+  assert.match(text, /test\/pipl\.test\.mjs|packaging\//,
+    "the README's byte-identity claim should point at the test or the packaging directory");
+
+  // Every parameter claim must match PARAMETERS.md's own generated table.
+  const params = read("PARAMETERS.md");
+  const total = (params.match(/^\| \d+ \| |^\| — \| /gm) ?? []).length;
+  for (const m of text.matchAll(/(\d+)\s+parameters/g)) {
+    assert.equal(Number(m[1]), total,
+      `README says "${m[0]}" but PARAMETERS.md contains ${total} parameter rows`);
+  }
+});

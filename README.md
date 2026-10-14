@@ -50,7 +50,7 @@ Run the whole chain yourself:
 
 ```bash
 npm run recover                 # specs + Catalog + PiPL sources + capability matrix
-npm test                        # 32 tests, including the byte-identity proofs
+npm test                        # the whole gate, including the byte-identity proofs
 ```
 
 `tools/recover.mjs` is **read-only** with respect to the installed bundles. It never
@@ -149,7 +149,7 @@ and that degenerate frames are safe. Six negative controls confirm those tests c
 one of them reproduces a real 16-bit stride bug that was written once in this repo.
 
 ```bash
-npm test                        # 32 tests
+npm test                        # the whole gate
 node tools/codegen-diff.mjs glitch   # instruction-level fidelity per namespace
 ```
 
