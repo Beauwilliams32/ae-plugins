@@ -223,6 +223,73 @@ int main() {
     }
   }
 
+
+  std::printf("rawBandLevel (band -> animatable level)\n");
+  {
+    spectra::Spectrogram sp;
+    sp.binCount = 16;
+    sp.hzPerBin = 100.0;              // bins at 0,100,...1500 Hz
+    std::vector<float> spectrum(16, 0.0f);
+    spectrum[3] = 0.5f;               // the loud bin
+    spectrum[4] = 0.25f;
+
+    auto band = [&](int mode, float lowHz, float highHz) {
+      spectra::BandSpec b{};
+      b.lowHz = lowHz; b.highHz = highHz; b.mode = mode;
+      b.thresholdDb = -200.0f;        // effectively no gate
+      b.floorDb = -100.0f;
+      b.ceilingDb = 0.0f;
+      b.gainDb = 0.0f;
+      return b;
+    };
+
+    // Peak mode reports the strongest bin in the band, not the sum. The band
+    // holds a 0.5 peak, and 0.5 amplitude is -6.0206 dB, so through a [-100, 0]
+    // window that lands at (100 - 6.0206)/100, NOT at full scale.
+    const float peak = spectra::rawBandLevel(spectrum, sp, band(1, 0.0f, 1600.0f));
+    checkNear(peak, (20.0f * std::log10(0.5f) + 100.0f) / 100.0f, 1e-4f,
+              "Peak mode: 0.5 peak = -6.02 dB -> 0.9398 of the window");
+
+    // Average mode over the same band: (0.5 + 0.25) / 16 = 0.0469, i.e. -26.6 dB.
+    const float avg = spectra::rawBandLevel(spectrum, sp, band(2, 0.0f, 1600.0f));
+    checkNear(avg, (20.0f * std::log10((0.5f + 0.25f) / 16.0f) + 100.0f) / 100.0f, 1e-4f,
+              "Average mode: mean of the band, not the peak");
+
+    // RMS mode sits between peak and average for this sparse spectrum.
+    const float rms = spectra::rawBandLevel(spectrum, sp, band(3, 0.0f, 1600.0f));
+    check(rms > avg && rms < peak, "RMS mode sits between average and peak");
+
+    // A reversed band (high < low) is swapped, not rejected.
+    const float reversed = spectra::rawBandLevel(spectrum, sp, band(1, 1600.0f, 0.0f));
+    checkNear(reversed, peak, 0.0f, "a reversed band is swapped, giving the same level as the forward one");
+
+    // The threshold is a gate.
+    spectra::BandSpec gated = band(1, 0.0f, 1600.0f);
+    gated.thresholdDb = 50.0f;        // nothing can reach +50 dB
+    checkNear(spectra::rawBandLevel(spectrum, sp, gated), 0.0f, 0.0f, "above the threshold, the band reads 0");
+
+    // A degenerate range reports 0 rather than dividing by zero.
+    spectra::BandSpec flat = band(1, 0.0f, 1600.0f);
+    flat.ceilingDb = flat.floorDb;
+    checkNear(spectra::rawBandLevel(spectrum, sp, flat), 0.0f, 0.0f, "ceiling == floor returns 0, not inf/NaN");
+
+    // THE OBSERVED EDGE CASE, asserted so it cannot regress silently and so the
+    // suggested fix is obviously a behaviour change rather than a tidy-up.
+    // Subtract 30 dB via negative gain so the level lands below floorDb while
+    // still passing the threshold test (threshold below floor).
+    spectra::BandSpec raw = band(1, 0.0f, 1600.0f);
+    raw.gainDb = -200.0f;             // enough to fall far below floorDb
+    raw.thresholdDb = -1000.0f;       // deliberately BELOW floorDb, so no early gate
+    raw.floorDb = -100.0f;
+    const float below = spectra::rawBandLevel(spectrum, sp, raw);
+    check(below < 0.0f,
+          "gain pushing the level below floorDb yields a NEGATIVE value (observed; clampf would give 0)");
+
+    // Empty spectrum and zero bins are guarded.
+    checkNear(spectra::rawBandLevel(std::vector<float>(), sp, band(1, 0.0f, 1600.0f)), 0.0f, 0.0f,
+              "empty spectrum returns 0");
+  }
+
   std::printf("\n%s\n", failures == 0 ? "ALL RECOVERED MATHS VERIFIED" : "TRANSCRIPTION ERRORS PRESENT");
   return failures == 0 ? 0 : 1;
 }

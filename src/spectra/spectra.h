@@ -26,10 +26,26 @@ namespace spectra {
 // SK_ReadBandSpec(PF_ParamDef**, int, BandSpec*) and the authored parameter
 // strings ("Band %s Enabled", "%s Low Freq (Hz)", "%s High Freq (Hz)") pin the
 // three fields and their order.
+// [RECOVERED LAYOUT] rawBandLevel() reads seven fields and its arithmetic pins
+// every one, including the four dB fields:
+//
+//   ldp s2, s3, [x2]       ; lowHz @0, highHz @4
+//   ldr w11, [x2, #0x8]    ; mode @8, compared against 1/2/3
+//   ldr s0,  [x19, #0xc]   ; thresholdDb @0xc  (below it the band reads 0)
+//   ldp s2, s0, [x19,#0x10]; floorDb @0x10, ceilingDb @0x14
+//   ldr s1,  [x19, #0x18]  ; gainDb @0x18  (added to the level before thresholding)
+//
+// The three mode values are not guesses: the effect's own popup option string is
+// "Peak|Average|RMS", and the loop selects peak (1), sum/count (2) and
+// sqrt(sumSquares/count) (3) for exactly those.
 struct BandSpec {
-  float lowHz;
-  float highHz;
-  bool enabled;
+  float lowHz;         // [recovered] offset 0
+  float highHz;        // [recovered] offset 4
+  int mode;            // [recovered] offset 8: 1 = Peak, 2 = Average, 3 = RMS
+  float thresholdDb;   // [recovered] offset 0xc
+  float floorDb;       // [recovered] offset 0x10
+  float ceilingDb;     // [recovered] offset 0x14
+  float gainDb;        // [recovered] offset 0x18
 };
 
 // [inferred] FFT analysis settings. The parameter strings expose "FFT Size",

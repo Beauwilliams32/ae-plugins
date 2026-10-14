@@ -311,4 +311,137 @@ void fftRadix2(std::vector<float>& re, std::vector<float>& im) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// rawBandLevel(const std::vector<float>& spectrum,
+//              const Spectrogram& spectrogram,
+//              const BandSpec& band)
+//
+// __ZN7spectra12rawBandLevelE..., 107 instructions, recovered in full. This is
+// the function that turns a magnitude spectrum into the value the effect bakes
+// as a keyframe, so it is the heart of "turn a spectrum into animatable numbers".
+//
+// PHASE 1 - guards (0x1704..0x1788):
+//     ldp x8, x9, [x0]            ; spectrum begin/end
+//     ldr w10, [x1]               ; binCount
+//     cmp x8, x9 / ccmp w10,#1    ; spectrum non-empty AND binCount >= 1
+//     b.lt <return 0.0>
+//     ldr d1, [x1, #0x8]          ; hzPerBin
+//     fcmp d1, #0.0 / b.ls        ; <= 0 -> both bin bounds become 0
+//
+// PHASE 2 - band edges, tolerant of a reversed range (0x1728..0x177c):
+//     fcmp s2, s3 ; fcsel s4, s3, s2, mi   ; s4 = max(lowHz, highHz)
+//     fcmp s3, s2 ; fcsel s2, s3, s2, mi   ; s2 = min(lowHz, highHz)
+//   It SWAPS the edges rather than rejecting them, so a user who drags the band
+//   backwards still gets a sensible level. Each edge is then mapped to a bin with
+//   the same arithmetic as hzToBin - divide, fcvtas (ties away from zero), clamp
+//   high against binCount-1 with csel, clamp low with bic/asr#31 - and the two
+//   resulting bin indices are re-ordered the same way if they came out inverted.
+//   If the high bin is at or past spectrum.size() the level is 0.
+//
+// PHASE 3 - per-bin accumulation (0x17c0..0x1800). One loop computes all three
+//   measures at once and selects with chained fcsel, which is why the mode switch
+//   costs nothing per iteration:
+//     ldr s1, [x8, x13, lsl #2]   ; bin
+//     fmadd s2, s1, s1, s0        ; sumSquares += bin*bin
+//     fadd  s3, s0, s1            ; sum        += bin
+//     fcsel s1, s1, s0, mi        ; peak = max(accumulator, bin)
+//     cmp #1 / fcsel              ; mode 1 -> peak
+//     cmp #2 / fcsel              ; mode 2 -> sum
+//     cmp #3 / fcsel              ; mode 3 -> sumSquares
+//   The three mode values come straight from the effect's own popup string
+//   "Peak|Average|RMS".
+//
+// PHASE 4 - finalise the measure (0x1804..0x182c):
+//     fdiv s2, s0, (float)count   ; Average = sum / count
+//     fsqrt s3, s2                ; RMS     = sqrt(sumSquares / count)
+//   then the same 1/2/3 selection picks between peak, average and RMS.
+//
+// PHASE 5 - dB and range mapping (0x1830..0x18a0). This is linearToDb INLINED,
+//   recognisable by the identical 1e-9f guard (0x3089705f) and the *20 factor:
+//     db = 20 * log10(max(level, 1e-9f))
+//     db += band.gainDb
+//     if (db < band.thresholdDb) return 0.0f
+//     range = band.ceilingDb - band.floorDb
+//     if (range <= 0.0f) return 0.0f
+//     x = (db - band.floorDb) / range
+//   then x is clipped at the top only:
+//     fcsel s1, s1, s0, gt   ; s1 = (x > 1) ? 1.0f : x
+//     fcsel s0, s0, s1, mi   ; s0 = (x < 0) ? x : s1
+//
+// OBSERVED EDGE CASE, preserved deliberately rather than "fixed" here.
+// That last pair is NOT clampf. Where clampf returns the low bound for a value
+// below it, this returns THE NEGATIVE VALUE ITSELF. A band level can therefore
+// come out negative. In the shipped parameter set it is normally unreachable:
+// the threshold test above returns 0 first whenever floorDb >= thresholdDb. But
+// a user who sets floorDb < thresholdDb can reach it, and the effect would bake a
+// negative value. This is a candidate improvement, and it is reproduced here
+// exactly as compiled so the recovered behaviour and the suggestion stay
+// distinguishable.
+// ---------------------------------------------------------------------------
+float rawBandLevel(const std::vector<float>& spectrum,
+                   const Spectrogram& spectrogram,
+                   const BandSpec& band) {
+  if (spectrum.empty() || spectrogram.binCount < 1) return 0.0f;
+
+  int loBin = 0;
+  int hiBin = 0;
+
+  if (spectrogram.hzPerBin > 0.0) {
+    const float loHz = band.lowHz < band.highHz ? band.lowHz : band.highHz;
+    const float hiHz = band.lowHz < band.highHz ? band.highHz : band.lowHz;
+
+    const int lastBin = spectrogram.binCount - 1;
+    auto toBin = [&](float hz) {
+      int bin = static_cast<int>(std::llround(static_cast<double>(hz) / spectrogram.hzPerBin));
+      if (lastBin < bin) bin = lastBin;
+      if (bin < 0) bin = 0;
+      return bin;
+    };
+
+    int a = toBin(loHz);
+    int b = toBin(hiHz);
+    loBin = a > b ? b : a;
+    hiBin = a > b ? a : b;
+  }
+
+  if (hiBin >= static_cast<int>(spectrum.size())) return 0.0f;
+
+  // Phase 3+4: all three measures accumulated in one pass.
+  float accum = 0.0f;
+  float peak = 0.0f;
+  int count = 0;
+  for (int bin = loBin; bin <= hiBin; ++bin) {
+    const float v = spectrum[static_cast<size_t>(bin)];
+    const float sumSquares = v * v + accum;
+    const float sum = accum + v;
+    const float newPeak = accum < v ? v : accum;
+    if (band.mode == 1) accum = newPeak;
+    else if (band.mode == 2) accum = sum;
+    else if (band.mode == 3) accum = sumSquares;
+    peak = newPeak;
+    ++count;
+  }
+
+  if (count < 1) return 0.0f;
+
+  const float average = accum / static_cast<float>(count);
+  const float rms = std::sqrt(average);
+  float level = accum;
+  if (band.mode == 1) level = peak;
+  else if (band.mode == 2) level = average;
+  else if (band.mode == 3) level = rms;
+
+  // Phase 5: inlined linearToDb, gain, threshold, then the floor/ceiling range.
+  const float db = 20.0f * std::log10(level < 1e-9f ? 1e-9f : level) + band.gainDb;
+  if (db < band.thresholdDb) return 0.0f;
+
+  const float range = band.ceilingDb - band.floorDb;
+  if (range <= 0.0f) return 0.0f;
+
+  const float x = (db - band.floorDb) / range;
+  const float clippedHigh = x > 1.0f ? 1.0f : x;
+  return x < 0.0f ? x : clippedHigh;  // negative passes through — see note above
+}
+
+
 }  // namespace spectra
