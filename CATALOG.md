@@ -36,3 +36,35 @@
 **Every effect is pinned to the same version and SDK.** All 16 report effect version `0x00080001` and SDK `0x000d001d`, so the fleet was built from one SDK drop in a single pass.
 
 **The fleet carries real, factorable DSP.** Several effects expose proper domain namespaces rather than flat C, which makes the math recoverable: see `spectra::` in SpectraKeys (radix-2 FFT, Hann window, dB conversion, spectrogram band analysis) and the audio helpers in PathScribe.
+
+## The fleet vendors one DSP module into four effects
+
+Every effect namespaces its own code, and the audio/analysis helpers appear under four of
+those namespaces:
+
+| Function | Carriers | Instructions | Verdict |
+|---|---|---|---|
+| `fftRadix2` | SpectraKeys, PathScribe, BeatSnap | 100 | identical |
+| `hannWindow` | SpectraKeys, PathScribe, BeatSnap | 112 | identical |
+| `downmixToMono` | + BeatGridRuler | 116 | identical |
+| `analyse` | SpectraKeys, PathScribe | 341 | identical |
+| `Spectrogram` (dtor) | SpectraKeys, PathScribe | 29 | identical |
+| `linearToDb` | SpectraKeys, PathScribe | 12 | identical |
+| `isPowerOfTwo` | + BeatGridRuler | 6 | identical |
+| `clampf` | + BeatGridRuler | 5 | identical |
+| `dbToLinear` | SpectraKeys, PathScribe | 3 | identical |
+
+Verified by comparing disassembly with relocations and the namespace rename normalised
+out (`tools/dsp-duplication.mjs`, also a test). **No drift: the copies are in sync.**
+
+Two caveats worth recording, because both produced a false verdict during recovery:
+
+- The comparison is only valid once `adrp` page numbers, the trailing address comments
+  *and* the namespace inside mangled call targets are all stripped. Skipping any one of
+  them yields a spurious "these differ".
+- An early attempt reported functions "identical" while comparing two empty extractions.
+  The tool now refuses to compare anything under a minimum instruction count.
+
+**Implication:** recovering this module once yields correct maths for four effects. The
+per-effect namespaces, and `bandValues` (SpectraKeys) versus `barLevels` (PathScribe),
+are the only genuine differences.

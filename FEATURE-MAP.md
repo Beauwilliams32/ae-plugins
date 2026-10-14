@@ -31,6 +31,9 @@ is merely identified.
 | `spectra::Spectrogram::hzToBin` | `src/spectra/spectra.cpp` | **Recovered + verified** | `selfcheck.cpp` via `test/spectra.test.mjs` |
 | `Spectrogram` field layout (binCount @0, hzPerBin @8) | `src/spectra/spectra.h` | **Recovered** from `hzToBin`'s loads | `selfcheck.cpp` |
 | `spectra::Spectrogram::~Spectrogram` | `src/spectra/spectra.cpp` | **Recovered** (defaulted; matches the binary's vector teardown) | compile/link in `test/spectra.test.mjs` |
+| **Shared-DSP duplication proof** (machine-code compare, namespace-agnostic) | `tools/dsp-duplication.mjs` | **Working** — 9 functions, 26 copies, no drift | `test/spectra.test.mjs` |
+| Drift gate on the copied DSP | `tools/dsp-duplication.mjs` | **Working** — non-zero exit if any carrier diverges | `test/spectra.test.mjs` |
+| Per-effect namespace inventory (16 namespaces) | `specs/*.json` → `symbols.byScope.domain` | **Recovered** | `test/spectra.test.mjs` (reproducibility) |
 | The other 15 effects' function bodies | `specs/*.md` | **Identified only** — architecture recovered, bodies not | none yet |
 | Buildable plugin bundles (AE SDK at `0x000d001d`) | — | **Not started** | none |
 

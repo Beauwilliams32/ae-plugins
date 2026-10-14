@@ -81,3 +81,27 @@ test("the recovery is reproducible from the installed bundles", (t) => {
   const status = execFileSync("git", ["-C", ROOT, "status", "--porcelain", "specs/"], { encoding: "utf8" });
   assert.equal(status.trim(), "", `recover.mjs produced different specs:\n${status}`);
 });
+
+test("the shared DSP is identical across every carrier effect", (t) => {
+  // Four effects carry the same audio/analysis module under different
+  // namespaces. If one copy is ever edited in isolation the others silently
+  // keep the old behaviour, so this asserts they still agree — at the machine
+  // code level, with relocations and the namespace rename normalised out.
+  const tool = path.join(ROOT, "tools", "dsp-duplication.mjs");
+  let out, code = 0;
+  try {
+    out = execFileSync("node", [tool], { encoding: "utf8" });
+  } catch (err) {
+    out = err.stdout ?? "";
+    code = err.status ?? 1;
+  }
+  if (/no fleet installed/.test(out) || out.trim() === "") {
+    t.skip("fleet not installed on this machine");
+    return;
+  }
+  assert.equal(code, 0, `DSP copies have drifted:\n${out}`);
+  assert.match(out, /No drift/);
+  // Guard against the tool silently comparing nothing.
+  const verified = Number(out.match(/(\d+) functions verified identical/)?.[1] ?? 0);
+  assert.ok(verified >= 5, `expected several shared functions, saw ${verified}\n${out}`);
+});
