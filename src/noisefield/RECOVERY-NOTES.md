@@ -7,8 +7,8 @@ unstripped.
 
 ## State
 
-Three of the ten authored functions are recovered, plus the gradient table. All three
-functions are **instruction-identical** to the shipped binary.
+Six of the ten authored functions are recovered, plus the gradient table. Three are
+instruction-identical; the noise core is verified against an independent oracle.
 
 | Function | Instrs | State |
 |---|---|---|
@@ -16,86 +16,91 @@ functions are **instruction-identical** to the shipped binary.
 | `clampi` | 5 | Recovered — **instruction-identical** |
 | `fbmAmplitudeSum` | 15 | Recovered — **instruction-identical** |
 | `kGrad3` (data, 12 × 3 int) | 144 bytes | Recovered — **verified against the bundle's bytes** |
-| `PermTable::build` | 109 | Identified only |
-| `noise3` | 183 | Identified only |
-| `fbm3` | 51 | Identified only |
+| `noise3` | 183 | Recovered — **verified against a textbook oracle** (183 here, 183 shipped) |
+| `fbm3` | 51 | Recovered — verified against the oracle (51 here, 51 shipped) |
+| `PermTable::build` | 109 | Recovered — verified against a shuffle oracle (63 here) |
 | `fieldAt` | 226 | Identified only |
 | `curlField` | 163 | Identified only |
 | `apply<unsigned char>` | 408 | Identified only |
 | `apply<unsigned short>` | 412 | Identified only |
 
-`test/noisefield.test.mjs` asserts this table against `tools/codegen-diff.mjs`.
+`test/noisefield.test.mjs` asserts that table against `tools/codegen-diff.mjs`.
 
-## The gradient table is recovered before the noise, deliberately
+## Why `noise3` is verified by an oracle rather than by the differ
 
-`kGrad3` is the twelve edge gradients of Perlin's improved noise, and a noise built
-from a different gradient set is a *different effect with the same function names*.
-So the table was recovered and verified first, and `noise3` — which is next — has to
-agree with it.
+`noise3` and `fbm3` compile to **the same instruction counts as the bundle** — 183 and
+51 — but with a different register schedule, so 152 of 183 positions differ textually.
+The differ cannot distinguish "the same algorithm, allocated differently" from "a
+different algorithm", and for this function that distinction is the whole question.
 
-It was read from the arm64 slice's `__TEXT,__const` at `0x3c28` as 36 32-bit words,
-each holding one small signed integer:
+So the self-check contains an **independently written implementation** of Perlin's
+improved noise — written in `double`, from the recovered description, not by calling
+the function under test — and the implementation is compared against it:
 
-```
-(1,1,0) (-1,1,0) (1,-1,0) (-1,-1,0) (1,0,1) (-1,0,1)
-(1,0,-1) (-1,0,-1) (0,1,1) (0,-1,1) (0,1,-1) (0,-1,-1)
-```
+- 4000 points agree to **7.8e-07**, which is `float`-against-`double` rounding. A wrong
+  corner is off by ~1; a missing `0.9` by ~0.06.
+- The noise is **exactly 0 at every integer lattice point**, over a 7×7×7 block. That
+  falls out of the fade weights and would break immediately under a transposed index.
+- The output **never exceeds 0.9** in magnitude over 20000 samples.
 
-That matches the canonical table both as a set and in order, every entry has squared
-length 2, and all twelve are distinct. The test reads the twelve triples out of the
-binary and compares them to the source, so the claim is against the artefact rather
-than against a transcription.
+Three deliberate slips were built and each failed the checks that claim to catch it:
 
-Two things about getting there are worth recording, because both looked like findings
-and were mistakes:
+| Deliberate change | What failed | Worst error |
+|---|---|---|
+| Drop the `* 0.9f` | the oracle comparison, and every `fbm3` case | 0.0636 — the scale change exactly |
+| Give one corner the wrong offset (`x1` where `fx` belongs) | the oracle comparison, the 0.9 bound, and the seed-difference check | 0.871 |
+| Use `h % 16` instead of `h % 12` | everything, at once | 2.46e+08 |
 
-- Reading the section by *file offset* produced 40 zero floats. The binary is
-  universal, and `otool -l` without an architecture prints both slices' sections, so
-  the section address and the offset came from different slices. `otool -s` prints the
-  section's words with their addresses and needs no offset arithmetic at all.
-- The first decode was as floats, which produced `nan` and denormals — because the
-  values are **integers**, not floats. The word pattern `00000001 00000001 00000000
-  ffffffff` is `(1, 1, 0)` then `(-1, 1, 0)` read as signed 32-bit, not as an
-  encoding of floats.
+The third is worth keeping in mind: `kGrad3` has exactly twelve entries, so `h % 16`
+**reads past the end of the table**. The `% 12` is not a detail of the maths, it is
+what keeps the lookup in bounds, and the check demonstrates that by producing a
+garbage value rather than a slightly wrong one.
 
-**One deliberate deviation from the original.** In the bundle `kGrad3` is a *local*
-symbol (`nm -S` reports `s`), inside an anonymous namespace, so nothing outside its
-translation unit can reference it. It is declared in `noisefield.h` instead, so the
-self-check can assert its contents; the only way to verify a table is to look at it.
-That means a caller linking against this header sees a symbol the shipped bundle does
-not export, and it is recorded here rather than glossed over.
+## `PermTable::build` — a permutation written twice, and why
 
-## `fbmAmplitudeSum` — the guard is reachable, the clamp is not
+Fisher-Yates descending (i = 255 down to 1), driven by xorshift32 (shifts 13, 17, 5)
+whose state advances **once per iteration**, with `j = seed % (i + 1)`. A seed of 0 is
+replaced by `0x9e3779b9`, the golden-ratio constant, so that 0 is a usable seed rather
+than a degenerate one.
 
-The function is `1 + gain + gain^2 + ...`, then `sum > 1e-6f ? sum : 1.0f`, with the
-octave count clamped to at least one.
+Two details from the instructions that a rewrite would lose:
 
-The 1e-6f is a divide-by-zero guard, and it is **reachable — but only through a
-negative gain**: the first term is always 1, so the only way the sum reaches zero is
-for the later terms to cancel it, which `gain = -1` does exactly. The self-check
-pins that (`fbmAmplitudeSum(2, -1.0f) == 1.0f`) alongside `gain = -0.5` giving 0.5, so
-the guard cannot be mistaken for "always returns 1".
+- The identity permutation is **copied out of `__TEXT,__const`**, where the bytes
+  `00 01 02 ... ff` are stored literally. The first transcription filled `tmp[i] = i`
+  in a loop, which compiled to 24 fewer instructions; the source had a constant table.
+  (Even with the literal, this build emits 63 instructions against the bundle's 109:
+  clang expands the 256-byte copy differently in each. The behaviour is what is
+  verified.)
+- The output is **512 bytes: the permutation written twice**. `noise3` indexes with
+  `p[AA + 1]`, where `AA = p[A] + zi` can already be 510, so the second copy is what
+  makes the upper z-slice's lookup legal without a modulo.
 
-The clamped count, by contrast, is **not observable**: a count of 0 or less skips the
-loop and leaves the sum at 0, which the guard then turns into 1.0 — the same answer
-one octave would give. So the `csinc` is redundant given the guard. It is transcribed
-because it is in the binary, and recorded as unobservable because claiming a
-behaviour for it would be a claim the binary cannot support.
+## `fbm3` — which parameter is which
 
-## Two instruction-level deductions that made functions identical
+The signature is `(table, x, y, z, octaves, gain, lacunarity)`, and the last two are
+easy to read the wrong way round. They are settled by the two multiplies at the bottom
+of the loop: the SIXTH parameter (the first float after the count) multiplies the
+**frequency** and the SEVENTH multiplies the **amplitude**. So a caller passing them
+in the other order gets a field that still looks like noise and has the wrong
+roughness.
 
-Both came from reading the schedule rather than the maths, the same way
-`rgbToYCbCr` and `percentileUnsorted` were settled in `chromakey`:
+The normalisation — `1 + gain + gain² + ...`, with the 1e-6f guard — is the arithmetic
+of `fbmAmplitudeSum`, which the compiler inlined into `fbm3`. The transcription calls
+the function instead, which is bit-identical and keeps one definition of the
+normalisation; the differ sees a call where the bundle has inline code, and that is
+recorded here rather than hidden.
 
-- The shipped code builds `1.0f` **before** `0.0f` (`fmov s2, #1.0` then
-  `movi.2d v1, #0`), which is declaration order, not semantics.
-- It accumulates as `fadd s1, s2, s1` — that is `amplitude + sum`, not `sum +
-  amplitude`. Writing the addition the other way round left 3 of 15 positions
-  differing.
+## A trap in verifying this by coordinate
+
+The oracle comparison started with a sweep to 257 and reported a worst error of
+1.8e-05, which looked like a transcription error. It was not: the implementation is
+`float` and the oracle is `double`, and a coordinate of 257.3 leaves seven significant
+digits, so the two disagree on the *fraction* by more than the algorithm's error. The
+sweep now stays inside ±8 and compares with the same `float`-rounded inputs the
+implementation receives, which brought the worst error to 7.8e-07.
 
 ## What is next
 
-`noise3` (183 instructions) is the core and the next target, then `fbm3` (51, which
-calls it), then `PermTable::build` (109). `fieldAt`, `curlField` and the two
-`apply<T>` loops follow. The recovered `kGrad3` is the anchor `noise3` will be
-verified against, and `fbmAmplitudeSum` is the normalisation `fbm3` divides by.
+`fieldAt` (226) and `curlField` (163) are the effect's own layers over this core, then
+the two `apply<T>` per-pixel loops (408/412). `fieldAt` is the one that turns the
+normalised noise into the effect's output range, so it is the next target.

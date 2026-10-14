@@ -16,8 +16,13 @@ const SRC = path.join(ROOT, "src", "noisefield");
 const BUNDLE = "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media"
   + "/NoiseField.plugin/Contents/MacOS/NoiseField";
 
-/** The functions transcribed here. */
-const RECOVERED = ["clampf", "clampi", "fbmAmplitudeSum"];
+/**
+ * The functions transcribed here.
+ *
+ * `PermTable` is `PermTable::build` — the differ names it by its class, since the
+ * mangled symbol carries no method name the differ prints.
+ */
+const RECOVERED = ["clampf", "clampi", "fbmAmplitudeSum", "PermTable", "noise3", "fbm3"];
 
 /**
  * The rest, as `tools/codegen-diff.mjs` names them.
@@ -28,7 +33,7 @@ const RECOVERED = ["clampf", "clampi", "fbmAmplitudeSum"];
  * the measurement rather than against a tidier list.
  */
 const OUTSTANDING = [
-  "PermTable", "noise3", "fbm3", "fieldAt", "_GLOBAL__N_1",
+  "fieldAt", "_GLOBAL__N_1",
   "apply(IhEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEf)",
   "apply(ItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEf)",
 ];
@@ -68,7 +73,7 @@ test("recovered noisefield source compiles and its maths verifies", (t) => {
     assert.match(out, /ALL RECOVERED NOISEFIELD MATHS VERIFIED/, `self-check failed:\n${out}`);
     assert.doesNotMatch(out, /\bFAIL\b/, out);
     const passes = (out.match(/^  PASS/gm) ?? []).length;
-    assert.ok(passes >= 24, `expected >= 24 checks, saw ${passes}`);
+    assert.ok(passes >= 44, `expected >= 44 checks, saw ${passes}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -146,13 +151,25 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
       `expected an unrecovered symbol starting "${frag}" — got ${absent.join(", ")}`);
   }
 
-  // All three are instruction-identical. That is a stronger claim than "recovered", so
-  // it is asserted rather than left to the tally.
-  for (const fn of RECOVERED) {
+  // Three are instruction-identical, and that is a stronger claim than "recovered", so
+  // the three are named rather than left to the tally.
+  for (const fn of ["clampf", "clampi", "fbmAmplitudeSum"]) {
     assert.match(out, new RegExp(`MATCH\\s+noisefield::${fn}\\s+\\d+ instructions, identical`),
       `${fn} is no longer instruction-identical to the bundle`);
   }
+
+  // The other three are NOT identical and are not expected to be: `noise3` and `fbm3`
+  // compile to the right instruction COUNT (183 and 51) with a different register
+  // schedule, and `PermTable::build` differs in how clang expands the 256-byte copy.
+  // Their behaviour is verified against the textbook oracle in the self-check instead,
+  // which is the stronger test for this kind of code — so the counts are pinned here
+  // so that a schedule change is visible rather than silent.
+  assert.match(out, /DIFFER\s+noisefield::noise3\s+shipped=183 mine=183/,
+    "noise3 should compile to the same instruction count as the bundle");
+  assert.match(out, /DIFFER\s+noisefield::fbm3\s+shipped=51 mine=51/,
+    "fbm3 should compile to the same instruction count as the bundle");
+
   const summary = out.trim().split("\n").pop();
-  assert.match(summary, /3 identical, 0 differing, 7 not implemented/,
+  assert.match(summary, /3 identical, 3 differing, 4 not implemented/,
     `the differ's tally moved: ${summary}`);
 });
