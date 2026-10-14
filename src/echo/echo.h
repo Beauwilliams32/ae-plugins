@@ -12,6 +12,26 @@
 // (122) are NOT: they are identified, with their signatures and sizes known and their
 // bodies unread. Nothing is stubbed for them — they are simply absent — and the trail
 // geometry they implement is therefore not recovered.
+//
+// PARTIAL FINDINGS on buildLadder, recorded so the next pass does not start over:
+//   * it returns a vector of 12-BYTE records by value, so a record is three floats;
+//   * the count is `clamp(n, 0, 16)`, computed branchlessly as
+//     `bic w8, w0, w0, asr #31` then `csel` against 16 — and n < 1 returns an EMPTY
+//     vector rather than one clamped entry;
+//   * every record is initialised to {1.0, 1.0, 0.0}, established twice over: the
+//     scalar tail writes `fmov.2s v0, #1.0` + `str wzr, [x9, #8]`, and the SIMD path
+//     fills from three 16-byte literals at 0x3600/0x3610/0x3620 which, read as 12-byte
+//     records, are eight copies of exactly the same triple;
+//   * records 1..n-1 are then overwritten in a loop that multiplies the third float
+//     ARGUMENT by the record index (`fmul s3, s8, s4` with s4 = (float)i), so that
+//     argument is a per-step increment;
+//   * record 0 is left at {1, 1, 0}.
+//
+//   UNRESOLVED, and deliberately not guessed at: which register holds the second float
+//   argument by the time the loop runs. The prologue spills q0 and reloads it into q6,
+//   then `mov.s v6[1], v1[0]` overwrites the upper lane from a DIFFERENT saved
+//   register. Two readings are consistent with the instruction stream and they give
+//   different ladders, so buildLadder stays unimplemented until one is ruled out.
 
 #pragma once
 

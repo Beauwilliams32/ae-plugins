@@ -23,7 +23,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 const ROOT = path.join(import.meta.dirname, "..");
@@ -102,6 +102,20 @@ test("codegen fidelity across the recovered namespaces does not regress", (t) =>
       `${ns}: ${r.identical} instruction-identical functions, floor is ${IDENTICAL_FLOOR[ns]}`
       + `\n${r.raw}`);
   }
+});
+
+test("branch targets are compared structurally, not as label text", () => {
+  // The shipped binary branches to a resolved ADDRESS and fresh assembly branches to
+  // a LABEL. Comparing those textually reports a difference for EVERY branch, which
+  // is what made speedramp's four functions look wrong when only register allocation
+  // actually differed. Both sides are now reduced to "branch to instruction N".
+  const src = readFileSync(path.join(ROOT, "tools", "codegen-diff.mjs"), "utf8");
+  assert.match(src, /function resolveBranchTargets/, "the resolver must exist");
+  assert.match(src, /->instr#/, "targets must be rewritten to an instruction index");
+
+  // And it must be wired into the comparison, not merely defined.
+  assert.match(src, /resolveBranchTargets\(fromOtool/, "the shipped side must be resolved");
+  assert.match(src, /resolveBranchTargets\(fromAsm/, "and the fresh side too");
 });
 
 test("the codegen differ distinguishes a real mismatch from whitespace", (t) => {

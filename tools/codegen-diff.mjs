@@ -45,6 +45,45 @@ function bundlePath(plugin) {
   return null;
 }
 
+/**
+ * Resolve branch targets to instruction INDICES before comparing.
+ *
+ * This is the fix for the differ's biggest source of false positives. The shipped
+ * binary branches to a resolved ADDRESS (`b.ls 0x768`) while freshly compiled
+ * assembly branches to a LABEL (`b.ls LBB0_8`), and comparing those TEXTUALLY reports
+ * a difference for every single branch. That drowned the real signal on every function
+ * with control flow — it is why speedramp's four functions all looked wrong when only
+ * register allocation actually differed.
+ *
+ * Reducing both sides to "branch to instruction N" makes the comparison structural:
+ * the same jump to the same relative position, whatever the labels are called. A
+ * target that cannot be resolved on either side is left alone so it still shows up.
+ */
+const BRANCH_TO = /^(b(?:\.\w+)?|cbz|cbnz|tbz|tbnz)\s+(\S+)$/;
+
+function resolveBranchTargets(entries) {
+  // Index of the instruction each label precedes, for the fresh-assembly side.
+  const labelIndex = new Map();
+  entries.forEach((e, i) => { if (e.label) labelIndex.set(e.label, i); });
+  // Address -> index, for the shipped side.
+  const addrIndex = new Map();
+  entries.forEach((e, i) => { if (e.addr !== null) addrIndex.set(e.addr, i); });
+
+  return entries.map((e) => {
+    const m = e.text.match(BRANCH_TO);
+    if (!m) return e.text;
+    const token = m[2];
+    let idx = null;
+    if (e.addr !== null) {
+      const asAddr = Number(token);
+      if (!Number.isNaN(asAddr)) idx = addrIndex.get(asAddr) ?? null;
+    }
+    if (idx === null && labelIndex.has(token)) idx = labelIndex.get(token);
+    if (idx === null) return e.text;    // unresolved: leave it visible
+    return `${m[1]} ->instr#${idx}`;
+  });
+}
+
 /** Pull one function's instructions out of otool -tV output.
  *
  *  A symbol line is a bare `_name:` at column 0; instruction lines start with a
@@ -59,8 +98,8 @@ function fromOtool(text, symbolFragment) {
       continue;
     }
     if (!on) continue;
-    const m = line.match(/^[0-9a-f]+\t(\S+)\t?(.*)$/);
-    if (m) out.push(normalize(`${m[1]} ${m[2]}`));
+    const m = line.match(/^([0-9a-f]+)\t(\S+)\t?(.*)$/);
+    if (m) out.push({ addr: parseInt(m[1], 16), label: null, text: normalize(`${m[2]} ${m[3]}`) });
   }
   return out;
 }
@@ -76,20 +115,26 @@ function fromOtool(text, symbolFragment) {
 function fromAsm(text, symbolFragment) {
   const out = [];
   let on = false;
+  let label = null;
   for (const line of text.split("\n")) {
     if (isLabel(line)) {
+      // `isLabel` matches FUNCTION symbols only (Mach-O underscore prefix), so a hit
+      // here while already inside one means the next function has started.
       if (on) break;
       on = line.includes(symbolFragment);
+      label = on ? line.replace(/:$/, "") : null;
       continue;
     }
     if (!on) continue;
+    // Local labels (LBB0_1:) are branch TARGETS, not boundaries. Recording them lets
+    // resolveBranchTargets turn a label into an instruction index.
+    const localLabel = line.match(/^([A-Za-z_$][A-Za-z0-9_$.]*):/);
+    if (localLabel) { label = localLabel[1]; continue; }
     if (!line.startsWith("\t")) continue;
-    {
-      const body = line.slice(1).split(";")[0];   // drop "; =0x.." annotations
-      const norm = normalize(body);
-      if (!norm || norm.startsWith(".")) continue;
-      out.push(norm);
-    }
+    const body = line.slice(1).split(";")[0];   // drop "; =0x.." annotations
+    const norm = normalize(body);
+    if (!norm || norm.startsWith(".")) continue;
+    out.push({ addr: null, label, text: norm });
   }
   return out;
 }
@@ -213,8 +258,8 @@ function main() {
 
     let matched = 0, differed = 0, absent = 0;
     for (const name of [...new Set(targets)]) {
-      const a = fromOtool(shipped, `${ns}${name.length}${name}`);
-      const b = fromAsm(mine, `${ns}${name.length}${name}`);
+      const a = resolveBranchTargets(fromOtool(shipped, `${ns}${name.length}${name}`));
+      const b = resolveBranchTargets(fromAsm(mine, `${ns}${name.length}${name}`));
       if (!b.length) {
         console.log(`  absent  ${ns}::${name} (not implemented — ${a.length} instrs in the bundle)`);
         ++absent;
