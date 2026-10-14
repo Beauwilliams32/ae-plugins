@@ -86,12 +86,18 @@ self-contained engines. LUTBlend's is partially recovered:
 |---|---|---|
 | `spectra::` | FFT, Hann window, STFT, band analysis, falloff envelope | **recovered + verified** (4 effects) |
 | `lutblend::` | `clampf`, `lerpf`, `luma709`, `CubeLUT::valid` + layout | **partially recovered** (`parseCube`, `sampleLUT`, `applyLUTBlend` pending) |
-| `typeriser::` | `clampf`, `karaokeWordAt`, `wordProgress`, `cueIndexAt` + `Cue` layout | **partially recovered** (`parseSrt`, `splitWords`, `parseTimestamp`, `ease` pending) |
+| `typeriser::` | The whole SRT karaoke engine: `parseSrt`, `parseTimingLine`, `parseTimestamp`, `trim`, `splitWords`, `wrapWords`, `wordStyle`, `ease`, `karaokeWordAt`, `wordProgress`, `cueIndexAt`, `Cue` + `WordStyle` + `Anim` layouts | **complete — all 12 authored functions recovered + verified** |
 
-One cross-bundle detail worth recording: `spectra::clampf` and `lutblend::clampf`
-were recovered from two different plugins in two different namespaces and turned
-out **instruction-for-instruction identical**, down to the `fcsel` ordering that
-makes the low bound win on an inverted range. A test asserts the two still agree.
+One cross-bundle detail worth recording: `clampf` was recovered from three
+different plugins in three different namespaces and turned out
+**instruction-for-instruction identical**, down to the `fcsel` ordering that
+makes the low bound win on an inverted range. A test asserts all three still agree.
+
+A second, subtler one: `typeriser::wordStyle` re-implements the same five easing
+curves that `typeriser::ease` implements, inline instead of calling it. Both were
+recovered independently and a test drives each against the other, so the
+duplication is verified rather than assumed — and the one place they legitimately
+differ (wordStyle clamps its alpha to 1.0, `ease` does not) is asserted explicitly.
 
 ## Roadmap
 
@@ -99,8 +105,12 @@ makes the low bound win on an inverted range. A test asserts the two still agree
    real domain namespaces (`spectra::` in SpectraKeys is the richest: radix-2 FFT,
    Hann window and coherent gain, mono downmix, spectrogram band analysis, dB
    conversion). Recovered headers make this tractable.
-2. **Reconstruct a buildable tree.** Rebuild `src/<Effect>/` against the AE SDK
-   pinned at `0x000d001d`, driven by the recovered parameter tables.
+2. **Reconstruct a buildable tree.** In progress. Every effect's PiPL resource is
+   now rebuilt from its recovered spec and **byte-compared against the shipped
+   bundle** (`packaging/`, `test/pipl.test.mjs`), which proves the recovered
+   metadata is complete; all 16 match exactly. The AE SDK 25.6 that built the
+   fleet is identified and its toolchain verified. What remains is `EffectMain`,
+   parameter registration and the render callbacks — see `packaging/README.md`.
 3. **Improve.** Normalise the SpectraKeys naming, then address the quality gaps the
    recovered messages expose.
 4. **Re-sign and qualify.** The last shipped artefacts were ad-hoc signed, so nothing
