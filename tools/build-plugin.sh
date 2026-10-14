@@ -81,8 +81,14 @@ echo "compile..."
 # avoids the collision entirely.
 #
 # -Wno-missing-field-initializers: the SDK's own Param_Utils.h uses {{0}}.
+# Every .cpp in the plugin's own directory, plus the recovered DSP, plus the two
+# SDK utility translation units the plugin layer needs.
+UNITS=()
+for f in "$SRC"/*.cpp; do UNITS+=("$f"); done
+UNITS+=("$DSP_CPP" "$SDK/Util/AEGP_SuiteHandler.cpp" "$SDK/Util/MissingSuiteError.cpp")
+
 i=0
-for unit in "$SRC/$PLUGIN.cpp" "$DSP_CPP" "$SDK/Util/AEGP_SuiteHandler.cpp" "$SDK/Util/MissingSuiteError.cpp"; do
+for unit in "${UNITS[@]}"; do
   i=$((i + 1))
   clang++ -std=c++17 -O2 -arch arm64 \
           -Wall -Wextra -Wno-missing-field-initializers \

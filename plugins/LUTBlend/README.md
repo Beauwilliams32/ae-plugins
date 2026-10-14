@@ -57,25 +57,65 @@ structural. Specifically untested:
 Do not install this over the shipped plugin expecting it to work. It is a
 structural proof that the recovered pieces compose, not a finished effect.
 
-## Known gap: LUT loading
+## LUT loading — implemented, as new code
 
-The shipped plugin discovers `.cube` files through its own layer
-(`LB_ScanLutFolder`, `LB_LutFileList`, `LB_LutFolderPath`, `LB_BuildPopupMenu`,
-`LB_LutForPopupValue`) and caches parsed LUTs in a
-`std::map<std::string, std::shared_ptr<const CubeLUT>>`. **None of that is
-recovered**, so:
+`LutLibrary.h`/`.cpp` hold a fresh implementation of the discovery and loading
+layer. The shipped plugin's own layer (`LB_ScanLutFolder`, `LB_LutFileList`,
+`LB_LutFolderPath`, `LB_BuildPopupMenu`, `LB_LutForPopupValue`) is **not
+recovered**, and `parseCube` — 1924 instructions — is only partly read. What IS
+recovered is the `.cube` **grammar and validation**, so the loader implements
+those rules rather than transcribing the original:
 
-* both LUT popups are populated with a single placeholder entry;
-* the render path falls back to the identity LUT, which is what the shipped plugin
-  does when a LUT is missing or fails to parse (`__ZL11identityLUTv`);
-* `Drive`'s "Global Luma" mode uses a hard-coded 0.5 mean luma instead of the
-  frame's actual mean.
+* the seven directives and their arities;
+* the `[2, 256]` size bound, tested as `(unsigned)(size - 2) < 255`;
+* size truncation rather than rejection of a fractional value (`fcvtzs`);
+* the three-part numeric acceptance test — something consumed, nothing trailing,
+  and finite (so `inf` and `NaN` are refused rather than stored);
+* `DOMAIN_MAX` strictly greater than `DOMAIN_MIN`;
+* duplicate size declarations rejected; data before a size rejected;
+* data rows counted against the size, reporting both numbers;
+* twelve of the thirteen recovered error messages, with the same wording.
 
-The effect therefore loads, registers its parameters and renders — but is a no-op
-until a LUT can be selected. Closing that gap needs either the LUT layer recovered
-or `parseCube` finished and wired up; see `../../src/lutblend/RECOVERY-NOTES.md`.
+The thirteenth, `"<keyword> is not an integer"`, is **deliberately not emitted**.
+It exists in the binary, but the branch reaching it has not been located and the
+size handler demonstrably truncates instead of rejecting. Inventing a trigger for
+it would put behaviour in the plugin that the shipped one may not have.
 
-## A trap worth keeping
+LUTs are cached in a name → `shared_ptr<const CubeLUT>` map, mirroring the
+shipped plugin's `std::map`, so a frame does not re-read or re-parse. A missing or
+unparseable LUT falls back to the identity LUT, which is what the shipped plugin
+does (`__ZL11identityLUTv`).
+
+`test/lutlib.test.mjs` checks all of this, including a real folder scan against a
+fixture `HOME`. Every rejection assertion requires the **specific expected
+message**, not merely that parsing failed — see below.
+
+### Two limits that remain
+
+* `"Global Luma"` computes the frame mean by subsampling on a stride of 16 rather
+  than over every pixel. Representative, cheap, and not what the original
+  necessarily did.
+* Only the 8-bit iterate path exists, while the plugin declares float and
+  deep-colour awareness.
+
+## Traps worth keeping
+
+**Backticks inside a `String.raw` template literal terminate it.** A C++ comment
+in the test's embedded probe contained a backtick, which closed the template and
+turned the rest of the probe into a JavaScript syntax error. The probe itself
+still compiled, so the failure looked like a build problem rather than a
+punctuation one.
+
+**A negative control that cannot fail is not a control.** The first attempt at
+disabling the size bound loosened the threshold, which changed nothing — the
+unsigned compare still rejects `n = 1` at any large bound. The next attempt
+exposed a real weakness in the tests instead: every rejection assertion used only
+"did parsing fail?", so a broken rule stayed hidden behind the *next* rule that
+rejected the same input. The tests now assert the specific message, and four
+negative controls (size bound, row count, degenerate domain, output-write) each
+fail as they should.
+
+## Another trap worth keeping
 
 Object files in `build-plugin.sh` are **numbered**, not named after their sources.
 On a case-insensitive filesystem — the macOS default — `LUTBlend.cpp.o` and

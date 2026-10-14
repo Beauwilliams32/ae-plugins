@@ -16,15 +16,13 @@
 // So this is a reimplementation of the surrounding plugin, not a transcription of
 // it. Where behaviour is recovered it is cited; where it is new it is marked.
 //
-// KNOWN GAP: LUT file loading is not wired up. The original plugin has a
-// LUT-discovery layer (LB_ScanLutFolder, LB_LutFileList, LB_LutFolderPath,
-// LB_BuildPopupMenu, LB_LutForPopupValue) and caches parsed LUTs in a
-// std::map<std::string, std::shared_ptr<const CubeLUT>>. None of that is
-// recovered, so both popups are populated with a single placeholder entry and the
-// render path falls back to the identity LUT — which is exactly what the shipped
-// plugin does when a LUT is missing or fails to parse (__ZL11identityLUTv). The
-// effect therefore loads, registers, and renders, but is a no-op until a LUT can
-// be selected.
+// LUT LOADING: the shipped plugin's discovery layer (LB_ScanLutFolder,
+// LB_LutFileList, LB_LutFolderPath, LB_BuildPopupMenu, LB_LutForPopupValue) is NOT
+// recovered, so LutLibrary.cpp reimplements it as new code against the recovered
+// folder path and the recovered .cube grammar. Parsed LUTs are cached, mirroring
+// the shipped plugin's std::map<std::string, std::shared_ptr<const CubeLUT>>.
+// A missing or unparseable LUT falls back to the identity LUT, which is what the
+// shipped plugin does (__ZL11identityLUTv).
 
 #include "AEConfig.h"
 #include "entry.h"
@@ -42,17 +40,25 @@
 #include <cstring>
 
 #include "lutblend.h"
+#include "LutLibrary.h"
 #include "LUTBlendParams.h"
 
 namespace {
 
 // Each popup gets one placeholder choice until the LUT layer is recovered.
 // A PF_ADD_POPUP with zero choices is not legal, so a single entry is required.
-const char* kPlaceholderChoices = "None";
-
 lutblend::CubeLUT gIdentity;                 // built once at GLOBAL_SETUP
-const lutblend::CubeLUT* gCurrentA = nullptr;
-const lutblend::CubeLUT* gCurrentB = nullptr;
+std::vector<std::string> gLutFiles;          // scanned once, in the same order the
+std::string gLutChoices;                     // popups are built from
+lutlib::Library gLibrary;                    // parsed-LUT cache
+
+// Popup choice index -> file path. Index 0 is always the placeholder, so a popup
+// value of 1 maps to gLutFiles[0].
+const std::string* lutForPopupValue(int v) {
+  const int idx = v - 1;
+  if (idx < 0 || static_cast<size_t>(idx) >= gLutFiles.size()) return nullptr;
+  return &gLutFiles[static_cast<size_t>(idx)];
+}
 
 // The wording is RECOVERED verbatim from the bundle: the ABOUT format string is
 // "%s v%d.%d\r\r%s\r\rDrop .cube files into ~%s and they appear in the LUT A /
@@ -93,8 +99,11 @@ PF_Err GlobalSetup(PF_InData* in_data, PF_OutData* out_data) {
                          PF_OutFlag2_SUPPORTS_SMART_RENDER;
 
   lutblend::makeIdentity(&gIdentity, 2, true);
-  gCurrentA = &gIdentity;
-  gCurrentB = &gIdentity;
+
+  // The shipped plugin scans this folder and builds both menus from it. Scanning
+  // happens once per GLOBAL_SETUP rather than per frame.
+  gLutFiles = lutlib::scanLutFolder();
+  gLutChoices = lutlib::popupChoices(gLutFiles);
 
   return err;
 }
@@ -104,18 +113,23 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
   PF_Err err = PF_Err_NONE;
   PF_ParamDef def;
 
+  // The choice list is the folder scan; index 1 is the first file. num_choices is
+  // files+1 because the leading "None" entry is always present, which is what
+  // makes a popup value of 1 mean "the first LUT".
+  const int numLutChoices = static_cast<int>(gLutFiles.size()) + 1;
+
   AEFX_CLR_STRUCT(def);
   PF_ADD_POPUP(LUTBLEND_PARAM_LUT_A,
-               1,           // num choices
-               1,           // default
-               kPlaceholderChoices,
+               numLutChoices,
+               1,
+               gLutChoices.c_str(),
                LUTBLEND_LUT_A_DISK_ID);
 
   AEFX_CLR_STRUCT(def);
   PF_ADD_POPUP(LUTBLEND_PARAM_LUT_B,
+               numLutChoices,
                1,
-               1,
-               kPlaceholderChoices,
+               gLutChoices.c_str(),
                LUTBLEND_LUT_B_DISK_ID);
 
   // Recovered: valid_max = 100, slider_max = 100, precision = 1.
@@ -224,16 +238,47 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data,
   const int    drive       = params[LUTBLEND_DRIVE]->u.pd.value;
   const bool   preserveLuma = params[LUTBLEND_PRESERVE_LUMA]->u.bd.value != 0;
 
+  // Resolve the two popups to files and load them, falling back to the identity
+  // LUT when a slot is empty or a file fails to parse — the shipped behaviour.
+  const std::string* pathA = lutForPopupValue(params[LUTBLEND_LUT_A]->u.pd.value);
+  const std::string* pathB = lutForPopupValue(params[LUTBLEND_LUT_B]->u.pd.value);
+  std::string loadErr;
+  std::shared_ptr<const lutblend::CubeLUT> lutA = pathA ? gLibrary.get(*pathA, &loadErr) : nullptr;
+  std::shared_ptr<const lutblend::CubeLUT> lutB = pathB ? gLibrary.get(*pathB, &loadErr) : nullptr;
+  const lutblend::CubeLUT* useA = lutA ? lutA.get() : &gIdentity;
+  const lutblend::CubeLUT* useB = lutB ? lutB.get() : &gIdentity;
+
   // The recovered DSP works in 0..1. clampf is the recovered helper, so the
   // normalisation uses it rather than a hand-rolled min/max.
   PixelRefcon rc;
-  rc.a            = gCurrentA ? gCurrentA : &gIdentity;
-  rc.b            = gCurrentB ? gCurrentB : &gIdentity;
+  rc.a            = useA;
+  rc.b            = useB;
   rc.blend        = lutblend::clampf(static_cast<float>(blendPct) / 100.0f, 0.0f, 1.0f);
   rc.strength     = lutblend::clampf(static_cast<float>(strengthPct) / 100.0f, 0.0f, 1.0f);
   rc.preserveLuma = preserveLuma;
   rc.drive        = drive;
-  rc.meanLuma     = 0.5f;   // TODO: computed from the input frame; see README
+  // Global Luma drives the mix from the frame's own mean luma. Computed by
+  // subsampling rather than over every pixel: the mean only needs to be
+  // representative and a stride of 16 keeps the pre-pass cheap at 4K. src8 is the
+  // input world; the recovered luma709 supplies the weighting.
+  rc.meanLuma     = 0.5f;
+  if (drive == LUTBLEND_DRIVE_GLOBAL_LUMA) {
+    const PF_EffectWorld& src = params[0]->u.ld;
+    const PF_Pixel8* base = reinterpret_cast<const PF_Pixel8*>(src.data);
+    const int stride = 16;
+    double sum = 0.0;
+    long   n = 0;
+    for (long row = 0; row < src.height; row += stride) {
+      const PF_Pixel8* p = reinterpret_cast<const PF_Pixel8*>(
+          reinterpret_cast<const char*>(base) + static_cast<size_t>(row) * src.rowbytes);
+      for (long col = 0; col < src.width; col += stride) {
+        sum += lutblend::luma709(p[col].red / 255.0f, p[col].green / 255.0f,
+                                 p[col].blue / 255.0f);
+        ++n;
+      }
+    }
+    rc.meanLuma = (n > 0) ? static_cast<float>(sum / static_cast<double>(n)) : 0.5f;
+  }
 
   ERR(suites.Iterate8Suite1()->iterate(in_data, 0, output->height,
                                        &params[0]->u.ld,
