@@ -60,7 +60,7 @@ modifies, moves or copies them.
 
 Be clear-eyed about this:
 
-- **Most function bodies.** Nine namespaces are recovered (see below); the other
+- **Most function bodies.** Ten namespaces are recovered (see below); the other
   effects' DSP is still machine code. Names and signatures are free, behaviour needs
   per-function disassembly, and that is the bulk of the remaining work.
 - **`lutblend::parseCube`** (1924 instructions) is identified but unread, along with
@@ -79,7 +79,7 @@ Be clear-eyed about this:
   is untested. See `plugins/*/README.md` for exactly what is and is not claimed.
 
 So this repository contains a **complete architectural specification** of the fleet,
-nine recovered source namespaces, and two effects that build into loadable bundles —
+ten recovered source namespaces, and two effects that build into loadable bundles —
 **not** a finished or verified product.
 
 ## The fleet
@@ -98,7 +98,7 @@ Two findings already worth acting on:
 
 ## Recovered source
 
-Nine recovered namespaces, all transcribed from the disassembly with per-function commentary
+Ten recovered namespaces, all transcribed from the disassembly with per-function commentary
 citing the instructions that establish each behaviour:
 
 | Module | Contents | State |
@@ -112,13 +112,15 @@ citing the instructions that establish each behaviour:
 | `aff::` | The AutoFlickerFix DSP: `clampf`, `dbToGainClamp`, `computeGain`, `centerRegion`, `meanOf`, `medianOf`, `trimmedMean` (both overloads), `medianFilter`, `temporalTarget`, plus the `GainClamp` and `RegionBounds` layouts | **complete — all 10 functions, 719 instructions, 7 of them INSTRUCTION-IDENTICAL**. The host integration (`EffectMain`, `SampleWorldStat`, `DrawStatsBar`) is unread |
 | `spectra::` | FFT, Hann window, STFT, band analysis, falloff envelope, `downmixToMono`, plus `Spectrogram` | **complete — all 13 functions, shared by 4 effects**, and 7 of them INSTRUCTION-IDENTICAL. The host integration is unread |
 | `beatsnap::` | The onset-detection core: `clampf`, `isPowerOfTwo`, `medianOfWindow`, `adaptiveThreshold`, `hannWindow`, `fftRadix2`, `downmixToMono` | **7 of 11** — `computeFlux` (416), `renderValues` (190), `pickOnsets` (136) and `detectOnsets` (47) are outstanding. `medianOfWindow` is **instruction-identical** (58/58), and the five shared-DSP copies are checked by divergence parity against the `spectra::` originals rather than by assuming a copy of a copy is faithful |
+| `chromakey::` | The colour and statistics layer: `clampf`, `rgbToYCbCr` (Rec.601), `sensitivityToThreshold`, `chromaDistance`, `hueAngle`, `angularDiff`, `percentile`, `percentileUnsorted`, `gradientMagnitude` | **9 of 15** namespace symbols — the denominator is the differ's own count, which sees one symbol per template instantiation, so `analyzeFrame<T>` and `renderView<T>` account for two each. Outstanding: `spillScore` (82), `uniformityScore` (203) and those four instantiations. `StoreReadout` is outside the namespace and takes a `PF_InData*`, so it stays out of `src/`. Six of the nine are **instruction-identical**, `rgbToYCbCr` among them at 25 of 25 |
 
 Three fleet-wide duplications are recorded rather than silently deduplicated, because
 each was verified rather than assumed:
 
 * `clampf` is the fleet's most duplicated idiom: **15 of the 16 bundles** carry one, in
-  eight different namespaces, and the seven that are recovered here are instruction for
-  instruction identical. `test/clampf.test.mjs` compares all of them against each other,
+  eight different bundles, and the nine that are recovered here are instruction for
+  instruction identical. (Measured by listing `src/*/` for a `clampf` definition, which is
+  what the test below discovers too; chromakey's copy was the ninth.) `test/clampf.test.mjs` compares all of them against each other,
   including on INVERTED ranges, which is the only input where a `min(max(v,lo),hi)`
   rewrite would diverge. The test discovers the copies from the tree, so a newly
   recovered one is covered without editing it.
