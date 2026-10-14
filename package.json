@@ -1,0 +1,12 @@
+{
+  "name": "williams-media-ae-plugins",
+  "version": "1.0.0-recovered",
+  "private": true,
+  "type": "module",
+  "description": "Recovered specification and DSP core for the Williams Media After Effects plugin fleet",
+  "scripts": {
+    "recover": "node tools/recover.mjs && node tools/render-specs.mjs",
+    "check": "node --check tools/recover.mjs && node --check tools/render-specs.mjs && node --check test/spectra.test.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}
