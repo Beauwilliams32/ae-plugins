@@ -16,6 +16,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 
 const ROOT = path.join(import.meta.dirname, "..");
@@ -53,6 +54,12 @@ function findShippedRsrc(plugin) {
 
 // Both built effects, so a second one joining the fleet is covered rather than
 // needing a new test copied per plugin.
+/** `plutil -p` output to a plain object, so two Info.plists can be compared key by key. */
+function plist(file) {
+  const out = execFileSync("plutil", ["-convert", "json", "-o", "-", file], { encoding: "utf8" });
+  return JSON.parse(out);
+}
+
 const BUILT = [
   { plugin: "LUTBlend", rsrc: "LUTBlend.rsrc",
     dsp: ["applyLUTBlend", "sampleLUT", "makeIdentity", "luma709"] },
@@ -97,8 +104,11 @@ test(`tools/build-plugin.sh assembles a structurally valid ${plugin} bundle`, (t
   assert.match(syms, /^[0-9a-f]+ T _EffectMain$/m,
     `the bundle does not export EffectMain as a defined text symbol:\n${syms}`);
 
+  // UNIVERSAL, not thin. The shipped fleet is "x86_64 arm64" on every bundle, and a
+  // thin arm64 rebuild would not load on an Intel Mac or under a translated AE. This
+  // assertion used to require exactly "arm64", which made the gap permanent.
   const archs = execFileSync("lipo", ["-archs", bin], { encoding: "utf8" }).trim();
-  assert.equal(archs, "arm64", `unexpected architectures: ${archs}`);
+  assert.match(archs, /^(x86_64 arm64|arm64 x86_64)$/, `expected a universal binary, got: ${archs}`);
 
   // --- the PiPL must be the RECOVERED one, not a fresh invention -----------
   const shipped = findShippedRsrc(plugin);
@@ -121,6 +131,47 @@ test(`tools/build-plugin.sh assembles a structurally valid ${plugin} bundle`, (t
 
   // --- and the bundle is not trivially small -------------------------------
   assert.ok(statSync(bin).size > 4096, "the linked binary is suspiciously small");
+
+  // --- the LOADER-VISIBLE metadata matches the shipped bundle --------------
+  //
+  // Every claim in this repository about host acceptance rests on the rebuild being
+  // the same kind of artefact as the original. Comparing field by field is how that
+  // stopped being an assumption: three of these were WRONG before the comparison was
+  // written — the creator code was '????' against a shipped 'FXTC', the binary was
+  // thin arm64 against a universal original, and the bundle was never `codesign`ed at
+  // all, so it reported no sealed resources and an Identifier of the executable's name
+  // where the original reports its bundle id.
+  const shippedBundle = `/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/${plugin}.plugin`;
+  if (existsSync(shippedBundle) && existsSync("/usr/bin/codesign")) {
+    const dv = (bundlePath) => {
+      const r = spawnSync("codesign", ["-dv", bundlePath], { encoding: "utf8" });
+      return `${r.stdout ?? ""}${r.stderr ?? ""}`;
+    };
+    const field = (text, key) => (text.match(new RegExp(`^${key}=(.*)$`, "m")) ?? [])[1]?.trim() ?? null;
+
+    assert.equal(
+      readFileSync(path.join(bundle, "Contents", "PkgInfo"), "utf8"),
+      readFileSync(path.join(shippedBundle, "Contents", "PkgInfo"), "utf8"),
+      "PkgInfo differs from the shipped bundle's — the creator code is eFKTFXTC");
+
+    const mine = plist(path.join(bundle, "Contents", "Info.plist"));
+    const theirs = plist(path.join(shippedBundle, "Contents", "Info.plist"));
+    for (const key of Object.keys(theirs).filter((k) => k !== "NSHighResolutionCapable")) {
+      assert.equal(mine[key], theirs[key], `Info.plist ${key} differs from the shipped bundle's`);
+    }
+
+    const mySig = dv(bundle);
+    const theirSig = dv(shippedBundle);
+    assert.equal(field(mySig, "Signature"), "adhoc", "the rebuilt bundle is not ad-hoc signed");
+    assert.equal(field(mySig, "Signature"), field(theirSig, "Signature"),
+      "signature kind differs from the shipped bundle's");
+    assert.equal(field(mySig, "Identifier"), field(theirSig, "Identifier"),
+      "the signature Identifier differs: signing a bundle takes it from CFBundleIdentifier");
+    assert.ok(/Sealed Resources version=2/.test(mySig),
+      `the signature seals no resources:\n${mySig}`);
+    assert.ok(existsSync(path.join(bundle, "Contents", "_CodeSignature", "CodeResources")),
+      "a signed bundle carries Contents/_CodeSignature/CodeResources");
+  }
 });
 }
 

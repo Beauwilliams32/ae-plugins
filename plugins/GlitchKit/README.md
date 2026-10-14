@@ -43,7 +43,8 @@ Output lands in `build/GlitchKit.plugin` (gitignored).
 
 `test/build.test.mjs` runs the real build and asserts the bundle has the parts a host
 looks for, exports `EffectMain` as a defined text symbol (anchored matching — a substring
-test once passed for a plugin with no usable entry point), is `arm64`, carries a PiPL
+test once passed for a plugin with no usable entry point), is universal (`x86_64` +
+`arm64`) as the shipped bundles are, carries a PiPL
 payload byte-identical to the shipped bundle's, and links the recovered DSP symbols.
 
 `test/codegen.test.mjs` separately proves the four recovered functions compile to the

@@ -67,7 +67,7 @@ default-`CubeLUT` fallback, and an ignored Drive mode.
 * the Mach-O **exports `EffectMain` as a defined text symbol** — anchored matching,
   because a substring test also matched `_EffectMainRenamed` and passed against a
   plugin with no usable entry point;
-* it is `arm64`;
+* it is universal (`x86_64` + `arm64`), matching the shipped bundle;
 * the PiPL payload is byte-identical to the shipped bundle's;
 * the recovered engine's own symbols (`applyLUTBlend`, `sampleLUT`, `makeIdentity`,
   `luma709`) are present in the link, which catches the object-file collision

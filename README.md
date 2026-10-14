@@ -133,7 +133,7 @@ each was verified rather than assumed:
 
 ## Building and running the effects
 
-Two effects build into real arm64 `.plugin` bundles:
+Two effects build into real universal (`x86_64` + `arm64`) `.plugin` bundles:
 
 ```bash
 ./tools/build-plugin.sh GlitchKit
@@ -145,8 +145,18 @@ integration. The provenance split is enforced by directory: `src/` holds only
 transcriptions of the shipped binaries, `plugins/` holds new code.
 
 `test/build.test.mjs` runs those builds in the gate and checks the bundles export
-`EffectMain`, are arm64, and carry a PiPL payload **byte-identical** to the shipped
+`EffectMain`, are universal, and carry a PiPL payload **byte-identical** to the shipped
 bundle's.
+
+It also **compares the rebuilt bundle against the shipped one, field by field**, on
+everything a host can see: architectures, `PkgInfo`, both signatures and their
+`Identifier`, whether resources are sealed, and every `Info.plist` key the original
+has. That comparison is what turned three assumptions into measured facts — the
+rebuild carried the creator code `????` against a shipped `FXTC`, its binary was thin
+`arm64` against a universal original, and it was never `codesign`ed, so it reported an
+`Identifier` of the executable's name where the original reports its bundle id and
+seals its `Info.plist` and `Resources`. All three now match, and a regression fails
+the build test.
 
 **Their render engines are also executed**, not merely compiled. `GlitchRender.cpp` and
 `LutRender.cpp` are split out of the host integration so `test/glitchrender.test.mjs`

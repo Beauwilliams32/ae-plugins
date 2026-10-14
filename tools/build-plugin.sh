@@ -88,16 +88,22 @@ UNITS=()
 for f in "$SRC"/*.cpp; do UNITS+=("$f"); done
 UNITS+=("$DSP_CPP" "$SDK/Util/AEGP_SuiteHandler.cpp" "$SDK/Util/MissingSuiteError.cpp")
 
+# BOTH architectures, because the shipped fleet is universal: every bundle under
+# "Williams Media" reports `lipo -archs` of "x86_64 arm64". A thin arm64 rebuild
+# would not load on an Intel Mac, and would not load under an AE running translated
+# on Apple silicon either — and the PiPL already declares CodeMacIntel64 alongside
+# CodeMacARM64, so the resource was ready for this before the compile was.
+ARCHS=(-arch arm64 -arch x86_64)
 i=0
 for unit in "${UNITS[@]}"; do
   i=$((i + 1))
-  clang++ -std=c++17 -O2 -arch arm64 \
+  clang++ -std=c++17 -O2 "${ARCHS[@]}" \
           -Wall -Wextra -Wno-missing-field-initializers \
           -c "${INCLUDES[@]}" -o "$TMP/unit$i.o" "$unit"
 done
 
 echo "link..."
-clang++ -arch arm64 -bundle -o "$BIN" "$TMP"/*.o
+clang++ "${ARCHS[@]}" -bundle -o "$BIN" "$TMP"/*.o
 
 # The Mach-O must EXPORT EffectMain. Note that visibility is deliberately NOT
 # hidden: the shipped bundles export their C++ symbols too (nm -gU on the original
@@ -114,10 +120,14 @@ if ! nm -gU "$BIN" | grep -qE "^[0-9a-f]+ T _EffectMain$"; then
 fi
 echo "export: _EffectMain ok"
 
-if [ "$(lipo -archs "$BIN")" != "arm64" ]; then
-  echo "error: unexpected architectures: $(lipo -archs "$BIN")" >&2
-  exit 1
-fi
+# EXACT match on the pair, in either order: the shipped bundles are universal and a
+# thin rebuild is the failure this checks for.
+ARCHS_BUILT="$(lipo -archs "$BIN")"
+case "$ARCHS_BUILT" in
+  "x86_64 arm64"|"arm64 x86_64") ;;
+  *) echo "error: expected a universal binary, got: $ARCHS_BUILT" >&2; exit 1 ;;
+esac
+echo "arch:   $ARCHS_BUILT (universal, as shipped)"
 
 echo "rez PiPL..."
 Rez -useDF -o "$RSRC" \
@@ -138,7 +148,7 @@ cat > "$OUT/Contents/Info.plist" <<PLIST
 	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
 	<key>CFBundleName</key>					<string>$PLUGIN</string>
 	<key>CFBundlePackageType</key>			<string>eFKT</string>
-	<key>CFBundleSignature</key>				<string>????</string>
+	<key>CFBundleSignature</key>				<string>FXTC</string>
 	<key>CFBundleShortVersionString</key>	<string>1.0.0</string>
 	<key>CFBundleVersion</key>				<string>1.0.0</string>
 	<key>LSMinimumSystemVersion</key>		<string>11.0</string>
@@ -147,7 +157,22 @@ cat > "$OUT/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-printf 'eFKT????' > "$OUT/Contents/PkgInfo"
+# 'eFKT' + the creator code, exactly as every shipped bundle has it. The rebuild
+# carried '????' until this was compared against the originals rather than assumed.
+printf 'eFKTFXTC' > "$OUT/Contents/PkgInfo"
+
+# --- sign ----------------------------------------------------------------
+# The shipped bundles are AD-HOC SIGNED with their Info.plist and Resources sealed:
+# `codesign -dv` on LUTBlend.plugin reports `Signature=adhoc`, `Info.plist entries=10`
+# and `Sealed Resources version=2`, and its signature Identifier is the bundle id.
+# A linker-signed binary has none of that: it reports `adhoc,linker-signed` with the
+# executable name as its Identifier and no sealed resources.
+#
+# Signing is the LAST step, after every file is in place, because any later change to
+# the bundle invalidates the seal.
+echo "sign..."
+codesign --force --sign - "$OUT"
+codesign --verify --strict "$OUT"
 
 echo
 echo "built: $OUT"
