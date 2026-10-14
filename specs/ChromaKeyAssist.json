@@ -76,6 +76,28 @@
       ]
     }
   },
+  "parameters": {
+    "ordered": [
+      "Key Color",
+      "Sensitivity (%)",
+      "Suggested Clip Black (%)",
+      "Suggested Clip White (%)",
+      "Heatmap Opacity (%)"
+    ],
+    "popups": [
+      {
+        "afterParam": "Key Color",
+        "options": [
+          "Uniformity Heatmap",
+          "Spill Map",
+          "Edge Quality",
+          "Distance Matte",
+          "Original"
+        ]
+      }
+    ],
+    "rawCount": 11
+  },
   "strings": {
     "authored": 60,
     "parameterCandidates": [

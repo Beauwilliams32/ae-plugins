@@ -97,25 +97,45 @@ function renderPlugin(spec) {
     out.push(codeList(other));
   }
 
-  out.push("## Recovered parameters and UI labels");
+  out.push("## Recovered parameters");
   out.push("");
-  if (spec.strings.parameterCandidates?.length) {
-    out.push("Parameter labels are registered at runtime rather than stored in the PiPL, so " +
-      "these were recovered from the binary's string table. Treat them as a **high-confidence " +
-      "draft of the UI**, to be confirmed against the effect when it runs:");
+  const po = spec.parameters;
+  if (po?.ordered?.length) {
+    out.push("Parameters are registered at runtime rather than stored in the PiPL, so these were " +
+      "recovered by walking `EffectMain`'s string literals **in address order** — which is the " +
+      "order they appear in the Effect Controls panel. This is the effect's control surface:");
+    out.push("");
+    out.push(po.ordered.map((s, i) => `${String(i + 1).padStart(2)}. \`${s}\``).join("\n"));
+    out.push("");
+    if (po.popups?.length) {
+      out.push("### Dropdown option lists");
+      out.push("");
+      out.push("Popup parameters ship their own option list, joined with `|`, so these sets are " +
+        "recovered exactly rather than inferred. **The owning parameter is not asserted** — the " +
+        "list is recorded next to the parameter whose name precedes it, and adjacency is the only " +
+        "evidence available. Where the options plainly do not match that name, treat the pairing " +
+        "as unresolved:");
+      out.push("");
+      out.push(table(
+        po.popups.map((p) => [`\`${p.afterParam ?? "?"}\``, p.options.map((o) => `\`${o}\``).join(", ")]),
+        ["List appears after", "Options"],
+      ));
+      out.push("");
+    }
+  } else if (spec.strings.parameterCandidates?.length) {
+    out.push("_Ordered recovery unavailable for this effect; falling back to string-shape " +
+      "candidates, alphabetically sorted and therefore **unordered and lower confidence**:_");
     out.push("");
     out.push(spec.strings.parameterCandidates.map((s) => `- \`${s}\``).join("\n"));
+    out.push("");
   } else {
     out.push("_No parameter labels were recovered; the effect may build its UI numerically._");
+    out.push("");
   }
-  out.push("");
 
-  if (spec.strings.modeCandidates?.length) {
-    out.push("**Likely menu / mode values:**");
-    out.push("");
-    out.push(spec.strings.modeCandidates.map((s) => `- \`${s}\``).join("\n"));
-    out.push("");
-  }
+  // The earlier shape-based "mode candidates" block was removed deliberately:
+  // ordered parameter recovery plus the popup option lists supersede it with
+  // exact data, and keeping a guess next to a proof invites citing the guess.
 
   if (spec.strings.messageStrings?.length) {
     out.push("## Behavioural messages");

@@ -54,26 +54,25 @@ EffectMain
 __dyld_private
 ```
 
-## Recovered parameters and UI labels
+## Recovered parameters
 
-Parameter labels are registered at runtime rather than stored in the PiPL, so these were recovered from the binary's string table. Treat them as a **high-confidence draft of the UI**, to be confirmed against the effect when it runs:
+Parameters are registered at runtime rather than stored in the PiPL, so these were recovered by walking `EffectMain`'s string literals **in address order** — which is the order they appear in the Effect Controls panel. This is the effect's control surface:
 
-- `End (s)`
-- `Frame BlI`
-- `Frame Blend`
-- `Hcx H`
-- `Mix adjacent source frames`
-- `Ramp End (s)`
-- `Ramp EndI`
-- `Ramp StaH`
-- `Ramp Start (s)`
-- `Speed After (%)`
-- `Speed Before (%)`
-- `Time Offset (s)`
+ 1. `Ramp Start (s)`
+ 2. `Ramp End (s)`
+ 3. `Speed Before (%)`
+ 4. `Speed After (%)`
+ 5. `Frame Blend`
+ 6. `Mix adjacent source frames`
+ 7. `Time Offset (s)`
 
-**Likely menu / mode values:**
+### Dropdown option lists
 
-- `Easing`
+Popup parameters ship their own option list, joined with `|`, so these sets are recovered exactly rather than inferred. **The owning parameter is not asserted** — the list is recorded next to the parameter whose name precedes it, and adjacency is the only evidence available. Where the options plainly do not match that name, treat the pairing as unresolved:
+
+| List appears after | Options |
+|---|---|
+| `Speed After (%)` | `Linear`, `Smooth`, `Smoother`, `Snap` |
 
 ## Behavioural messages
 

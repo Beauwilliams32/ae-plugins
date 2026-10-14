@@ -53,24 +53,25 @@ EffectMain
 __dyld_private
 ```
 
-## Recovered parameters and UI labels
+## Recovered parameters
 
-Parameter labels are registered at runtime rather than stored in the PiPL, so these were recovered from the binary's string table. Treat them as a **high-confidence draft of the UI**, to be confirmed against the effect when it runs:
+Parameters are registered at runtime rather than stored in the PiPL, so these were recovered by walking `EffectMain`'s string literals **in address order** — which is the order they appear in the Effect Controls panel. This is the effect's control surface:
 
-- `Blend MoH`
-- `Blend Mode`
-- `Opacity Decay (%)`
-- `Rotation Step (deg)`
-- `Scale StH`
-- `Scale Step (%)`
-- `Start BeH`
-- `Start Behind`
-- `Time Step (frames)`
+ 1. `Time Step (frames)`
+ 2. `Opacity Decay (%)`
+ 3. `Scale Step (%)`
+ 4. `Rotation Step (deg)`
+ 5. `Blend Mode`
+ 6. `Start Behind`
+ 7. `echoes render under the source`
 
-**Likely menu / mode values:**
+### Dropdown option lists
 
-- `Copi`
-- `Copies`
+Popup parameters ship their own option list, joined with `|`, so these sets are recovered exactly rather than inferred. **The owning parameter is not asserted** — the list is recorded next to the parameter whose name precedes it, and adjacency is the only evidence available. Where the options plainly do not match that name, treat the pairing as unresolved:
+
+| List appears after | Options |
+|---|---|
+| `Blend Mode` | `Normal`, `Add`, `Screen`, `Lighten` |
 
 ## Behavioural messages
 

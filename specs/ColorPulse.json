@@ -78,6 +78,40 @@
       ]
     }
   },
+  "parameters": {
+    "ordered": [
+      "Source Layer",
+      "Sample Region",
+      "Smoothing (%)",
+      "Saturation Boost (%)",
+      "Sampled Color",
+      "Brightness (%)",
+      "Show Preview",
+      "swatch bar across the top of the layer",
+      "Keyframes",
+      "Bake Keyframes"
+    ],
+    "popups": [
+      {
+        "afterParam": "Source Layer",
+        "options": [
+          "Average",
+          "Dominant",
+          "Brightest Region"
+        ]
+      },
+      {
+        "afterParam": "Sample Region",
+        "options": [
+          "Full",
+          "Center",
+          "Top",
+          "Bottom"
+        ]
+      }
+    ],
+    "rawCount": 27
+  },
   "strings": {
     "authored": 76,
     "parameterCandidates": [

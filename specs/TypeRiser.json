@@ -122,6 +122,50 @@
       ]
     }
   },
+  "parameters": {
+    "ordered": [
+      "/Documents/Williams Media Captions",
+      "SRT File",
+      "Font Size (px)",
+      "Fill Color",
+      "Stroke Color",
+      "Stroke Width (px)",
+      "Animation",
+      "Word Stagger (ms)",
+      "Position Y (%)",
+      "Safe Width (%)"
+    ],
+    "popups": [
+      {
+        "afterParam": "SRT File",
+        "options": [
+          "Helvetica Neue Bold",
+          "Arial Black",
+          "Futura"
+        ]
+      },
+      {
+        "afterParam": "Animation",
+        "options": [
+          "Pop",
+          "Fade",
+          "Rise",
+          "Karaoke Highlight"
+        ]
+      },
+      {
+        "afterParam": "Word Stagger (ms)",
+        "options": [
+          "Linear",
+          "Ease Out Quad",
+          "Ease Out Cubic",
+          "Ease Out Back",
+          "Ease In-Out Cubic"
+        ]
+      }
+    ],
+    "rawCount": 18
+  },
   "strings": {
     "authored": 98,
     "parameterCandidates": [

@@ -116,27 +116,30 @@ vtable for std::__1::basic_ostringstream<char, std::__1::char_traits<char>, std:
 vtable for std::__1::basic_stringbuf<char, std::__1::char_traits<char>, std::__1::allocator<char>>
 ```
 
-## Recovered parameters and UI labels
+## Recovered parameters
 
-Parameter labels are registered at runtime rather than stored in the PiPL, so these were recovered from the binary's string table. Treat them as a **high-confidence draft of the UI**, to be confirmed against the effect when it runs:
+Parameters are registered at runtime rather than stored in the PiPL, so these were recovered by walking `EffectMain`'s string literals **in address order** — which is the order they appear in the Effect Controls panel. This is the effect's control surface:
 
-- `Fill ColI`
-- `Fill Color`
-- `Font SizI`
-- `Font Size (px)`
-- `Position Y (%)`
-- `Safe WidI`
-- `Safe Width (%)`
-- `Stroke CI`
-- `Stroke Color`
-- `Stroke Width (px)`
-- `Word Stagger (ms)`
+ 1. `/Documents/Williams Media Captions`
+ 2. `SRT File`
+ 3. `Font Size (px)`
+ 4. `Fill Color`
+ 5. `Stroke Color`
+ 6. `Stroke Width (px)`
+ 7. `Animation`
+ 8. `Word Stagger (ms)`
+ 9. `Position Y (%)`
+10. `Safe Width (%)`
 
-**Likely menu / mode values:**
+### Dropdown option lists
 
-- `Animation`
-- `Easing`
-- `Font`
+Popup parameters ship their own option list, joined with `|`, so these sets are recovered exactly rather than inferred. **The owning parameter is not asserted** — the list is recorded next to the parameter whose name precedes it, and adjacency is the only evidence available. Where the options plainly do not match that name, treat the pairing as unresolved:
+
+| List appears after | Options |
+|---|---|
+| `SRT File` | `Helvetica Neue Bold`, `Arial Black`, `Futura` |
+| `Animation` | `Pop`, `Fade`, `Rise`, `Karaoke Highlight` |
+| `Word Stagger (ms)` | `Linear`, `Ease Out Quad`, `Ease Out Cubic`, `Ease Out Back`, `Ease In-Out Cubic` |
 
 ## Behavioural messages
 

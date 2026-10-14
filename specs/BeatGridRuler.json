@@ -82,6 +82,34 @@
       ]
     }
   },
+  "parameters": {
+    "ordered": [
+      "Audio Layer",
+      "Analysis",
+      "BPM Min (BPM)",
+      "BPM Max (BPM)",
+      "Manual BPM (BPM; 0 = Auto)",
+      "Phase Offset (ms)",
+      "Subdivision",
+      "Detected BPM (read-only)",
+      "Analyze & Place Markers",
+      "Bake Beat Phase",
+      "Beat Phase Output"
+    ],
+    "popups": [
+      {
+        "afterParam": "Subdivision",
+        "options": [
+          "Whole Beat (1/1)",
+          "Half Beat (1/2)",
+          "Quarter Beat (1/4)",
+          "Eighth Beat (1/8)",
+          "Bars of 4"
+        ]
+      }
+    ],
+    "rawCount": 19
+  },
   "strings": {
     "authored": 69,
     "parameterCandidates": [

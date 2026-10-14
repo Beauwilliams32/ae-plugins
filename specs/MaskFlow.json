@@ -66,6 +66,27 @@
       ]
     }
   },
+  "parameters": {
+    "ordered": [
+      "Seed Point",
+      "Tolerance (%)",
+      "Growth (%)",
+      "Edge Softness",
+      "Hold Edges",
+      "hard-stop at very strong edges"
+    ],
+    "popups": [
+      {
+        "afterParam": "Edge Softness",
+        "options": [
+          "Matte",
+          "Reveal Source",
+          "Reveal On Transparent"
+        ]
+      }
+    ],
+    "rawCount": 12
+  },
   "strings": {
     "authored": 65,
     "parameterCandidates": [

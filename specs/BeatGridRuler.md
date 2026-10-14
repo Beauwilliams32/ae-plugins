@@ -64,28 +64,29 @@ unsigned short& std::__1::vector<unsigned short, std::__1::allocator<unsigned sh
 void std::__1::__tree_balance_after_insert[abi:nqe220106]<std::__1::__tree_node_base<void*>*>(std::__1::__tree_node_base<void*>*, std::__1::__tree_node_base<void*>*)
 ```
 
-## Recovered parameters and UI labels
+## Recovered parameters
 
-Parameter labels are registered at runtime rather than stored in the PiPL, so these were recovered from the binary's string table. Treat them as a **high-confidence draft of the UI**, to be confirmed against the effect when it runs:
+Parameters are registered at runtime rather than stored in the PiPL, so these were recovered by walking `EffectMain`'s string literals **in address order** — which is the order they appear in the Effect Controls panel. This is the effect's control surface:
 
-- `Analyze & Place Markers`
-- `Audio LaH`
-- `Audio Layer`
-- `Bake Beat Phase`
-- `Bar %g`
-- `Beat %g`
-- `Beat Phase Output`
-- `BeatGridRuler: Analyze & Place Markers`
-- `Detected BPM (read-only)`
-- `Phase Offset (ms)`
+ 1. `Audio Layer`
+ 2. `Analysis`
+ 3. `BPM Min (BPM)`
+ 4. `BPM Max (BPM)`
+ 5. `Manual BPM (BPM; 0 = Auto)`
+ 6. `Phase Offset (ms)`
+ 7. `Subdivision`
+ 8. `Detected BPM (read-only)`
+ 9. `Analyze & Place Markers`
+10. `Bake Beat Phase`
+11. `Beat Phase Output`
 
-**Likely menu / mode values:**
+### Dropdown option lists
 
-- `Actions`
-- `Analysis`
-- `Markers`
-- `Phase`
-- `Subdivision`
+Popup parameters ship their own option list, joined with `|`, so these sets are recovered exactly rather than inferred. **The owning parameter is not asserted** — the list is recorded next to the parameter whose name precedes it, and adjacency is the only evidence available. Where the options plainly do not match that name, treat the pairing as unresolved:
+
+| List appears after | Options |
+|---|---|
+| `Subdivision` | `Whole Beat (1/1)`, `Half Beat (1/2)`, `Quarter Beat (1/4)`, `Eighth Beat (1/8)`, `Bars of 4` |
 
 ## Behavioural messages
 

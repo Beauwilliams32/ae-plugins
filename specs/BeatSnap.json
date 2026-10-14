@@ -83,6 +83,34 @@
       ]
     }
   },
+  "parameters": {
+    "ordered": [
+      "Audio Layer",
+      "Detection",
+      "Band Low Freq (Hz)",
+      "Band High Freq (Hz)",
+      "Sensitivity (%)",
+      "Min Gap (ms)",
+      "Output Mode",
+      "Attack (ms)",
+      "Release (ms)",
+      "Output Min",
+      "Output Max",
+      "Keyframes",
+      "Bake Keyframes",
+      "Add Markers at Hits"
+    ],
+    "popups": [
+      {
+        "afterParam": "Output Mode",
+        "options": [
+          "Pulse",
+          "Envelope"
+        ]
+      }
+    ],
+    "rawCount": 21
+  },
   "strings": {
     "authored": 70,
     "parameterCandidates": [

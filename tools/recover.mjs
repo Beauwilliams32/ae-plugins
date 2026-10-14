@@ -174,6 +174,99 @@ function categoriseStrings(authored) {
   return { params, messages, modes };
 }
 
+/**
+ * Recover the parameter list IN REGISTRATION ORDER, which is the one thing the
+ * string table alone cannot tell you.
+ *
+ * otool annotates each string literal with its contents, and parameters are
+ * registered sequentially inside EffectMain. So walking EffectMain's
+ * literal-pool references in address order reconstructs the order the user sees
+ * in the Effect Controls panel.
+ *
+ * Two bonuses fall out of this that no amount of string-shape guessing finds:
+ *
+ *   * popup parameters are preceded by their own option list, joined with '|'
+ *     (e.g. "Peak|Average|RMS"), so option sets and their order are recovered
+ *     exactly rather than inferred;
+ *   * group headers ("Analysis", "Keyframes") appear in place, so the panel's
+ *     grouping is recovered too.
+ *
+ * This is strictly better evidence than shape-based filtering, so the spec
+ * carries both: `ordered` is the authoritative list, `parameterCandidates`
+ * remains as the earlier heuristic for cross-checking.
+ */
+function extractParamOrder(binary, pipl) {
+  const asm = sh("otool", ["-tV", "-arch", "arm64", binary]);
+  if (!asm) return null;
+
+  // Collect literal-pool strings from EffectMain, in address order.
+  const strings = [];
+  let inEntry = false;
+  let fn = "";
+  const perFunction = new Map();
+  for (const line of asm.split("\n")) {
+    if (/^__/.test(line)) { fn = line.replace(/:$/, ""); inEntry = /EffectMain/.test(fn); }
+    const m = line.match(/literal pool for: "(.*)"\s*$/);
+    if (!m) continue;
+    if (!perFunction.has(fn)) perFunction.set(fn, []);
+    perFunction.get(fn).push(m[1]);
+    if (inEntry) strings.push(m[1]);
+  }
+
+  // If EffectMain registered nothing (some plugins split the setup out), fall
+  // back to whichever function referenced the most popup option lists, which is
+  // a reliable signature of parameter registration.
+  if (strings.length < 3) {
+    let best = [];
+    for (const list of perFunction.values()) {
+      const score = list.filter((s) => s.includes("|")).length;
+      const bestScore = best.filter((s) => s.includes("|")).length;
+      if (score > bestScore) best = list;
+    }
+    strings.length = 0;
+    strings.push(...best);
+  }
+
+  // Dedupe consecutive repeats (a string can be reloaded within one param).
+  const ordered = strings.filter((s, i) => s !== strings[i - 1]);
+
+  // Drop obvious non-controls. Note the Adobe suite names arrive here as
+  // literal-pool strings too, and "PF ANSI Suite" has a space rather than the
+  // "PF_" prefix the shared noise filter expects, so match both.
+  const isNoise = (s) =>
+    !s ||
+    s.trim() === "" ||
+    s.length > 48 ||
+    SDK_NOISE.some((re) => re.test(s)) ||
+    /^(PF|AEGP|DRAWBOT|SP) [A-Za-z ]*Suite$/.test(s) ||
+    /^(PF|AEGP)_/.test(s);
+
+  const popups = [];
+  const params = [];
+  for (const s of ordered) {
+    if (s.includes("|")) {
+      // Record the option list with its POSITION rather than asserting
+      // ownership. Adjacency is the only evidence available, and it is not
+      // always right: for SpectraKeys the falloff options sit next to
+      // "Gain (dB)" even though they plainly belong to a falloff control.
+      // Calling that "Gain (dB) is a popup" would be a wrong claim, so the
+      // association is left for a reader (or a later pass) to judge.
+      popups.push({ afterParam: params.length ? params[params.length - 1] : null, options: s.split("|") });
+      continue;
+    }
+    if (isNoise(s)) continue;
+    params.push(s);
+  }
+
+  // The effect's own name and menu name are emitted near the About string rather
+  // than as controls, and can land at either end of the run. "vector" leaks in
+  // from std::string internals. Drop all of them wherever they appear.
+  const drop = new Set([pipl?.name, pipl?.eMNA, "vector"].filter(Boolean));
+  const controls = params.filter((p) => !drop.has(p));
+
+  return { ordered: controls, popups, rawCount: strings.length };
+}
+
 function recoverOne(name, dir, opts) {
   const bundle = path.join(dir, `${name}.plugin`);
   const binary = path.join(bundle, "Contents", "MacOS", name);
@@ -192,6 +285,7 @@ function recoverOne(name, dir, opts) {
 
   const authored = authoredStrings(binary);
   const { params, messages, modes } = categoriseStrings(authored);
+  const paramOrder = extractParamOrder(binary, pipl);
 
   return {
     plugin: name,
@@ -216,6 +310,8 @@ function recoverOne(name, dir, opts) {
     pipl,
     sourceUnits,
     symbols: { total, byScope },
+    // Authoritative, in the order the user sees them in Effect Controls.
+    parameters: paramOrder,
     strings: {
       authored: authored.length,
       parameterCandidates: params,

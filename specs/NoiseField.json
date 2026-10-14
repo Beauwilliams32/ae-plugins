@@ -64,6 +64,42 @@
       ]
     }
   },
+  "parameters": {
+    "ordered": [
+      "Field Type",
+      "Evolution",
+      "Lacunarity",
+      "Displacement",
+      "Edge Behavior"
+    ],
+    "popups": [
+      {
+        "afterParam": "Field Type",
+        "options": [
+          "Curl",
+          "Flow",
+          "Turbulence"
+        ]
+      },
+      {
+        "afterParam": "Displacement",
+        "options": [
+          "Both Axes",
+          "Horizontal",
+          "Vertical"
+        ]
+      },
+      {
+        "afterParam": "Edge Behavior",
+        "options": [
+          "Clamp",
+          "Wrap",
+          "Transparent"
+        ]
+      }
+    ],
+    "rawCount": 12
+  },
   "strings": {
     "authored": 65,
     "parameterCandidates": [

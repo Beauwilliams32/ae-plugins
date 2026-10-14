@@ -77,6 +77,27 @@
       ]
     }
   },
+  "parameters": {
+    "ordered": [
+      "Source Layer",
+      "Smoothing Window (frames)",
+      "Amplitude (px)",
+      "Frequency Scale",
+      "Keyframes",
+      "Capture & Bake"
+    ],
+    "popups": [
+      {
+        "afterParam": "Frequency Scale",
+        "options": [
+          "Once",
+          "Loop",
+          "Ping-pong"
+        ]
+      }
+    ],
+    "rawCount": 13
+  },
   "strings": {
     "authored": 65,
     "parameterCandidates": [

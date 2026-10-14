@@ -59,6 +59,28 @@
       ]
     }
   },
+  "parameters": {
+    "ordered": [
+      "Amount (%)",
+      "Block Size",
+      "Channel Shift (px)",
+      "Scanline Height",
+      "Drive by Luma"
+    ],
+    "popups": [
+      {
+        "afterParam": "GlitchKit",
+        "options": [
+          "Block Displace",
+          "RGB Channel Shift",
+          "Scanline Jitter",
+          "Bad Signal",
+          "Datamosh Smear"
+        ]
+      }
+    ],
+    "rawCount": 11
+  },
   "strings": {
     "authored": 69,
     "parameterCandidates": [

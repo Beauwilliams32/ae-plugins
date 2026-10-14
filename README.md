@@ -32,7 +32,9 @@ exact signatures come back intact.
 | Effect name, menu name, category, effect/SDK version, flags | parsed from the `PiPL` resource (16-byte `8BIM` chunks) | **exact** |
 | Function names, namespaces, classes, full signatures | un-stripped Mach-O symbol table, demangled | **exact** |
 | Original source-file layout | filenames embedded in `__GLOBAL__sub_I_*.cpp` symbols | **exact** |
-| Parameter labels, units, menu values | authored strings in the binary | **draft** — needs confirming against the running effect |
+| **Parameters, in panel order, with units** | `EffectMain` string literals walked in address order | **recovered** — 137 across the fleet |
+| **Dropdown option lists** | the popup's own `\|`-joined string | **recovered** — 26 lists |
+| Popup-to-parameter ownership | adjacency only | **unresolved** — deliberately not asserted |
 | User-facing messages and guard conditions | message strings | **exact text**, context inferred |
 | Binary identity (arch, size, MD5, SHA-256) | direct | **exact** |
 

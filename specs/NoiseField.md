@@ -58,26 +58,25 @@ void noisefield::apply<unsigned char>(noisefield::View<unsigned char const> cons
 void noisefield::apply<unsigned short>(noisefield::View<unsigned short const> const&, noisefield::View<unsigned short>&, noisefield::Params const&, float)
 ```
 
-## Recovered parameters and UI labels
+## Recovered parameters
 
-Parameter labels are registered at runtime rather than stored in the PiPL, so these were recovered from the binary's string table. Treat them as a **high-confidence draft of the UI**, to be confirmed against the effect when it runs:
+Parameters are registered at runtime rather than stored in the PiPL, so these were recovered by walking `EffectMain`'s string literals **in address order** — which is the order they appear in the Effect Controls panel. This is the effect's control surface:
 
-- ` !"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~`
-- `Edge BehI`
-- `Edge Behavior`
-- `Field TyH`
-- `Field Type`
+ 1. `Field Type`
+ 2. `Evolution`
+ 3. `Lacunarity`
+ 4. `Displacement`
+ 5. `Edge Behavior`
 
-**Likely menu / mode values:**
+### Dropdown option lists
 
-- `Amount`
-- `Displacement`
-- `Evolution`
-- `Gain`
-- `Lacunarity`
-- `Octaves`
-- `Scale`
-- `Seed`
+Popup parameters ship their own option list, joined with `|`, so these sets are recovered exactly rather than inferred. **The owning parameter is not asserted** — the list is recorded next to the parameter whose name precedes it, and adjacency is the only evidence available. Where the options plainly do not match that name, treat the pairing as unresolved:
+
+| List appears after | Options |
+|---|---|
+| `Field Type` | `Curl`, `Flow`, `Turbulence` |
+| `Displacement` | `Both Axes`, `Horizontal`, `Vertical` |
+| `Edge Behavior` | `Clamp`, `Wrap`, `Transparent` |
 
 ## Behavioural messages
 

@@ -87,6 +87,34 @@
       ]
     }
   },
+  "parameters": {
+    "ordered": [
+      "Audio Layer",
+      "Analysis",
+      "Bar Count",
+      "Freq Range Low (Hz)",
+      "Freq Range High (Hz)",
+      "Attack (s)",
+      "Release (s)",
+      "Amplitude (%)",
+      "Baseline Position (%)",
+      "Thickness (px)",
+      "Color A (Low Amplitude)",
+      "Color B (High Amplitude)",
+      "Background Opacity (%)"
+    ],
+    "popups": [
+      {
+        "afterParam": "Audio Layer",
+        "options": [
+          "Bars",
+          "Ribbon",
+          "Mirrored Bars"
+        ]
+      }
+    ],
+    "rawCount": 19
+  },
   "strings": {
     "authored": 71,
     "parameterCandidates": [

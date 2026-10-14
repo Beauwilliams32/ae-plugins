@@ -53,27 +53,23 @@ void glitch::apply<unsigned char>(glitch::View<unsigned char const> const&, glit
 void glitch::apply<unsigned short>(glitch::View<unsigned short const> const&, glitch::View<unsigned short>&, glitch::Params const&, unsigned int, float)
 ```
 
-## Recovered parameters and UI labels
+## Recovered parameters
 
-Parameter labels are registered at runtime rather than stored in the PiPL, so these were recovered from the binary's string table. Treat them as a **high-confidence draft of the UI**, to be confirmed against the effect when it runs:
+Parameters are registered at runtime rather than stored in the PiPL, so these were recovered by walking `EffectMain`'s string literals **in address order** — which is the order they appear in the Effect Controls panel. This is the effect's control surface:
 
-- `&ffff.`
-- `Amount (%)`
-- `Amount (I`
-- `Block SiI`
-- `Block Size`
-- `Channel Shift (px)`
-- `Drive by Luma`
-- `Drive byI`
-- `Mix (%)`
-- `Scanline Height`
+ 1. `Amount (%)`
+ 2. `Block Size`
+ 3. `Channel Shift (px)`
+ 4. `Scanline Height`
+ 5. `Drive by Luma`
 
-**Likely menu / mode values:**
+### Dropdown option lists
 
-- `Mode`
-- `Seed`
-- `Spee`
-- `Speed`
+Popup parameters ship their own option list, joined with `|`, so these sets are recovered exactly rather than inferred. **The owning parameter is not asserted** — the list is recorded next to the parameter whose name precedes it, and adjacency is the only evidence available. Where the options plainly do not match that name, treat the pairing as unresolved:
+
+| List appears after | Options |
+|---|---|
+| `GlitchKit` | `Block Displace`, `RGB Channel Shift`, `Scanline Jitter`, `Bad Signal`, `Datamosh Smear` |
 
 ## Behavioural messages
 

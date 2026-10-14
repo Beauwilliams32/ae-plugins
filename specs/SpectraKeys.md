@@ -77,41 +77,42 @@ __dyld_private
 void std::__1::vector<float, std::__1::allocator<float>>::__assign_with_size[abi:nqe220106]<std::__1::_ClassicAlgPolicy, float*, float*>(float*, float*, long)
 ```
 
-## Recovered parameters and UI labels
+## Recovered parameters
 
-Parameter labels are registered at runtime rather than stored in the PiPL, so these were recovered from the binary's string table. Treat them as a **high-confidence draft of the UI**, to be confirmed against the effect when it runs:
+Parameters are registered at runtime rather than stored in the PiPL, so these were recovered by walking `EffectMain`'s string literals **in address order** — which is the order they appear in the Effect Controls panel. This is the effect's control surface:
 
-- `Audio LaH`
-- `Audio Layer`
-- `Bake Keyframes`
-- `Band %s`
-- `Band %s Enabled`
-- `Ceiling (dB)`
-- `Ceiling I`
-- `Display I`
-- `Display Mode`
-- `Display Opacity`
-- `Falloff Time (s)`
-- `Floor (dB)`
-- `Floor (dI`
-- `Gain (dB)`
-- `Gain (dBI`
-- `Output MM`
-- `Output Max`
-- `Output Min`
-- `Selection Color`
-- `Show SpeI`
-- `Show Spectrum`
-- `Spectrum Color`
-- `Threshold (dB)`
+ 1. `Audio Layer`
+ 2. `A`
+ 3. `B`
+ 4. `C`
+ 5. `Analysis`
+ 6. `Sampling`
+ 7. `FFT Size`
+ 8. `Threshold (dB)`
+ 9. `Floor (dB)`
+10. `Ceiling (dB)`
+11. `Gain (dB)`
+12. `Falloff Time (s)`
+13. `Output Min`
+14. `Output Max`
+15. `Show Spectrum`
+16. `Display Mode`
+17. `Display Opacity`
+18. `Spectrum Color`
+19. `Selection Color`
+20. `Keyframes`
+21. `Bake Keyframes`
 
-**Likely menu / mode values:**
+### Dropdown option lists
 
-- `Analysis`
-- `Display`
-- `Falloff`
-- `Keyframes`
-- `Sampling`
+Popup parameters ship their own option list, joined with `|`, so these sets are recovered exactly rather than inferred. **The owning parameter is not asserted** — the list is recorded next to the parameter whose name precedes it, and adjacency is the only evidence available. Where the options plainly do not match that name, treat the pairing as unresolved:
+
+| List appears after | Options |
+|---|---|
+| `Sampling` | `Peak`, `Average`, `RMS` |
+| `FFT Size` | `1024`, `2048`, `4096`, `8192` |
+| `Gain (dB)` | `Instant`, `Linear`, `Exponential`, `None (Integrate)` |
+| `Display Mode` | `Overlay (Guide, Not Rendered)`, `Rendered Graphic` |
 
 ## Behavioural messages
 

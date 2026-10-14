@@ -65,28 +65,27 @@ void std::__1::__if_likely_else[abi:nqe220106]<motioncurve::Image& std::__1::vec
 void std::__1::__nth_element[abi:nqe220106]<std::__1::_ClassicAlgPolicy, std::__1::__less<void, void>&, std::__1::__wrap_iter<float*>>(std::__1::__wrap_iter<float*>, std::__1::__wrap_iter<float*>, std::__1::__wrap_iter<float*>, std::__1::__less<void, void>&)
 ```
 
-## Recovered parameters and UI labels
+## Recovered parameters
 
-Parameter labels are registered at runtime rather than stored in the PiPL, so these were recovered from the binary's string table. Treat them as a **high-confidence draft of the UI**, to be confirmed against the effect when it runs:
+Parameters are registered at runtime rather than stored in the PiPL, so these were recovered by walking `EffectMain`'s string literals **in address order** — which is the order they appear in the Effect Controls panel. This is the effect's control surface:
 
-- `Analysis Region`
-- `Bake Motion`
-- `Max Displacement (px)`
-- `Motion X`
-- `Motion XI`
-- `Motion Y`
-- `Motion YI`
-- `Smoothing (frames)`
-- `Source LH`
-- `Source Layer`
+ 1. `Source Layer`
+ 2. `Analysis Region`
+ 3. `Max Displacement (px)`
+ 4. `Smoothing (frames)`
+ 5. `Motion X`
+ 6. `Motion Y`
+ 7. `Keyframes`
+ 8. `Bake Motion`
 
-**Likely menu / mode values:**
+### Dropdown option lists
 
-- `Keyframes`
-- `Output`
-- `Scale`
-- `Tazu`
-- `Tezu`
+Popup parameters ship their own option list, joined with `|`, so these sets are recovered exactly rather than inferred. **The owning parameter is not asserted** — the list is recorded next to the parameter whose name precedes it, and adjacency is the only evidence available. Where the options plainly do not match that name, treat the pairing as unresolved:
+
+| List appears after | Options |
+|---|---|
+| `Analysis Region` | `Full`, `Center 50%` |
+| `Motion Y` | `Per-frame Velocity`, `Accumulated Path` |
 
 ## Behavioural messages
 

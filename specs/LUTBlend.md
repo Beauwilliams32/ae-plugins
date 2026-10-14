@@ -117,20 +117,22 @@ vtable for std::__1::basic_ostringstream<char, std::__1::char_traits<char>, std:
 vtable for std::__1::basic_stringbuf<char, std::__1::char_traits<char>, std::__1::allocator<char>>
 ```
 
-## Recovered parameters and UI labels
+## Recovered parameters
 
-Parameter labels are registered at runtime rather than stored in the PiPL, so these were recovered from the binary's string table. Treat them as a **high-confidence draft of the UI**, to be confirmed against the effect when it runs:
+Parameters are registered at runtime rather than stored in the PiPL, so these were recovered by walking `EffectMain`'s string literals **in address order** — which is the order they appear in the Effect Controls panel. This is the effect's control surface:
 
-- `Blend (%)`
-- `Blend (%H`
-- `Identity (built-in)`
-- `Lcx H`
-- `Preserve Luma`
-- `Strength (%)`
+ 1. `/Documents/Williams Media LUTs`
+ 2. `Blend (%)`
+ 3. `Strength (%)`
+ 4. `Preserve Luma`
 
-**Likely menu / mode values:**
+### Dropdown option lists
 
-- `Drive`
+Popup parameters ship their own option list, joined with `|`, so these sets are recovered exactly rather than inferred. **The owning parameter is not asserted** — the list is recorded next to the parameter whose name precedes it, and adjacency is the only evidence available. Where the options plainly do not match that name, treat the pairing as unresolved:
+
+| List appears after | Options |
+|---|---|
+| `Blend (%)` | `Slider`, `Global Luma`, `Per-pixel Luma` |
 
 ## Behavioural messages
 

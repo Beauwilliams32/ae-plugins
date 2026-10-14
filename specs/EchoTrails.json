@@ -60,6 +60,29 @@
       ]
     }
   },
+  "parameters": {
+    "ordered": [
+      "Time Step (frames)",
+      "Opacity Decay (%)",
+      "Scale Step (%)",
+      "Rotation Step (deg)",
+      "Blend Mode",
+      "Start Behind",
+      "echoes render under the source"
+    ],
+    "popups": [
+      {
+        "afterParam": "Blend Mode",
+        "options": [
+          "Normal",
+          "Add",
+          "Screen",
+          "Lighten"
+        ]
+      }
+    ],
+    "rawCount": 12
+  },
   "strings": {
     "authored": 53,
     "parameterCandidates": [

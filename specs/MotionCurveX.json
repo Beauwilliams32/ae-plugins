@@ -85,6 +85,35 @@
       ]
     }
   },
+  "parameters": {
+    "ordered": [
+      "Source Layer",
+      "Analysis Region",
+      "Max Displacement (px)",
+      "Smoothing (frames)",
+      "Motion X",
+      "Motion Y",
+      "Keyframes",
+      "Bake Motion"
+    ],
+    "popups": [
+      {
+        "afterParam": "Analysis Region",
+        "options": [
+          "Full",
+          "Center 50%"
+        ]
+      },
+      {
+        "afterParam": "Motion Y",
+        "options": [
+          "Per-frame Velocity",
+          "Accumulated Path"
+        ]
+      }
+    ],
+    "rawCount": 17
+  },
   "strings": {
     "authored": 69,
     "parameterCandidates": [

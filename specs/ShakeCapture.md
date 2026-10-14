@@ -60,25 +60,24 @@ __dyld_private
 void std::__1::__nth_element[abi:nqe220106]<std::__1::_ClassicAlgPolicy, std::__1::__less<void, void>&, std::__1::__wrap_iter<float*>>(std::__1::__wrap_iter<float*>, std::__1::__wrap_iter<float*>, std::__1::__wrap_iter<float*>, std::__1::__less<void, void>&)
 ```
 
-## Recovered parameters and UI labels
+## Recovered parameters
 
-Parameter labels are registered at runtime rather than stored in the PiPL, so these were recovered from the binary's string table. Treat them as a **high-confidence draft of the UI**, to be confirmed against the effect when it runs:
+Parameters are registered at runtime rather than stored in the PiPL, so these were recovered by walking `EffectMain`'s string literals **in address order** — which is the order they appear in the Effect Controls panel. This is the effect's control surface:
 
-- `&ffff.`
-- `Amplitude (px)`
-- `Capture & Bake`
-- `Frequency Scale`
-- `Shake X`
-- `Shake Y`
-- `ShakeCapture: Capture & Bake`
-- `Smoothing Window (frames)`
-- `Source LH`
-- `Source Layer`
+ 1. `Source Layer`
+ 2. `Smoothing Window (frames)`
+ 3. `Amplitude (px)`
+ 4. `Frequency Scale`
+ 5. `Keyframes`
+ 6. `Capture & Bake`
 
-**Likely menu / mode values:**
+### Dropdown option lists
 
-- `Keyframes`
-- `Loop`
+Popup parameters ship their own option list, joined with `|`, so these sets are recovered exactly rather than inferred. **The owning parameter is not asserted** — the list is recorded next to the parameter whose name precedes it, and adjacency is the only evidence available. Where the options plainly do not match that name, treat the pairing as unresolved:
+
+| List appears after | Options |
+|---|---|
+| `Frequency Scale` | `Once`, `Loop`, `Ping-pong` |
 
 ## Behavioural messages
 

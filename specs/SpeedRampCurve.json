@@ -62,6 +62,29 @@
       ]
     }
   },
+  "parameters": {
+    "ordered": [
+      "Ramp Start (s)",
+      "Ramp End (s)",
+      "Speed Before (%)",
+      "Speed After (%)",
+      "Frame Blend",
+      "Mix adjacent source frames",
+      "Time Offset (s)"
+    ],
+    "popups": [
+      {
+        "afterParam": "Speed After (%)",
+        "options": [
+          "Linear",
+          "Smooth",
+          "Smoother",
+          "Snap"
+        ]
+      }
+    ],
+    "rawCount": 12
+  },
   "strings": {
     "authored": 48,
     "parameterCandidates": [

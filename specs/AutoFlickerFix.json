@@ -66,6 +66,32 @@
       ]
     }
   },
+  "parameters": {
+    "ordered": [
+      "Window Size (frames)",
+      "Strength (%)",
+      "Max Correction (dB)",
+      "Analyze Region",
+      "Show Stats"
+    ],
+    "popups": [
+      {
+        "afterParam": "Strength (%)",
+        "options": [
+          "Luma",
+          "RGB (Per-Channel)"
+        ]
+      },
+      {
+        "afterParam": "Analyze Region",
+        "options": [
+          "Full Frame",
+          "Center"
+        ]
+      }
+    ],
+    "rawCount": 12
+  },
   "strings": {
     "authored": 65,
     "parameterCandidates": [

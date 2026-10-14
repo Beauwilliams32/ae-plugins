@@ -60,24 +60,24 @@ __dyld_private
 void std::__1::__pop_heap[abi:nqe220106]<std::__1::_ClassicAlgPolicy, std::__1::greater<std::__1::pair<float, unsigned long>>, std::__1::__wrap_iter<std::__1::pair<float, unsigned long>*>>(std::__1::__wrap_iter<std::__1::pair<float, unsigned long>*>, std::__1::__wrap_iter<std::__1::pair<float, unsigned long>*>, std::__1::greater<std::__1::pair<float, unsigned long>>&, std::__1::iterator_traits<std::__1::__wrap_iter<std::__1::pair<float, unsigned long>*>>::difference_type)
 ```
 
-## Recovered parameters and UI labels
+## Recovered parameters
 
-Parameter labels are registered at runtime rather than stored in the PiPL, so these were recovered from the binary's string table. Treat them as a **high-confidence draft of the UI**, to be confirmed against the effect when it runs:
+Parameters are registered at runtime rather than stored in the PiPL, so these were recovered by walking `EffectMain`'s string literals **in address order** — which is the order they appear in the Effect Controls panel. This is the effect's control surface:
 
-- `Edge SofI`
-- `Edge Softness`
-- `Growth (%)`
-- `Growth (I`
-- `Hold EdgI`
-- `Hold Edges`
-- `Seed PoiH`
-- `Seed Point`
-- `Tolerance (%)`
+ 1. `Seed Point`
+ 2. `Tolerance (%)`
+ 3. `Growth (%)`
+ 4. `Edge Softness`
+ 5. `Hold Edges`
+ 6. `hard-stop at very strong edges`
 
-**Likely menu / mode values:**
+### Dropdown option lists
 
-- `Invert`
-- `Output`
+Popup parameters ship their own option list, joined with `|`, so these sets are recovered exactly rather than inferred. **The owning parameter is not asserted** — the list is recorded next to the parameter whose name precedes it, and adjacency is the only evidence available. Where the options plainly do not match that name, treat the pairing as unresolved:
+
+| List appears after | Options |
+|---|---|
+| `Edge Softness` | `Matte`, `Reveal Source`, `Reveal On Transparent` |
 
 ## Behavioural messages
 

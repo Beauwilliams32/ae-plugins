@@ -120,6 +120,25 @@
       ]
     }
   },
+  "parameters": {
+    "ordered": [
+      "/Documents/Williams Media LUTs",
+      "Blend (%)",
+      "Strength (%)",
+      "Preserve Luma"
+    ],
+    "popups": [
+      {
+        "afterParam": "Blend (%)",
+        "options": [
+          "Slider",
+          "Global Luma",
+          "Per-pixel Luma"
+        ]
+      }
+    ],
+    "rawCount": 11
+  },
   "strings": {
     "authored": 105,
     "parameterCandidates": [

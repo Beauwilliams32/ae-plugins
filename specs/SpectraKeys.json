@@ -98,6 +98,67 @@
       ]
     }
   },
+  "parameters": {
+    "ordered": [
+      "Audio Layer",
+      "A",
+      "B",
+      "C",
+      "Analysis",
+      "Sampling",
+      "FFT Size",
+      "Threshold (dB)",
+      "Floor (dB)",
+      "Ceiling (dB)",
+      "Gain (dB)",
+      "Falloff Time (s)",
+      "Output Min",
+      "Output Max",
+      "Show Spectrum",
+      "Display Mode",
+      "Display Opacity",
+      "Spectrum Color",
+      "Selection Color",
+      "Keyframes",
+      "Bake Keyframes"
+    ],
+    "popups": [
+      {
+        "afterParam": "Sampling",
+        "options": [
+          "Peak",
+          "Average",
+          "RMS"
+        ]
+      },
+      {
+        "afterParam": "FFT Size",
+        "options": [
+          "1024",
+          "2048",
+          "4096",
+          "8192"
+        ]
+      },
+      {
+        "afterParam": "Gain (dB)",
+        "options": [
+          "Instant",
+          "Linear",
+          "Exponential",
+          "None (Integrate)"
+        ]
+      },
+      {
+        "afterParam": "Display Mode",
+        "options": [
+          "Overlay (Guide, Not Rendered)",
+          "Rendered Graphic"
+        ]
+      }
+    ],
+    "rawCount": 30
+  },
   "strings": {
     "authored": 89,
     "parameterCandidates": [

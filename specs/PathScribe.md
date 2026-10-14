@@ -79,32 +79,31 @@ void std::__1::__tree_remove[abi:nqe220106]<std::__1::__tree_node_base<void*>*>(
 void std::__1::vector<float, std::__1::allocator<float>>::__assign_with_size[abi:nqe220106]<std::__1::_ClassicAlgPolicy, float*, float*>(float*, float*, long)
 ```
 
-## Recovered parameters and UI labels
+## Recovered parameters
 
-Parameter labels are registered at runtime rather than stored in the PiPL, so these were recovered from the binary's string table. Treat them as a **high-confidence draft of the UI**, to be confirmed against the effect when it runs:
+Parameters are registered at runtime rather than stored in the PiPL, so these were recovered by walking `EffectMain`'s string literals **in address order** — which is the order they appear in the Effect Controls panel. This is the effect's control surface:
 
-- `Amplitude (%)`
-- `Attack (I`
-- `Attack (s)`
-- `Audio LaH`
-- `Audio Layer`
-- `Background Opacity (%)`
-- `Bar CounI`
-- `Bar Count`
-- `Baseline Position (%)`
-- `Color A (Low Amplitude)`
-- `Color B (High Amplitude)`
-- `Freq Range High (Hz)`
-- `Freq Range Low (Hz)`
-- `Release (s)`
-- `Release I`
-- `Thickness (px)`
+ 1. `Audio Layer`
+ 2. `Analysis`
+ 3. `Bar Count`
+ 4. `Freq Range Low (Hz)`
+ 5. `Freq Range High (Hz)`
+ 6. `Attack (s)`
+ 7. `Release (s)`
+ 8. `Amplitude (%)`
+ 9. `Baseline Position (%)`
+10. `Thickness (px)`
+11. `Color A (Low Amplitude)`
+12. `Color B (High Amplitude)`
+13. `Background Opacity (%)`
 
-**Likely menu / mode values:**
+### Dropdown option lists
 
-- `Analysis`
-- `Look`
-- `Mode`
+Popup parameters ship their own option list, joined with `|`, so these sets are recovered exactly rather than inferred. **The owning parameter is not asserted** — the list is recorded next to the parameter whose name precedes it, and adjacency is the only evidence available. Where the options plainly do not match that name, treat the pairing as unresolved:
+
+| List appears after | Options |
+|---|---|
+| `Audio Layer` | `Bars`, `Ribbon`, `Mirrored Bars` |
 
 ## Behavioural messages
 

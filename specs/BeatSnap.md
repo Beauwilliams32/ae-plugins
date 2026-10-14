@@ -63,34 +63,32 @@ unsigned short& std::__1::vector<unsigned short, std::__1::allocator<unsigned sh
 void std::__1::__tree_balance_after_insert[abi:nqe220106]<std::__1::__tree_node_base<void*>*>(std::__1::__tree_node_base<void*>*, std::__1::__tree_node_base<void*>*)
 ```
 
-## Recovered parameters and UI labels
+## Recovered parameters
 
-Parameter labels are registered at runtime rather than stored in the PiPL, so these were recovered from the binary's string table. Treat them as a **high-confidence draft of the UI**, to be confirmed against the effect when it runs:
+Parameters are registered at runtime rather than stored in the PiPL, so these were recovered by walking `EffectMain`'s string literals **in address order** — which is the order they appear in the Effect Controls panel. This is the effect's control surface:
 
-- `Add Markers at Hits`
-- `Attack (I`
-- `Attack (ms)`
-- `Audio LaH`
-- `Audio Layer`
-- `Bake Keyframes`
-- `Band High Freq (Hz)`
-- `Band Low Freq (Hz)`
-- `Min Gap (ms)`
-- `Min Gap I`
-- `Output MI`
-- `Output Max`
-- `Output Min`
-- `Output Mode`
-- `Release (ms)`
-- `Release I`
-- `Sensitivity (%)`
+ 1. `Audio Layer`
+ 2. `Detection`
+ 3. `Band Low Freq (Hz)`
+ 4. `Band High Freq (Hz)`
+ 5. `Sensitivity (%)`
+ 6. `Min Gap (ms)`
+ 7. `Output Mode`
+ 8. `Attack (ms)`
+ 9. `Release (ms)`
+10. `Output Min`
+11. `Output Max`
+12. `Keyframes`
+13. `Bake Keyframes`
+14. `Add Markers at Hits`
 
-**Likely menu / mode values:**
+### Dropdown option lists
 
-- `Detection`
-- `Keyframes`
-- `Markers`
-- `Output`
+Popup parameters ship their own option list, joined with `|`, so these sets are recovered exactly rather than inferred. **The owning parameter is not asserted** — the list is recorded next to the parameter whose name precedes it, and adjacency is the only evidence available. Where the options plainly do not match that name, treat the pairing as unresolved:
+
+| List appears after | Options |
+|---|---|
+| `Output Mode` | `Pulse`, `Envelope` |
 
 ## Behavioural messages
 

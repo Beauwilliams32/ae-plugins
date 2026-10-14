@@ -58,22 +58,24 @@ __dyld_private
 float& std::__1::vector<float, std::__1::allocator<float>>::emplace_back<float const&>(float const&)::'lambda0'()::operator()() const
 ```
 
-## Recovered parameters and UI labels
+## Recovered parameters
 
-Parameter labels are registered at runtime rather than stored in the PiPL, so these were recovered from the binary's string table. Treat them as a **high-confidence draft of the UI**, to be confirmed against the effect when it runs:
+Parameters are registered at runtime rather than stored in the PiPL, so these were recovered by walking `EffectMain`'s string literals **in address order** — which is the order they appear in the Effect Controls panel. This is the effect's control surface:
 
-- `Analyze H`
-- `Analyze Region`
-- `Lco H`
-- `Max Correction (dB)`
-- `Show StaH`
-- `Show Stats`
-- `Strength (%)`
-- `Window Size (frames)`
+ 1. `Window Size (frames)`
+ 2. `Strength (%)`
+ 3. `Max Correction (dB)`
+ 4. `Analyze Region`
+ 5. `Show Stats`
 
-**Likely menu / mode values:**
+### Dropdown option lists
 
-- `Mode`
+Popup parameters ship their own option list, joined with `|`, so these sets are recovered exactly rather than inferred. **The owning parameter is not asserted** — the list is recorded next to the parameter whose name precedes it, and adjacency is the only evidence available. Where the options plainly do not match that name, treat the pairing as unresolved:
+
+| List appears after | Options |
+|---|---|
+| `Strength (%)` | `Luma`, `RGB (Per-Channel)` |
+| `Analyze Region` | `Full Frame`, `Center` |
 
 ## Behavioural messages
 

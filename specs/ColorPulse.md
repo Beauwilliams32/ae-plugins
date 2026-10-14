@@ -60,28 +60,29 @@ __dyld_private
 float& std::__1::vector<float, std::__1::allocator<float>>::emplace_back<float>(float&&)::'lambda0'()::operator()() const
 ```
 
-## Recovered parameters and UI labels
+## Recovered parameters
 
-Parameter labels are registered at runtime rather than stored in the PiPL, so these were recovered from the binary's string table. Treat them as a **high-confidence draft of the UI**, to be confirmed against the effect when it runs:
+Parameters are registered at runtime rather than stored in the PiPL, so these were recovered by walking `EffectMain`'s string literals **in address order** — which is the order they appear in the Effect Controls panel. This is the effect's control surface:
 
-- `Bake Keyframes`
-- `Brightness (%)`
-- `Sample RI`
-- `Sample Region`
-- `Sampled Color`
-- `Sampled I`
-- `Saturation Boost (%)`
-- `Show PreI`
-- `Show Preview`
-- `Smoothing (%)`
-- `Source LH`
-- `Source Layer`
+ 1. `Source Layer`
+ 2. `Sample Region`
+ 3. `Smoothing (%)`
+ 4. `Saturation Boost (%)`
+ 5. `Sampled Color`
+ 6. `Brightness (%)`
+ 7. `Show Preview`
+ 8. `swatch bar across the top of the layer`
+ 9. `Keyframes`
+10. `Bake Keyframes`
 
-**Likely menu / mode values:**
+### Dropdown option lists
 
-- `Keyframes`
-- `Mode`
-- `Preview`
+Popup parameters ship their own option list, joined with `|`, so these sets are recovered exactly rather than inferred. **The owning parameter is not asserted** — the list is recorded next to the parameter whose name precedes it, and adjacency is the only evidence available. Where the options plainly do not match that name, treat the pairing as unresolved:
+
+| List appears after | Options |
+|---|---|
+| `Source Layer` | `Average`, `Dominant`, `Brightest Region` |
+| `Sample Region` | `Full`, `Center`, `Top`, `Bottom` |
 
 ## Behavioural messages
 

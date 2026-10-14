@@ -73,21 +73,23 @@ void std::__1::__tree_balance_after_insert[abi:nqe220106]<std::__1::__tree_node_
 void std::__1::__tree_remove[abi:nqe220106]<std::__1::__tree_node_base<void*>*>(std::__1::__tree_node_base<void*>*, std::__1::__tree_node_base<void*>*)
 ```
 
-## Recovered parameters and UI labels
+## Recovered parameters
 
-Parameter labels are registered at runtime rather than stored in the PiPL, so these were recovered from the binary's string table. Treat them as a **high-confidence draft of the UI**, to be confirmed against the effect when it runs:
+Parameters are registered at runtime rather than stored in the PiPL, so these were recovered by walking `EffectMain`'s string literals **in address order** — which is the order they appear in the Effect Controls panel. This is the effect's control surface:
 
-- `&ffffff.`
-- `Heatmap Opacity (%)`
-- `Key ColoH`
-- `Key Color`
-- `Sensitivity (%)`
-- `Suggested Clip Black (%)`
-- `Suggested Clip White (%)`
+ 1. `Key Color`
+ 2. `Sensitivity (%)`
+ 3. `Suggested Clip Black (%)`
+ 4. `Suggested Clip White (%)`
+ 5. `Heatmap Opacity (%)`
 
-**Likely menu / mode values:**
+### Dropdown option lists
 
-- `View`
+Popup parameters ship their own option list, joined with `|`, so these sets are recovered exactly rather than inferred. **The owning parameter is not asserted** — the list is recorded next to the parameter whose name precedes it, and adjacency is the only evidence available. Where the options plainly do not match that name, treat the pairing as unresolved:
+
+| List appears after | Options |
+|---|---|
+| `Key Color` | `Uniformity Heatmap`, `Spill Map`, `Edge Quality`, `Distance Matte`, `Original` |
 
 ## Behavioural messages
 
