@@ -335,9 +335,42 @@ The first block stores `param_type = 7` and the name as the 4 bytes `"LUT "` at
 LUT A / LUT B menus"). That correspondence is the check that the offset table is
 right; a single wrong offset would have made the name garbage.
 
-Recovering the remaining parameters is mechanical now — read each block's
-`uu.id`, `param_type`, name bytes and union fields — but it has NOT been done, so
-the full parameter table is still unrecovered.
+### The complete parameter table — RECOVERED
+
+All six `PF_ADD_PARAM` blocks are read. otool annotates every string literal, so
+the names come straight out of the disassembly rather than being inferred:
+
+| `uu.id` | `param_type` | Name | Recovered settings |
+|---|---|---|---|
+| 1 | `PF_Param_POPUP` (7) | `LUT A` | |
+| 2 | `PF_Param_POPUP` (7) | `LUT B` | |
+| 3 | `PF_Param_FLOAT_SLIDER` (10) | `Blend (%)` | `valid_max` = 100.0f, `slider_max` = 100.0f, `precision` = 1 |
+| 4 | `PF_Param_POPUP` (7) | `Drive` | choices `"Slider|Global Luma|Per-pixel Luma"` |
+| 5 | `PF_Param_FLOAT_SLIDER` (10) | `Strength (%)` | 100.0 values, `precision` = 1 |
+| 6 | `PF_Param_CHECKBOX` (4) | `Preserve Luma` | |
+
+Six parameters, registered in that order, and the IDs are contiguous from 1.
+
+The union offsets then confirm themselves against the SDK a second time. For
+`PF_FloatSliderDef` with `u` at `def+0x38`: `value` is a `PF_FpLong` = **double**
+(`A_FpLong` is `double` in `A.h:40`, so the 8-byte `mov x8, #0x4059000000000000`
+in block 5 really is the double 100.0), `value_desc` is 32 bytes
+(`PF_MAX_PARAM_DESCRIPTION_LEN` is 31), and `precision` is a `PF_Precision` =
+`A_short` — which is exactly why block 3 uses a HALFWORD store for it. Block 3's
+stores land on `valid_max` and `slider_max` at `def+0x6c` and `def+0x74`. Three
+independent layout details, all predicted by the header and all matching.
+
+Note that `Drive` is the popup that appears AFTER `Blend (%)` in the ECW and
+carries the three blend modes, while `Blend (%)` itself is the slider — so
+`applyLUTBlend`'s single `blend` float is supplied either from the slider or from
+the image, depending on `Drive`. That is why `applyLUTBlend` takes the blend as a
+plain float with no knowledge of the mode.
+
+Still unrecovered in this area: the exact `flags` word per parameter, the
+`value_desc` strings, and the PATH parameter that the recovered strings imply
+(`/Documents/Williams Media LUTs` appears in the spec's parameter strings but no
+PATH block was found among the six, so it likely belongs to `LB_LutFolderPath`
+rather than to a registered parameter).
 
 ### Other recovered structure
 
