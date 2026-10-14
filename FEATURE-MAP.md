@@ -56,7 +56,10 @@ is merely identified.
 | **`typeriser::parseTimingLine`** (`"START --> END"` → two ms positions; strict `end > start`; left parsed raw, right trimmed then cut at first space) | `src/typeriser/typeriser.cpp` | **Recovered + verified** | `test/typeriser.test.mjs` (JS oracle, 24 cases) |
 | `typeriser::parseSrt` (512 instrs) | `specs/TypeRiser.md` | **Identified only** — but every helper it calls (`trim`, `splitWords`, `parseTimestamp`, `parseTimingLine`, `cueIndexAt`, `clampf`) is now recovered in full, so only its own block/boundary loop is outstanding | none yet |
 | The other 13 effects' function bodies | `specs/*.md` | **Identified only** — architecture recovered, bodies not | none yet |
-| Buildable plugin bundles (AE SDK at `0x000d001d`) | — | **Not started** | none |
+| **PiPL resource reconstructed from the recovered spec** (SpectraKeys) | `packaging/SpectraKeysPiPL.r` | **Recovered + verified** — the 576-byte PiPL payload rezzed from this source is byte-identical to the shipped `SpectraKeys.rsrc` | `test/pipl.test.mjs` |
+| **The exact AE SDK behind the fleet** | `packaging/README.md` | **Verified** — SDK 25.6 declares `PF_PLUG_IN_VERSION 13` / `SUBVERS 29` = `0x000d001d`, the spec version all 16 bundles report; its samples compile clean for arm64 | `test/pipl.test.mjs` |
+| PiPL sources for the other 15 effects | `specs/*.json` | **Not started** — the specs hold every field; only the `.r` files are missing. Mechanical now that the template and proof work | none yet |
+| `EffectMain` + parameter registration + render callbacks | — | **Not started** — this is the remaining blocker for a loadable `.plugin` | none |
 
 ## Gate
 
@@ -64,7 +67,7 @@ is merely identified.
 npm run check && npm test
 ```
 
-`npm test` runs nine tests: it asserts the disassembly constants decode as
+`npm test` runs eleven tests: it asserts the disassembly constants decode as
 claimed, compiles each recovered namespace with `clang++ -Werror` and runs its
 internal property checks (spectra 107, lutblend 49, typeriser 135 — 291 in
 total), diffs the recovered DSP against all 26 vendored machine-code copies,

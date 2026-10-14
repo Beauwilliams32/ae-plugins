@@ -5,3 +5,6 @@ dist/
 *.zxp
 .node_modules/
 node_modules/
+
+# Worktrees used for isolated recovery lanes.
+.worktrees/
