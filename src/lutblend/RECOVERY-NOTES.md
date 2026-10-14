@@ -156,22 +156,44 @@ The dispatch compares the FIRST token's length, then its bytes, and clang emits
 the chain twice: once reading the SSO buffer inline, once via the heap data
 pointer. Lengths and match strings:
 
-| Length | Token | Handler |
+| Length | Token | Entry |
 |---|---|---|
 | 5 | `TITLE` | ignored (next line) |
-| 10 | `DOMAIN_MIN` | 0x1528 / 0x142c |
-| 10 | `DOMAIN_MAX` | 0x142c / 0x187c |
+| 10 | `DOMAIN_MIN` / `DOMAIN_MAX` | 0x1528 / 0x142c / 0x187c |
 | 11 | `LUT_3D_SIZE` | 0x1270 |
 | 11 | `LUT_1D_SIZE` | 0x12e8 |
 | 18 | `LUT_3D_INPUT_RANGE` | 0x13ec |
 | 18 | `LUT_1D_INPUT_RANGE` | 0x139c |
 | other | — | error path |
 
-NOTE: the two 10-length arms resolve to different handler addresses between the
-SSO and heap copies of the chain (MIN -> 0x1528 in one, 0x142c in the other). That
-inconsistency has NOT been resolved. Either a handler is shared and entered with
-different state, or one of these addresses is a common tail rather than a distinct
-handler. It must be settled before `DOMAIN_MIN`/`DOMAIN_MAX` are implemented.
+The three length-10 entries are NOT three handlers. They are three different ways
+into ONE decision sub-tree, which is why the SSO and heap copies of the outer
+chain appear to disagree. The sub-tree:
+
+```
+0x189c  ldr  x8, [x9] / rev x8, x8      ; bytes 0-7, byte-swapped
+0x18a4  x10 = 0x444f4d41494e5f4d       ; "DOMAIN_M" in big-endian byte order
+0x18b4  cmp  x8, x10 / b.ne 0x19b4      ; not DOMAIN_M at all
+0x18bc  ldrh w8, [x9, #0x8] / rev / lsr #16   ; bytes 8-9
+0x18c8  cmp  w8, #0x494e                ; "IN"
+0x18d4  mov  w8, #0x0 / b 0x1c4c        ; MIN  -> mode 0
+0x1c3c  cmp  x8, #0x494e / mov w8,#-1 / cneg w8,w8,hs   ; MAX -> mode != 0
+0x1c4c  cmp  w8, #0x0
+0x1c50  ldp  x9, x8, [sp, #0x10]        ; x9 = &minR, x8 = &maxR
+0x1c54  csel x19, x9, x8, eq            ; x19 = mode==0 ? &minR : &maxR
+```
+
+So `x19` is a SELECTED base pointer, and the handler that follows parses the three
+value tokens into `x19[0..2]` — `minR/minG/minB` for `DOMAIN_MIN`, `maxR/maxG/maxB`
+for `DOMAIN_MAX`. There is no inconsistency and no bug; the previous revision of
+this file recorded it as an unresolved defect, which was wrong.
+
+Worth recording HOW that wrong conclusion was reached, because the trap is
+general: `&minR` and `&maxR` are stored adjacent at `sp+0x10` and `sp+0x18`, and
+they are read back with a single `ldp x9, x8, [sp, #0x10]`. A grep for
+`ldr x\?, [sp, #0x10]` finds nothing and makes it look as though `&minR` is never
+used. Grepping for one load width when the compiler emits `ldp` will silently
+invert a conclusion — check for the pair load.
 
 ### The working value is a local CubeLUT
 
@@ -234,7 +256,6 @@ per-line status to 0. A completion flag at `[sp+0x24]` bit 0 gates the push.
 
 Specifically unresolved, to be settled from the disassembly rather than guessed:
 
-* the `DOMAIN_MIN` / `DOMAIN_MAX` handler duplication noted above;
 * how `LUT_3D_INPUT_RANGE` and `LUT_1D_INPUT_RANGE` interact with
   `DOMAIN_MIN`/`DOMAIN_MAX` — whether they write the same fields or one overrides;
 * the precise interleaving of the size declaration with the first data row, and
