@@ -103,7 +103,7 @@ citing the instructions that establish each behaviour:
 | Module | Contents | State |
 |---|---|---|
 | `typeriser::` | The whole SRT karaoke engine: `parseSrt`, `parseTimingLine`, `parseTimestamp`, `trim`, `splitWords`, `wrapWords`, `wordStyle`, `ease`, `karaokeWordAt`, `wordProgress`, `cueIndexAt`, plus `Cue`, `WordStyle` and `Anim` | **complete — all 12 authored functions** |
-| `glitch::` | `clampf`, `clampi`, `hashKey`, `patternFrame` | **complete for the scalar layer, and INSTRUCTION-IDENTICAL** (4/4). The render engine `glitch::apply<T>` is unrecovered |
+| `glitch::` | `clampf`, `clampi`, `hashKey`, `patternFrame` | **complete for the scalar layer, and INSTRUCTION-IDENTICAL** (4/4). The render engine `glitch::apply<T>` is unrecovered, but its `View<T>`/`Params` layouts, its mode field and its one-based five-way dispatch ARE recovered — see `test/glitch.test.mjs`, which re-derives the offsets from the bundle |
 | `speedramp::` | `easeValue`, `easeIntegral`, `speedAt`, `mapTime`, `computeBlend`, plus `RampParams` and `FrameBlend` | **complete — all 5 functions, 261 instructions** |
 | `lutblend::` | `clampf`, `lerpf`, `luma709`, `CubeLUT::valid`, `sampleLUT`, `makeIdentity`, `applyLUTBlend`, plus the `CubeLUT` layout | **7 of 8** (`parseCube` pending — 1924 instructions, the largest function in the fleet) |
 | `echo::` | `clampf`, `blendPixel`, `compositeOver`, `buildLadder`, `sampleBilinear`, `transformBilinear`, plus the corrected `ImageF` layout and `BlendMode` | **complete — all 6 functions**. Recovering `transformBilinear` also CORRECTED `ImageF`: `data` had been modelled as a raw `float*` on the strength of a read that a `std::vector`'s begin pointer produces identically. The host integration is unread |
