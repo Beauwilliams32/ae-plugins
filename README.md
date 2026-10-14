@@ -109,6 +109,23 @@ The `.cube` memory layout is also confirmed from two independent directions:
 and `sampleLUT` *reads* it that way. Writer and reader were recovered separately
 and agree, which is a stronger check on the ordering than either alone.
 
+## The capability contract
+
+`CAPABILITIES.md` decodes every effect's recovered `eGLO`/`eGL2` PiPL atoms into
+named `PF_OutFlag` values. Those atoms are what AE's host reads to decide how to
+call an effect, so they are obligations rather than descriptions:
+
+| Obligation | Effects |
+|---|---|
+| 16-bit render path (`DEEP_COLOR_AWARE`) | **16 / 16** |
+| Thread-safe shared state (`SUPPORTS_THREADED_RENDERING`) | **16 / 16** |
+| 32-bpc float path (`FLOAT_COLOR_AWARE`) | 4 — BeatGridRuler, BeatSnap, MotionCurveX, ShakeCapture |
+| `PF_Cmd_SMART_RENDER` handler (`SUPPORTS_SMART_RENDER`) | the same 4 |
+
+That splits the fleet into two tiers for a rebuild: twelve effects need an 8/16-bit
+path and locking, while those four additionally need float handling and a
+smart-render entry point.
+
 ## Roadmap
 
 1. **Recover the DSP.** Disassemble per effect, starting with the effects that expose
