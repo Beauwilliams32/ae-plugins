@@ -23,7 +23,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { BUNDLES, bundlePath } from "../tools/namespaces.mjs";
@@ -266,6 +267,70 @@ test("the differ keeps overloads apart instead of collapsing them by name", () =
     `the vector overload must be compared in its own right:\n${r.raw}`);
   assert.match(r.raw, /DIFFER\s+aff::trimmedMean\(PKfmf\)/,
     `and the pointer overload must be distinguishable from it:\n${r.raw}`);
+});
+
+test("the differ still fails a deliberately wrong transcription", (t) => {
+  // THE NEGATIVE CONTROL FOR THE THREE FIXES ABOVE.
+  //
+  // Each of those fixes made the differ report fewer differences, and a comparison that
+  // reports fewer differences can do so either by becoming accurate or by becoming blind.
+  // Nothing in the assertions about the fixes distinguishes those, so this closes the
+  // hole the direct way: feed the tool a transcription that is WRONG in a known way and
+  // require it to say so.
+  //
+  // It runs against a perturbed copy of the source in a temporary directory, via
+  // `--cpp=`, rather than by rewriting a file under src/ — a test must not mutate the
+  // thing it is testing, and a crash partway through must not leave a corrupted tree.
+  if (!bundlesInstalled()) { t.skip("plugin bundles are not installed"); return; }
+
+  const original = readFileSync(path.join(ROOT, "src", "autoflickerfix", "autoflickerfix.cpp"), "utf8");
+  const dir = mkdtempSync(path.join(tmpdir(), "codegen-neg-"));
+  try {
+    const runWith = (source) => {
+      const cpp = path.join(dir, "perturbed.cpp");
+      writeFileSync(cpp, source);
+      try {
+        return execFileSync("node",
+          [path.join(ROOT, "tools", "codegen-diff.mjs"), "autoflickerfix", `--cpp=${cpp}`],
+          { cwd: ROOT, encoding: "utf8", stdio: "pipe" });
+      } catch (e) {
+        return `${e.stdout ?? ""}${e.stderr ?? ""}`;
+      }
+    };
+
+    // (a) The unperturbed source still verifies, so the harness is not simply always
+    // failing. Without this the two checks below would pass against a broken tool.
+    const baseline = runWith(original);
+    assert.match(baseline, /MATCH\s+aff::dbToGainClamp\s+13 instructions, identical/,
+      `the baseline must match before a perturbation means anything:\n${baseline}`);
+
+    // (b) A changed CONSTANT. 20.0f -> 10.0f keeps the instruction count at 13, so a
+    // tally-only check would miss it; only the operand comparison catches this.
+    const constant = runWith(original.replace("fabsf(db) / 20.0f", "fabsf(db) / 10.0f"));
+    assert.notEqual(constant, original, "the perturbation must actually change the source");
+    assert.match(constant, /DIFFER\s+aff::dbToGainClamp\s+shipped=13 mine=13/,
+      `a changed constant must be reported, at the same instruction count:\n${constant}`);
+
+    // (c) A REMOVED GUARD — the exact error the differ caught in this namespace. Dropping
+    // meanOf's empty test lets an empty vector fall through to 0.0/0.0 and costs one
+    // instruction (the bundle's own `ret` on that path replaces a branch to a shared
+    // epilogue). This is a re-run of a real bug rather than a synthetic one, which is
+    // what makes it worth pinning: if it can no longer be caught, the tool has regressed
+    // to the state that missed it.
+    const noGuard = original.replace("  if (values.empty()) return 0.0f;\n  double sum = 0.0;",
+                                     "  double sum = 0.0;");
+    assert.notEqual(noGuard, original, "the guard must have been present to remove");
+    const guarded = runWith(noGuard);
+    assert.match(guarded, /DIFFER\s+aff::meanOf\s+shipped=92 mine=93/,
+      `removing meanOf's empty guard must be reported:\n${guarded}`);
+
+    // The cascade is worth asserting too: temporalTarget inlines meanOf, so it must also
+    // stop matching rather than the differ reporting only the leaf.
+    assert.match(guarded, /DIFFER\s+aff::temporalTarget/,
+      `the inline site must be reported as well:\n${guarded}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("the codegen differ distinguishes a real mismatch from whitespace", (t) => {

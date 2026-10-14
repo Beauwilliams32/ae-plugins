@@ -240,9 +240,16 @@ function distinguish(mangled, name, nameCounts) {
 }
 
 function main() {
-  const [dir, frag] = process.argv.slice(2);
+  // `--cpp=<path>` compiles a DIFFERENT translation unit against the same bundle and the
+  // same header. It exists so the differ can be negative-controlled: the test suite
+  // feeds it a deliberately wrong transcription of a function that otherwise verifies
+  // identical, and requires the mismatch to be reported. Without it the only way to test
+  // the comparison would be to corrupt a file inside src/, which a test must not do.
+  const argv = process.argv.slice(2);
+  const cppArg = argv.find((a) => a.startsWith("--cpp="));
+  const [dir, frag] = argv.filter((a) => !a.startsWith("--"));
   if (!dir) {
-    console.error("usage: codegen-diff.mjs <RecoveredDir> [SymbolFragment]");
+    console.error("usage: codegen-diff.mjs <RecoveredDir> [SymbolFragment] [--cpp=<path>]");
     return 2;
   }
   const plugin = BUNDLES[dir];
@@ -264,7 +271,8 @@ function main() {
     console.error(`bundle for ${plugin} is not installed`);
     return 2;
   }
-  const cpp = path.join(ROOT, "src", dir, `${dir}.cpp`);
+  const cpp = cppArg ? cppArg.slice("--cpp=".length)
+                     : path.join(ROOT, "src", dir, `${dir}.cpp`);
   if (!existsSync(cpp)) {
     console.error(`missing ${cpp}`);
     return 2;
@@ -274,6 +282,10 @@ function main() {
   try {
     const asmPath = path.join(tmp, `${dir}.s`);
     execFileSync("clang++", [
+      // -I so that a `--cpp` override outside src/ can still include the namespace's
+      // header. Harmless for the in-tree case, where the quoted include already resolves
+      // relative to the source file.
+      "-I", path.join(ROOT, "src", dir),
       "-std=c++17", "-O2", "-S", "-arch", "arm64", "-o", asmPath, cpp,
     ], { stdio: "pipe" });
 
