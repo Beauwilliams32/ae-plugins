@@ -28,6 +28,37 @@ presented as one.
 Requires an AE SDK; set `AE_SDK_DIR` to its `Examples` directory or unpack one
 under `~/.ae-sdk/`. Output lands in `build/LUTBlend.plugin` (gitignored).
 
+## The render path is now executed, not just compiled
+
+The engine lives in `LutRender.{h,cpp}` and takes plain buffers, plain numbers and two
+`CubeLUT`s, so `test/lutrender.test.mjs` can drive it directly. That turns several claims
+from aspirational into checked:
+
+* the three Drive modes are genuinely different, and each reads what it should — Slider
+  follows the slider and ignores the mean, Global Luma follows the mean and ignores the
+  slider, Per-pixel Luma follows each pixel's own luma;
+* `strength` is a lerp, so 0 is a true no-op and 0.5 lands halfway;
+* `preserveLuma` changes the result **and** makes the output luma match the input's —
+  so the checkbox is provably wired, not decorative;
+* both depths map every pixel to the same 8-bit-equivalent value, and alpha is carried
+  through;
+* a full render is byte-identical run to run; 1x1 and zero-area frames are safe.
+
+**`meanLuma` is depth-aware, and that is a REGRESSION TEST.** Reading a 16-bit frame with
+8-bit arithmetic walks at half its real stride and averages the wrong bytes. That bug was
+written once already, in this very pre-pass, and the negative control reproduces it: a
+depth-blind version reports a mean of **56.4 instead of 0.44**. It is now impossible to
+reintroduce silently.
+
+**A second bug was caught before it shipped.** The null-LUT fallback was originally a
+default-constructed `CubeLUT` — which has `size = 0` and fails `valid()`, so sampling it
+is meaningless. The shipped plugin builds a real identity LUT for that case
+(`__ZL11identityLUTv`). The fallback now does too, and a test asserts a null LUT passes
+every channel through rather than producing black.
+
+Three negative controls confirm the tests can fail: a depth-blind `meanLuma`, a
+default-`CubeLUT` fallback, and an ignored Drive mode.
+
 ## What is verified
 
 `test/build.test.mjs` runs the real build in the gate and asserts:

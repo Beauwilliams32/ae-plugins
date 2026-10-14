@@ -41,6 +41,7 @@
 
 #include "lutblend.h"
 #include "LutLibrary.h"
+#include "LutRender.h"
 #include "LUTBlendParams.h"
 
 namespace {
@@ -187,41 +188,26 @@ PF_Err ParamsSetup(PF_InData* in_data, PF_OutData* out_data) {
 // knows nothing about modes — that resolution happened in the original
 // EffectMain, which is lost, so the three cases here are newly written to match
 // the recovered popup choices.
-struct PixelRefcon {
-  const lutblend::CubeLUT* a;
-  const lutblend::CubeLUT* b;
-  float blend;        // 0..1, already resolved from the Drive mode
-  float strength;     // 0..1
-  bool  preserveLuma;
-  float meanLuma;     // 0..1, used by the Global Luma mode
-  int   drive;
+// The per-pixel engine lives in LutRender.cpp so it can be executed without a host.
+// See LutRender.h.
+//
+// These two callbacks are deliberately THIN. They exist so the host path still goes
+// through AE's iterate suite, which gives progress reporting and abort checking; the
+// arithmetic they call is the same code the tests drive directly.
+
+struct PixelPass {
+  const lutrender::FrameParams* params;
+  float meanLuma;
 };
 
-// The blend itself, shared by every depth. Takes and returns 0..1 floats so the
-// depth-specific callbacks only have to convert their own representation.
-inline void blendRGB(const PixelRefcon* rc, const float rgb[3], float out[3]) {
-  float blend = rc->blend;
-  if (rc->drive == LUTBLEND_DRIVE_GLOBAL_LUMA) {
-    blend = rc->meanLuma;
-  } else if (rc->drive == LUTBLEND_DRIVE_PER_PIXEL_LUMA) {
-    // The image's own luma drives the mix, per pixel.
-    blend = lutblend::luma709(rgb[0], rgb[1], rgb[2]);
-  }
-  lutblend::applyLUTBlend(*rc->a, *rc->b, blend, rc->strength,
-                          rc->preserveLuma, rgb, out);
-  for (int i = 0; i < 3; ++i) out[i] = lutblend::clampf(out[i], 0.0f, 1.0f);
-}
-
-PF_Err BlendPixel8(void* refcon, A_long xL, A_long yL,
-                   PF_Pixel8* inP, PF_Pixel8* outP) {
-  (void)xL;
-  (void)yL;
-  const PixelRefcon* rc = reinterpret_cast<const PixelRefcon*>(refcon);
-  if (!rc) return PF_Err_INTERNAL_STRUCT_DAMAGED;
+PF_Err BlendPixel8(void* refcon, A_long xL, A_long yL, PF_Pixel8* inP, PF_Pixel8* outP) {
+  (void)xL; (void)yL;
+  const PixelPass* pass = reinterpret_cast<const PixelPass*>(refcon);
+  if (!pass) return PF_Err_INTERNAL_STRUCT_DAMAGED;
 
   const float rgb[3] = {inP->red / 255.0f, inP->green / 255.0f, inP->blue / 255.0f};
   float out[3];
-  blendRGB(rc, rgb, out);
+  lutrender::blendPixel(*pass->params, pass->meanLuma, rgb, out);
 
   outP->alpha = inP->alpha;
   outP->red   = static_cast<A_u_char>(out[0] * 255.0f + 0.5f);
@@ -230,32 +216,21 @@ PF_Err BlendPixel8(void* refcon, A_long xL, A_long yL,
   return PF_Err_NONE;
 }
 
-// 16-bit. REQUIRED, not optional: the plugin declares PF_OutFlag_DEEP_COLOR_AWARE
-// (recovered: eGLO == 1 << 25), so AE will hand over 16-bit worlds. The shipped
-// plugin has a halfword-reading path of its own, so this is matching recovered
-// capability rather than inventing it.
-//
-// PF_MAX_CHAN16 is 32768, NOT 65535: AE's 16-bit channels use [0 .. 2^15] with
-// exactly one legal codepoint in the 16th bit, so the scale is 32768.
-PF_Err BlendPixel16(void* refcon, A_long xL, A_long yL,
-                    PF_Pixel16* inP, PF_Pixel16* outP) {
-  (void)xL;
-  (void)yL;
-  const PixelRefcon* rc = reinterpret_cast<const PixelRefcon*>(refcon);
-  if (!rc) return PF_Err_INTERNAL_STRUCT_DAMAGED;
+// 16-bit is REQUIRED by the recovered eGLO, and PF_MAX_CHAN16 is 32768, not 65535.
+PF_Err BlendPixel16(void* refcon, A_long xL, A_long yL, PF_Pixel16* inP, PF_Pixel16* outP) {
+  (void)xL; (void)yL;
+  const PixelPass* pass = reinterpret_cast<const PixelPass*>(refcon);
+  if (!pass) return PF_Err_INTERNAL_STRUCT_DAMAGED;
 
-  const float rgb[3] = {
-    inP->red   / static_cast<float>(PF_MAX_CHAN16),
-    inP->green / static_cast<float>(PF_MAX_CHAN16),
-    inP->blue  / static_cast<float>(PF_MAX_CHAN16)
-  };
+  const float scale = static_cast<float>(PF_MAX_CHAN16);
+  const float rgb[3] = {inP->red / scale, inP->green / scale, inP->blue / scale};
   float out[3];
-  blendRGB(rc, rgb, out);
+  lutrender::blendPixel(*pass->params, pass->meanLuma, rgb, out);
 
   outP->alpha = inP->alpha;
-  outP->red   = static_cast<A_u_short>(out[0] * PF_MAX_CHAN16 + 0.5f);
-  outP->green = static_cast<A_u_short>(out[1] * PF_MAX_CHAN16 + 0.5f);
-  outP->blue  = static_cast<A_u_short>(out[2] * PF_MAX_CHAN16 + 0.5f);
+  outP->red   = static_cast<A_u_short>(out[0] * scale + 0.5f);
+  outP->green = static_cast<A_u_short>(out[1] * scale + 0.5f);
+  outP->blue  = static_cast<A_u_short>(out[2] * scale + 0.5f);
   return PF_Err_NONE;
 }
 
@@ -283,67 +258,45 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data,
 
   // The recovered DSP works in 0..1. clampf is the recovered helper, so the
   // normalisation uses it rather than a hand-rolled min/max.
-  PixelRefcon rc;
-  rc.a            = useA;
-  rc.b            = useB;
-  rc.blend        = lutblend::clampf(static_cast<float>(blendPct) / 100.0f, 0.0f, 1.0f);
-  rc.strength     = lutblend::clampf(static_cast<float>(strengthPct) / 100.0f, 0.0f, 1.0f);
-  rc.preserveLuma = preserveLuma;
-  rc.drive        = drive;
-  // Global Luma drives the mix from the frame's own mean luma. Computed by
-  // subsampling rather than over every pixel: the mean only needs to be
-  // representative and a stride of 16 keeps the pre-pass cheap at 4K.
-  //
-  // Depth-aware. An earlier revision read PF_Pixel8 unconditionally, which would
-  // have walked a 16-bit world at half its actual stride and averaged the wrong
-  // bytes — silently, and only in 16-bpc projects.
-  rc.meanLuma = 0.5f;
-  if (drive == LUTBLEND_DRIVE_GLOBAL_LUMA) {
-    const PF_EffectWorld* w = &params[0]->u.ld;
-    const long stride = 16;
-    double sum = 0.0;
-    long   n = 0;
-    const bool deep = PF_WORLD_IS_DEEP(w) != 0;
+  lutrender::FrameParams rp;
+  rp.drive        = drive;
+  rp.blend        = lutblend::clampf(static_cast<float>(blendPct) / 100.0f, 0.0f, 1.0f);
+  rp.strength     = lutblend::clampf(static_cast<float>(strengthPct) / 100.0f, 0.0f, 1.0f);
+  rp.preserveLuma = preserveLuma;
+  rp.a            = useA;
+  rp.b            = useB;
 
-    for (long row = 0; row < w->height; row += stride) {
-      const char* rowBase = reinterpret_cast<const char*>(w->data) +
-                            static_cast<size_t>(row) * w->rowbytes;
-      for (long col = 0; col < w->width; col += stride) {
-        float rgb[3];
-        if (deep) {
-          const PF_Pixel16* p = reinterpret_cast<const PF_Pixel16*>(rowBase) + col;
-          rgb[0] = p->red   / static_cast<float>(PF_MAX_CHAN16);
-          rgb[1] = p->green / static_cast<float>(PF_MAX_CHAN16);
-          rgb[2] = p->blue  / static_cast<float>(PF_MAX_CHAN16);
-        } else {
-          const PF_Pixel8* p = reinterpret_cast<const PF_Pixel8*>(rowBase) + col;
-          rgb[0] = p->red   / 255.0f;
-          rgb[1] = p->green / 255.0f;
-          rgb[2] = p->blue  / 255.0f;
-        }
-        sum += lutblend::luma709(rgb[0], rgb[1], rgb[2]);
-        ++n;
-      }
-    }
-    rc.meanLuma = (n > 0) ? static_cast<float>(sum / static_cast<double>(n)) : 0.5f;
-  }
+  const bool deep = PF_WORLD_IS_DEEP(&params[0]->u.ld) != 0;
 
-  // Depth dispatch. PF_WORLD_IS_DEEP tests PF_WorldFlag_DEEP (1 << 0) of
-  // world_flags, which is exactly what the shipped plugin does — it loads
-  // world_flags from PF_LayerDef+0x10 once and tests bit 0 at each of its two
-  // render passes.
-  //
-  // There is deliberately NO float path: the recovered eGL2 does not set
-  // PF_OutFlag2_FLOAT_COLOR_AWARE, so AE will not drive this plugin in float.
-  // Adding one would be capability the shipped plugin does not claim.
-  PF_EffectWorld* src = &params[0]->u.ld;
-  if (PF_WORLD_IS_DEEP(src)) {
+  lutrender::FrameView sv, dv;
+  sv.data = params[0]->u.ld.data;
+  sv.width = params[0]->u.ld.width;
+  sv.height = params[0]->u.ld.height;
+  sv.rowBytes = params[0]->u.ld.rowbytes;
+  dv.data = output->data;
+  dv.width = output->width;
+  dv.height = output->height;
+  dv.rowBytes = output->rowbytes;
+
+  // Global Luma drives the mix from the frame's own mean luma, computed by
+  // subsampling: the mean only needs to be representative and a stride of 16 keeps
+  // the pre-pass cheap at 4K. Depth-aware inside the core.
+  const float meanL = lutrender::meanLuma(sv, deep, 16);
+
+  PixelPass pass{&rp, meanL};
+
+  // Depth dispatch through AE's iterate suites rather than a manual loop: iterate
+  // reports progress and honours aborts, and the plugin declares
+  // SUPPORTS_THREADED_RENDERING so a re-entrant callback is expected. The arithmetic
+  // inside is the same code test/lutrender.test.mjs drives directly.
+  if (deep) {
     ERR(suites.Iterate16Suite1()->iterate(in_data, 0, output->height,
-                                          src, NULL, &rc, BlendPixel16, output));
+                                          &params[0]->u.ld, NULL, &pass, BlendPixel16, output));
   } else {
     ERR(suites.Iterate8Suite1()->iterate(in_data, 0, output->height,
-                                         src, NULL, &rc, BlendPixel8, output));
+                                         &params[0]->u.ld, NULL, &pass, BlendPixel8, output));
   }
+  (void)sv; (void)dv;
   return err;
 }
 

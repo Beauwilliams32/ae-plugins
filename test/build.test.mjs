@@ -133,7 +133,13 @@ test("the plugin's declared capability matches the recovered words", (t) => {
   // to a render path that reads 8-bit pixels. This test is what stops that class
   // of drift, and it needs no SDK or host to run.
   const src = readFileSync(path.join(ROOT, "plugins", "LUTBlend", "LUTBlendParams.h"), "utf8");
-  const impl = readFileSync(path.join(ROOT, "plugins", "LUTBlend", "LUTBlend.cpp"), "utf8");
+  // The whole plugin directory, not just the host integration. The render engine was
+  // split into LutRender.cpp so it could be executed without a host, so the 16-bit path
+  // and the depth dispatch no longer live in LUTBlend.cpp — and this test caught exactly
+  // that when the split landed.
+  const dir = path.join(ROOT, "plugins", "LUTBlend");
+  const impl = readdirSync(dir).filter((f) => f.endsWith(".cpp"))
+    .map((f) => readFileSync(path.join(dir, f), "utf8")).join("\n");
   const spec = JSON.parse(readFileSync(path.join(ROOT, "specs", "LUTBlend.json"), "utf8"));
 
   // Comments must be stripped before the "is this flag claimed?" checks. Without
