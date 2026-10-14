@@ -34,6 +34,7 @@ const BUNDLES = {
   noisefield: "NoiseField",
   chromakey: "ChromaKeyAssist",
   speedramp: "SpeedRampCurve",
+  echo: "EchoTrails",
 };
 
 function bundlePath(plugin) {
