@@ -112,3 +112,61 @@ test("tools/build-plugin.sh assembles a structurally valid LUTBlend bundle", (t)
   // --- and the bundle is not trivially small -------------------------------
   assert.ok(statSync(bin).size > 4096, "the linked binary is suspiciously small");
 });
+
+test("the plugin's declared capability matches the recovered words", (t) => {
+  // Whatever GLOBAL_SETUP writes into out_flags/out_flags2 is what AE copies into
+  // the PiPL's eGLO/eGL2 atoms, so these are RECOVERED values and not free
+  // choices. An earlier revision of LUTBlend.cpp built them from named PF_OutFlag
+  // constants instead and invented three of them — including
+  // PF_OutFlag2_FLOAT_COLOR_AWARE, which would have had AE hand 32-bpc float data
+  // to a render path that reads 8-bit pixels. This test is what stops that class
+  // of drift, and it needs no SDK or host to run.
+  const src = readFileSync(path.join(ROOT, "plugins", "LUTBlend", "LUTBlendParams.h"), "utf8");
+  const impl = readFileSync(path.join(ROOT, "plugins", "LUTBlend", "LUTBlend.cpp"), "utf8");
+  const spec = JSON.parse(readFileSync(path.join(ROOT, "specs", "LUTBlend.json"), "utf8"));
+
+  // Comments must be stripped before the "is this flag claimed?" checks. Without
+  // this the test fails on its own explanatory comment, which mentions the very
+  // flag it is asserting must NOT be set.
+  const stripComments = (text) =>
+    text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+  const code = stripComments(impl);
+
+  const grab = (text, name) => {
+    const m = text.match(new RegExp(`${name}\\s+(0x[0-9a-fA-F]+)`));
+    return m ? Number(m[1]) : null;
+  };
+
+  const wantGlo = Number(spec.pipl.eGLO);
+  const wantGl2 = Number(spec.pipl.eGL2);
+  assert.equal(grab(src, "LUTBLEND_GLOBAL_OUT_FLAGS"), wantGlo,
+    "LUTBLEND_GLOBAL_OUT_FLAGS must equal the recovered eGLO");
+  assert.equal(grab(src, "LUTBLEND_GLOBAL_OUT_FLAGS2"), wantGl2,
+    "LUTBLEND_GLOBAL_OUT_FLAGS2 must equal the recovered eGL2");
+
+  // The recovered words must actually be USED, not merely declared.
+  assert.match(impl, /out_data->out_flags\s*=\s*LUTBLEND_GLOBAL_OUT_FLAGS\s*;/,
+    "GLOBAL_SETUP must assign the recovered out_flags");
+  assert.match(impl, /out_data->out_flags2\s*=\s*LUTBLEND_GLOBAL_OUT_FLAGS2\s*;/,
+    "GLOBAL_SETUP must assign the recovered out_flags2");
+
+  // Capability the recovered words do NOT claim must not be claimed in code.
+  assert.doesNotMatch(code, /PF_OutFlag2_FLOAT_COLOR_AWARE/,
+    "the recovered eGL2 does not set FLOAT_COLOR_AWARE; claiming it would have AE "
+    + "supply float data the render path cannot read");
+  assert.doesNotMatch(code, /PF_OutFlag2_SUPPORTS_SMART_RENDER/,
+    "the recovered eGL2 does not set SUPPORTS_SMART_RENDER, and no "
+    + "PF_Cmd_SMART_RENDER handler exists");
+
+  // BEHAVIOUR THE FLAGS OBLIGE. DEEP_COLOR_AWARE means AE will supply 16-bit
+  // worlds, so a 16-bit path must exist; THREADED_RENDERING means renders may run
+  // concurrently, so the shared LUT cache must be locked.
+  assert.match(code, /BlendPixel16/, "DEEP_COLOR_AWARE is declared, so a 16-bit path is required");
+  assert.match(code, /PF_WORLD_IS_DEEP/, "the render must dispatch on world depth");
+  assert.match(code, /Iterate16Suite1/, "and the 16-bit iterate suite must actually be called");
+
+  const lib = readFileSync(path.join(ROOT, "plugins", "LUTBlend", "LutLibrary.cpp"), "utf8");
+  assert.match(lib, /lock_guard/, "THREADED_RENDERING is declared, so the cache must be locked");
+  assert.match(lib, /clear\(\)[\s\S]{0,80}lock_guard|lock_guard[\s\S]{0,80}cache_\.clear/,
+    "Library::clear must also take the lock");
+});

@@ -309,6 +309,7 @@ std::string popupChoices(const std::vector<std::string>& paths) {
 
 std::shared_ptr<const lutblend::CubeLUT> Library::get(const std::string& path,
                                                       std::string* err) {
+  std::lock_guard<std::mutex> lock(mutex_);
   const auto it = cache_.find(path);
   if (it != cache_.end()) return it->second;
   auto lut = loadCubeFile(path, err);
@@ -316,6 +317,14 @@ std::shared_ptr<const lutblend::CubeLUT> Library::get(const std::string& path,
   return lut;
 }
 
-void Library::clear() { cache_.clear(); }
+void Library::clear() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  cache_.clear();
+}
+
+size_t Library::cachedCount() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return cache_.size();
+}
 
 }  // namespace lutlib

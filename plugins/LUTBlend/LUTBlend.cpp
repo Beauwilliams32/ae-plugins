@@ -92,11 +92,15 @@ PF_Err GlobalSetup(PF_InData* in_data, PF_OutData* out_data) {
   // version digits produced it.
   out_data->my_version = static_cast<PFVersionInfo>(LUTBLEND_VERSION);
 
-  out_data->out_flags  = PF_OutFlag_DEEP_COLOR_AWARE |
-                         PF_OutFlag_USE_OUTPUT_EXTENT;
-
-  out_data->out_flags2 = PF_OutFlag2_FLOAT_COLOR_AWARE |
-                         PF_OutFlag2_SUPPORTS_SMART_RENDER;
+  // The RECOVERED words, assigned verbatim. An earlier revision of this file
+  // built them from named flags instead and got three of them wrong:
+  // PF_OutFlag_USE_OUTPUT_EXTENT, PF_OutFlag2_FLOAT_COLOR_AWARE and
+  // PF_OutFlag2_SUPPORTS_SMART_RENDER were all invented, and
+  // PF_OutFlag2_SUPPORTS_THREADED_RENDERING was missing. That is not cosmetic —
+  // FLOAT_COLOR_AWARE would have had AE hand over 32-bpc float data for a render
+  // path that reads 8-bit pixels. See LUTBlendParams.h for the decoding.
+  out_data->out_flags  = LUTBLEND_GLOBAL_OUT_FLAGS;
+  out_data->out_flags2 = LUTBLEND_GLOBAL_OUT_FLAGS2;
 
   lutblend::makeIdentity(&gIdentity, 2, true);
 
@@ -193,20 +197,9 @@ struct PixelRefcon {
   int   drive;
 };
 
-PF_Err BlendPixel8(void* refcon, A_long xL, A_long yL,
-                   PF_Pixel8* inP, PF_Pixel8* outP) {
-  PF_Err err = PF_Err_NONE;
-  (void)xL;
-  (void)yL;
-  PixelRefcon* rc = reinterpret_cast<PixelRefcon*>(refcon);
-  if (!rc) return PF_Err_INTERNAL_STRUCT_DAMAGED;
-
-  const float rgb[3] = {
-    inP->red   / 255.0f,
-    inP->green / 255.0f,
-    inP->blue  / 255.0f
-  };
-
+// The blend itself, shared by every depth. Takes and returns 0..1 floats so the
+// depth-specific callbacks only have to convert their own representation.
+inline void blendRGB(const PixelRefcon* rc, const float rgb[3], float out[3]) {
   float blend = rc->blend;
   if (rc->drive == LUTBLEND_DRIVE_GLOBAL_LUMA) {
     blend = rc->meanLuma;
@@ -214,16 +207,56 @@ PF_Err BlendPixel8(void* refcon, A_long xL, A_long yL,
     // The image's own luma drives the mix, per pixel.
     blend = lutblend::luma709(rgb[0], rgb[1], rgb[2]);
   }
-
-  float out[3];
   lutblend::applyLUTBlend(*rc->a, *rc->b, blend, rc->strength,
                           rc->preserveLuma, rgb, out);
+  for (int i = 0; i < 3; ++i) out[i] = lutblend::clampf(out[i], 0.0f, 1.0f);
+}
+
+PF_Err BlendPixel8(void* refcon, A_long xL, A_long yL,
+                   PF_Pixel8* inP, PF_Pixel8* outP) {
+  (void)xL;
+  (void)yL;
+  const PixelRefcon* rc = reinterpret_cast<const PixelRefcon*>(refcon);
+  if (!rc) return PF_Err_INTERNAL_STRUCT_DAMAGED;
+
+  const float rgb[3] = {inP->red / 255.0f, inP->green / 255.0f, inP->blue / 255.0f};
+  float out[3];
+  blendRGB(rc, rgb, out);
 
   outP->alpha = inP->alpha;
-  outP->red   = static_cast<A_u_char>(lutblend::clampf(out[0], 0.0f, 1.0f) * 255.0f + 0.5f);
-  outP->green = static_cast<A_u_char>(lutblend::clampf(out[1], 0.0f, 1.0f) * 255.0f + 0.5f);
-  outP->blue  = static_cast<A_u_char>(lutblend::clampf(out[2], 0.0f, 1.0f) * 255.0f + 0.5f);
-  return err;
+  outP->red   = static_cast<A_u_char>(out[0] * 255.0f + 0.5f);
+  outP->green = static_cast<A_u_char>(out[1] * 255.0f + 0.5f);
+  outP->blue  = static_cast<A_u_char>(out[2] * 255.0f + 0.5f);
+  return PF_Err_NONE;
+}
+
+// 16-bit. REQUIRED, not optional: the plugin declares PF_OutFlag_DEEP_COLOR_AWARE
+// (recovered: eGLO == 1 << 25), so AE will hand over 16-bit worlds. The shipped
+// plugin has a halfword-reading path of its own, so this is matching recovered
+// capability rather than inventing it.
+//
+// PF_MAX_CHAN16 is 32768, NOT 65535: AE's 16-bit channels use [0 .. 2^15] with
+// exactly one legal codepoint in the 16th bit, so the scale is 32768.
+PF_Err BlendPixel16(void* refcon, A_long xL, A_long yL,
+                    PF_Pixel16* inP, PF_Pixel16* outP) {
+  (void)xL;
+  (void)yL;
+  const PixelRefcon* rc = reinterpret_cast<const PixelRefcon*>(refcon);
+  if (!rc) return PF_Err_INTERNAL_STRUCT_DAMAGED;
+
+  const float rgb[3] = {
+    inP->red   / static_cast<float>(PF_MAX_CHAN16),
+    inP->green / static_cast<float>(PF_MAX_CHAN16),
+    inP->blue  / static_cast<float>(PF_MAX_CHAN16)
+  };
+  float out[3];
+  blendRGB(rc, rgb, out);
+
+  outP->alpha = inP->alpha;
+  outP->red   = static_cast<A_u_short>(out[0] * PF_MAX_CHAN16 + 0.5f);
+  outP->green = static_cast<A_u_short>(out[1] * PF_MAX_CHAN16 + 0.5f);
+  outP->blue  = static_cast<A_u_short>(out[2] * PF_MAX_CHAN16 + 0.5f);
+  return PF_Err_NONE;
 }
 
 PF_Err Render(PF_InData* in_data, PF_OutData* out_data,
@@ -259,30 +292,58 @@ PF_Err Render(PF_InData* in_data, PF_OutData* out_data,
   rc.drive        = drive;
   // Global Luma drives the mix from the frame's own mean luma. Computed by
   // subsampling rather than over every pixel: the mean only needs to be
-  // representative and a stride of 16 keeps the pre-pass cheap at 4K. src8 is the
-  // input world; the recovered luma709 supplies the weighting.
-  rc.meanLuma     = 0.5f;
+  // representative and a stride of 16 keeps the pre-pass cheap at 4K.
+  //
+  // Depth-aware. An earlier revision read PF_Pixel8 unconditionally, which would
+  // have walked a 16-bit world at half its actual stride and averaged the wrong
+  // bytes — silently, and only in 16-bpc projects.
+  rc.meanLuma = 0.5f;
   if (drive == LUTBLEND_DRIVE_GLOBAL_LUMA) {
-    const PF_EffectWorld& src = params[0]->u.ld;
-    const PF_Pixel8* base = reinterpret_cast<const PF_Pixel8*>(src.data);
-    const int stride = 16;
+    const PF_EffectWorld* w = &params[0]->u.ld;
+    const long stride = 16;
     double sum = 0.0;
     long   n = 0;
-    for (long row = 0; row < src.height; row += stride) {
-      const PF_Pixel8* p = reinterpret_cast<const PF_Pixel8*>(
-          reinterpret_cast<const char*>(base) + static_cast<size_t>(row) * src.rowbytes);
-      for (long col = 0; col < src.width; col += stride) {
-        sum += lutblend::luma709(p[col].red / 255.0f, p[col].green / 255.0f,
-                                 p[col].blue / 255.0f);
+    const bool deep = PF_WORLD_IS_DEEP(w) != 0;
+
+    for (long row = 0; row < w->height; row += stride) {
+      const char* rowBase = reinterpret_cast<const char*>(w->data) +
+                            static_cast<size_t>(row) * w->rowbytes;
+      for (long col = 0; col < w->width; col += stride) {
+        float rgb[3];
+        if (deep) {
+          const PF_Pixel16* p = reinterpret_cast<const PF_Pixel16*>(rowBase) + col;
+          rgb[0] = p->red   / static_cast<float>(PF_MAX_CHAN16);
+          rgb[1] = p->green / static_cast<float>(PF_MAX_CHAN16);
+          rgb[2] = p->blue  / static_cast<float>(PF_MAX_CHAN16);
+        } else {
+          const PF_Pixel8* p = reinterpret_cast<const PF_Pixel8*>(rowBase) + col;
+          rgb[0] = p->red   / 255.0f;
+          rgb[1] = p->green / 255.0f;
+          rgb[2] = p->blue  / 255.0f;
+        }
+        sum += lutblend::luma709(rgb[0], rgb[1], rgb[2]);
         ++n;
       }
     }
     rc.meanLuma = (n > 0) ? static_cast<float>(sum / static_cast<double>(n)) : 0.5f;
   }
 
-  ERR(suites.Iterate8Suite1()->iterate(in_data, 0, output->height,
-                                       &params[0]->u.ld,
-                                       NULL, &rc, BlendPixel8, output));
+  // Depth dispatch. PF_WORLD_IS_DEEP tests PF_WorldFlag_DEEP (1 << 0) of
+  // world_flags, which is exactly what the shipped plugin does — it loads
+  // world_flags from PF_LayerDef+0x10 once and tests bit 0 at each of its two
+  // render passes.
+  //
+  // There is deliberately NO float path: the recovered eGL2 does not set
+  // PF_OutFlag2_FLOAT_COLOR_AWARE, so AE will not drive this plugin in float.
+  // Adding one would be capability the shipped plugin does not claim.
+  PF_EffectWorld* src = &params[0]->u.ld;
+  if (PF_WORLD_IS_DEEP(src)) {
+    ERR(suites.Iterate16Suite1()->iterate(in_data, 0, output->height,
+                                          src, NULL, &rc, BlendPixel16, output));
+  } else {
+    ERR(suites.Iterate8Suite1()->iterate(in_data, 0, output->height,
+                                         src, NULL, &rc, BlendPixel8, output));
+  }
   return err;
 }
 

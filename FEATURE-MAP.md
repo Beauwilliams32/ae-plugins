@@ -70,6 +70,8 @@ is merely identified.
 | **LUTBlend parameter table** (6 params: types, IDs, names, bounds, Drive choices) | `plugins/LUTBlend/LUTBlendParams.h` | **Recovered** from `EffectMain`'s `PF_Cmd_PARAMS_SETUP` blocks | `test/build.test.mjs` |
 | **`EffectMain` + param registration + render callbacks** (LUTBlend) | `plugins/LUTBlend/LUTBlend.cpp` | **NEW CODE, not recovered** — the original body is lost. Reproduces the recovered parameter contract and calls the recovered DSP | `test/build.test.mjs` |
 | **A buildable `.plugin` bundle** (LUTBlend, arm64) | `tools/build-plugin.sh` → `build/LUTBlend.plugin` | **Assembled + structurally verified** — exports `EffectMain`, PiPL payload byte-identical to the shipped bundle, DSP symbols present in the link. **NOT loaded by AE; host acceptance untested** | `test/build.test.mjs` |
+| **Capability words** — `eGLO` = `DEEP_COLOR_AWARE`, `eGL2` = `SUPPORTS_THREADED_RENDERING` | `plugins/LUTBlend/LUTBlendParams.h` | **Recovered + enforced** — decoded against the SDK, assigned verbatim, and asserted from source so they cannot drift. The plugin had invented three flags and missed one | `test/build.test.mjs` (3 negative controls) |
+| 16-bit render path (`BlendPixel16`, depth dispatch on `PF_WORLD_IS_DEEP`) | `plugins/LUTBlend/LUTBlend.cpp` | **NEW CODE** — required by the recovered `DEEP_COLOR_AWARE`, and mirroring the shipped plugin's own halfword-reading path | `test/build.test.mjs` |
 | **LUT discovery + `.cube` loading** — folder scan, popup menus, parsed-LUT cache | `plugins/LUTBlend/LutLibrary.cpp` | **NEW CODE** implementing the recovered GRAMMAR (7 directives, arities, `[2,256]` bound, finite-only numerics, 12 of 13 error strings). The `LB_*` discovery layer is unrecovered; `parseCube` remains only partly read | `test/lutlib.test.mjs` (negative-controlled) |
 | "`<keyword>` is not an integer" (13th recovered message) | `src/lutblend/RECOVERY-NOTES.md` | **Identified only** — the branch reaching it is not located, so the loader deliberately does not emit it rather than invent a trigger | none |
 | `EffectMain` for the other 15 effects | — | **Not started** | none |
@@ -80,7 +82,7 @@ is merely identified.
 npm run check && npm test
 ```
 
-`npm test` runs fourteen tests: it asserts the disassembly constants decode as
+`npm test` runs fifteen tests: it asserts the disassembly constants decode as
 claimed, compiles each recovered namespace with `clang++ -Werror` and runs its
 internal property checks (spectra 107, lutblend 102, typeriser 202 — 411 in
 total), diffs the recovered DSP against all 26 vendored machine-code copies,

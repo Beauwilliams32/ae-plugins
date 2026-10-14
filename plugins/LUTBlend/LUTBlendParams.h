@@ -20,6 +20,19 @@
 #define LUTBLEND_CATEGORY        "Williams Media"
 
 // eVER / eGLO / eGL2, read straight out of the shipped PiPL atoms.
+//
+// These are NOT decorative. Decoded against the SDK they are exactly:
+//
+//   eGLO 0x02000000 = PF_OutFlag_DEEP_COLOR_AWARE        (1 << 25), and nothing else
+//   eGL2 0x08000000 = PF_OutFlag2_SUPPORTS_THREADED_RENDERING (1 << 27), and nothing else
+//
+// So the shipped plugin declares 16-bit capability, does NOT declare
+// PF_OutFlag2_FLOAT_COLOR_AWARE, and does NOT declare
+// PF_OutFlag2_SUPPORTS_SMART_RENDER. Those absences are load-bearing: claiming
+// FLOAT_COLOR_AWARE makes AE hand over 32-bpc float data, and claiming
+// SUPPORTS_SMART_RENDER obliges the plugin to implement PF_Cmd_SMART_RENDER.
+// Declaring capability the render path does not have produces garbage, so the
+// recovered words are assigned verbatim rather than rebuilt from named flags.
 #define LUTBLEND_VERSION         0x00080001
 #define LUTBLEND_GLOBAL_OUT_FLAGS  0x02000000
 #define LUTBLEND_GLOBAL_OUT_FLAGS2 0x08000000

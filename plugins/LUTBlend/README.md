@@ -11,6 +11,7 @@ transcriptions of the shipped binaries.
 | The DSP (`clampf`, `lerpf`, `luma709`, `sampleLUT`, `makeIdentity`, `applyLUTBlend`, `CubeLUT`) | `src/lutblend/` | **Recovered** from the shipped binary, with instruction-level commentary |
 | The parameter table (IDs, types, names, bounds, the Drive choice string) | `LUTBlendParams.h` | **Recovered** from `EffectMain`'s `PF_Cmd_PARAMS_SETUP` blocks |
 | Version words, match name, category, ABOUT wording | `LUTBlendParams.h` | **Recovered** from the PiPL resource and the bundle's string table |
+| The `out_flags` / `out_flags2` capability words | `LUTBlendParams.h` | **Recovered** — decoded to `PF_OutFlag_DEEP_COLOR_AWARE` and `PF_OutFlag2_SUPPORTS_THREADED_RENDERING`, and nothing else |
 | The PiPL resource itself | `../packaging/LUTBlendPiPL.r` | **Recovered**, and byte-verified against the shipped bundle |
 | `EffectMain` and its handlers | `LUTBlend.cpp` | **NEW** — the original body is lost |
 
@@ -90,13 +91,42 @@ does (`__ZL11identityLUTv`).
 fixture `HOME`. Every rejection assertion requires the **specific expected
 message**, not merely that parsing failed — see below.
 
-### Two limits that remain
+### Capability words, and why they are not cosmetic
+
+`GLOBAL_SETUP` writes the RECOVERED words verbatim, because AE copies them into
+the PiPL's `eGLO`/`eGL2` atoms. Decoded against the SDK:
+
+| Atom | Value | Meaning |
+|---|---|---|
+| `eGLO` | `0x02000000` | `PF_OutFlag_DEEP_COLOR_AWARE` (1<<25), nothing else |
+| `eGL2` | `0x08000000` | `PF_OutFlag2_SUPPORTS_THREADED_RENDERING` (1<<27), nothing else |
+
+An earlier revision of this file built those from named constants instead and got
+**three of them wrong**: it invented `PF_OutFlag_USE_OUTPUT_EXTENT`,
+`PF_OutFlag2_FLOAT_COLOR_AWARE` and `PF_OutFlag2_SUPPORTS_SMART_RENDER`, and missed
+`SUPPORTS_THREADED_RENDERING` entirely. That is not cosmetic — claiming
+`FLOAT_COLOR_AWARE` makes AE hand over 32-bpc float data, which a render path
+reading 8-bit pixels would silently misread.
+
+The two recovered flags then create two obligations, both now met:
+
+* `DEEP_COLOR_AWARE` means AE will supply **16-bit** worlds, so `BlendPixel16`
+  exists and the render dispatches on `PF_WORLD_IS_DEEP` — the same
+  `world_flags` bit 0 test the shipped plugin performs at its own two render
+  passes. There is deliberately **no float path**, because the recovered `eGL2`
+  does not claim float capability.
+* `SUPPORTS_THREADED_RENDERING` means renders may run concurrently, so the shared
+  LUT cache is mutex-guarded.
+
+`test/build.test.mjs` asserts all of this from the source, so the flags cannot
+drift from the recovered words again.
+
+### Remaining limits
 
 * `"Global Luma"` computes the frame mean by subsampling on a stride of 16 rather
-  than over every pixel. Representative, cheap, and not what the original
-  necessarily did.
-* Only the 8-bit iterate path exists, while the plugin declares float and
-  deep-colour awareness.
+  than over every pixel. Representative, cheap, and not necessarily what the
+  original did.
+* Composite/footage over 8K would make the stride-16 pre-pass noticeable.
 
 ## Traps worth keeping
 

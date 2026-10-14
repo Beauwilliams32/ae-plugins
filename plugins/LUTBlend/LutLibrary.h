@@ -21,6 +21,7 @@
 
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -54,15 +55,23 @@ std::string popupChoices(const std::vector<std::string>& paths);
 // A small name -> LUT cache. The shipped plugin keeps parsed LUTs in a
 // std::map<std::string, std::shared_ptr<const CubeLUT>> so a frame does not
 // re-read or re-parse them; this mirrors that behaviour.
+//
+// THREAD SAFETY IS REQUIRED, not optional. The plugin declares
+// PF_OutFlag2_SUPPORTS_THREADED_RENDERING (recovered: eGL2 == 1 << 27), so AE is
+// entitled to run renders concurrently and this cache is reachable from the
+// render path. Access is serialised with a mutex; the parse itself happens inside
+// the lock, which is acceptable because it happens once per file rather than per
+// frame. Without this the plugin would be a data race waiting to happen.
 class Library {
  public:
   // Returns the cached LUT, parsing on first use. Null if unavailable.
   std::shared_ptr<const lutblend::CubeLUT> get(const std::string& path,
                                                std::string* err);
   void clear();
-  size_t cachedCount() const { return cache_.size(); }
+  size_t cachedCount() const;
 
  private:
+  mutable std::mutex mutex_;
   std::map<std::string, std::shared_ptr<const lutblend::CubeLUT>> cache_;
 };
 
