@@ -396,6 +396,7 @@ function parseParams(plugin, workdir) {
       }
     }
 
+
     // Union fields that are plain immediates, for sliders and checkboxes.
     const union = {};
     for (const [off, v] of stores) {
@@ -446,7 +447,10 @@ function main() {
     console.log(`  ${"id".padEnd(4)} ${"type".padEnd(14)} name`);
     for (const p of params) {
       const extra = Object.keys(p.union).length ? `   ${JSON.stringify(p.union)}` : "";
-      console.log(`  ${String(p.id).padEnd(4)} ${p.type.padEnd(14)} "${p.name}"${extra}`);
+      // An empty name is shown as undecoded rather than as "", so the table never
+      // implies a parameter was deliberately left unnamed.
+      const shown = p.name ? `"${p.name}"` : "<name not decoded>";
+      console.log(`  ${String(p.id).padEnd(4)} ${p.type.padEnd(14)} ${shown}${extra}`);
     }
   }
   console.log(`\n${Object.keys(out).length} effects decoded`);

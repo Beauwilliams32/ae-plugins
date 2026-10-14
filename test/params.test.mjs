@@ -92,6 +92,11 @@ test("every effect in the fleet yields a parameter table", (t) => {
         ++named;
         assert.ok(!/[\x00-\x1f]/.test(p.name),
           `${plugin}: parameter ${p.id} name has control characters: ${JSON.stringify(p.name)}`);
+        // A name that is actually a popup CHOICE STRING is the specific failure
+        // mode of the annotation fallback that was tried and reverted, so it is
+        // pinned here: no parameter name in this fleet contains a pipe.
+        assert.ok(!p.name.includes("|"),
+          `${plugin}: parameter ${p.id} name looks like a popup choice string: ${p.name}`);
       }
     }
   }
