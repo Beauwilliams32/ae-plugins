@@ -34,7 +34,7 @@ test("recovered typeriser source compiles and its maths verifies", (t) => {
     assert.match(out, /ALL RECOVERED TYPERISER MATHS VERIFIED/, `self-check failed:\n${out}`);
     assert.doesNotMatch(out, /\bFAIL\b/, out);
     const passes = (out.match(/^  PASS/gm) ?? []).length;
-    assert.ok(passes >= 30, `expected >= 30 checks, saw ${passes}`);
+    assert.ok(passes >= 60, `expected >= 60 checks, saw ${passes}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

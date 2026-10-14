@@ -45,6 +45,28 @@ struct Cue {
 float clampf(float value, float lo, float hi);
 
 // ---------------------------------------------------------------------------
+// [RECOVERED] Easing — the selector values come from ease()'s switch. Two of the
+// seven cases are indistinguishable in the compiled code: the value 0 and the
+// value 1 both fall through to "return t unchanged", so whether they were
+// originally separate names (e.g. "None" and "Linear") cannot be recovered from
+// this function alone. They are named here for what they DO.
+// ---------------------------------------------------------------------------
+enum class Easing : int {
+  LinearA = 0,        // [recovered] returns t
+  LinearB = 1,        // [recovered] returns t — identical to LinearA in the binary
+  EaseOutQuad = 2,    // [recovered] 1 - (1-t)^2
+  EaseOutCubic = 3,   // [recovered] 1 - (1-t)^3
+  EaseOutBack = 4,    // [recovered] standard overshoot, c1 = 1.70158
+  EaseInOutCubic = 5, // [recovered] 4t^3 below 0.5, mirrored above
+  // Any other value also returns t unchanged.
+};
+
+// ---------------------------------------------------------------------------
+// [exact] Apply an easing curve to a normalised t.
+// ---------------------------------------------------------------------------
+float ease(Easing kind, float t);
+
+// ---------------------------------------------------------------------------
 // [exact] Which karaoke word is active at time t, or -1 if none.
 //
 // Returns -1 when t is outside [start, end), when wordCount < 1, or when the

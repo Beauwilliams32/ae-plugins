@@ -6,6 +6,8 @@
 
 #include "typeriser.h"
 
+#include <cmath>
+
 namespace typeriser {
 
 // ---------------------------------------------------------------------------
@@ -186,5 +188,89 @@ int cueIndexAt(const std::vector<Cue>& cues, long long t) {
   }
   return -1;
 }
+
+// ---------------------------------------------------------------------------
+// ease(Easing kind, float t)
+//
+// __ZN9typeriser4easeENS_6EasingEf, 61 instructions, recovered in full. A small
+// easing library, and every branch is a recognisable standard curve.
+//
+// PROLOGUE — t is clamped to [0,1] before anything else:
+//     fmov s1, #1.0 / fcmp / fcsel s1, s1, s0, gt   ; min(t, 1)
+//     fcmp s0, #0.0 / movi.2d v0, #0
+//     fcsel s0, s0, s1, mi                          ; (t < 0) ? 0 : min(t, 1)
+//   The movi zeroes v0 so that s0 is a 0.0 operand for the low branch — the same
+//   idiom as wordProgress, and again NOT the raw-negative-value behaviour that
+//   spectra::rawBandLevel genuinely has.
+//
+// DISPATCH (0x1b48..0x1b80) is a comparison chain, and it reveals the enum:
+//     cmp w0,#3 / b.gt  -> the >3 group
+//       cmp w0,#2 / b.eq -> 0x1ba4  EaseOutQuad
+//       cmp w0,#3 / b.ne -> default (return t)
+//                            so BOTH 0 and 1 return t unchanged
+//     cmp w0,#4 / b.eq   -> 0x1bb4  EaseOutBack
+//     cmp w0,#5 / b.ne   -> default (return t)
+//
+// THE CURVES, each reproduced with its instructions:
+//
+//   kind 2, EaseOutQuad (0x1ba4):
+//     fmov s1,#1.0 / fsub s0,s1,s0      ; 1 - t
+//     fmsub s0, s0, s0, s1              ; 1 - (1-t)^2
+//   FMSUB computes Sa - Sn*Sm, so this is 1 minus the square, not the square
+//   minus 1. Getting FMSUB's operand order backwards inverts the curve.
+//
+//   kind 3, EaseOutCubic (0x1b60):
+//     fsub  s0, s1, s0                  ; 1 - t
+//     fnmul s2, s0, s0                  ; -(1-t)^2
+//     fmadd s0, s2, s0, s1              ; 1 - (1-t)^3
+//
+//   kind 4, EaseOutBack (0x1bb4):
+//     fadd s0, s0, #-1.0                ; t - 1
+//     c3 = 0x402ce6b0 = 2.70158         ; c1 + 1
+//     c1 = 0x3fd9cd60 = 1.70158
+//     ... -> 1 + c3*(t-1)^3 + c1*(t-1)^2
+//   Those two immediates decode to exactly the standard EaseOutBack constants.
+//
+//   kind 5, EaseInOutCubic (0x1b84):
+//     t < 0.5 : 4t^3                    ; via three fmuls, no powf
+//     t >= 0.5: 1 - 0.5*(2-2t)^3        ; via _powf, the only call in the function
+//   The two halves are computed differently — the lower by multiplication, the
+//   upper by powf — which is a quirk of how it was written, not a behavioural
+//   difference.
+//
+// DEFAULT: anything else (including negative values) returns the clamped t, i.e.
+// linear. So an unrecognised easing degrades gracefully rather than misbehaving.
+// ---------------------------------------------------------------------------
+float ease(Easing kind, float t) {
+  const float hi = t > 1.0f ? 1.0f : t;
+  const float x = t < 0.0f ? 0.0f : hi;  // clamped to [0,1]
+
+  switch (kind) {
+    case Easing::EaseOutQuad:  // 2
+      return 1.0f - (1.0f - x) * (1.0f - x);
+
+    case Easing::EaseOutCubic: {  // 3
+      const float u = 1.0f - x;
+      return 1.0f - u * u * u;
+    }
+
+    case Easing::EaseOutBack: {  // 4
+      constexpr float c1 = 1.70158f;
+      constexpr float c3 = 2.70158f;  // c1 + 1, as the immediates confirm
+      const float u = x - 1.0f;
+      return 1.0f + c3 * u * u * u + c1 * u * u;
+    }
+
+    case Easing::EaseInOutCubic:  // 5
+      if (x < 0.5f) return 4.0f * x * x * x;
+      return 1.0f - 0.5f * std::pow(2.0f - 2.0f * x, 3.0f);
+
+    case Easing::LinearA:  // 0
+    case Easing::LinearB:  // 1
+    default:
+      return x;
+  }
+}
+
 
 }  // namespace typeriser

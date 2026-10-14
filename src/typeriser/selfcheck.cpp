@@ -95,6 +95,76 @@ int main() {
     check(typeriser::cueIndexAt(overlap, 35) == 2, "and a later contained cue still wins when it covers t");
   }
 
+
+  std::printf("typeriser::ease\n");
+  {
+    using E = typeriser::Easing;
+    // Every curve must be anchored at both ends, or the animation starts or ends
+    // somewhere other than where it should.
+    struct { E k; const char* n; } cases[] = {
+      {E::LinearA, "LinearA(0)"}, {E::LinearB, "LinearB(1)"},
+      {E::EaseOutQuad, "EaseOutQuad(2)"}, {E::EaseOutCubic, "EaseOutCubic(3)"},
+      {E::EaseOutBack, "EaseOutBack(4)"}, {E::EaseInOutCubic, "EaseInOutCubic(5)"},
+      {static_cast<E>(99), "unknown(99)"},
+    };
+    for (auto& c2 : cases) {
+      char label[96];
+      std::snprintf(label, sizeof label, "%s anchors at 0", c2.n);
+      checkNear(typeriser::ease(c2.k, 0.0f), 0.0f, 1e-4f, label);
+      std::snprintf(label, sizeof label, "%s anchors at 1", c2.n);
+      checkNear(typeriser::ease(c2.k, 1.0f), 1.0f, 1e-4f, label);
+    }
+
+    // t is clamped before the curve is applied, so out-of-range input cannot
+    // extrapolate the easing.
+    checkNear(typeriser::ease(E::EaseOutQuad, -5.0f), 0.0f, 1e-5f, "negative t clamps to 0");
+    checkNear(typeriser::ease(E::EaseOutQuad, 5.0f), 1.0f, 1e-5f, "t above 1 clamps to 1");
+
+    // Linear is the identity, and 0 and 1 are indistinguishable in the binary.
+    checkNear(typeriser::ease(E::LinearA, 0.25f), 0.25f, 1e-6f, "LinearA passes t through");
+    checkNear(typeriser::ease(E::LinearB, 0.25f), 0.25f, 1e-6f,
+              "LinearB is identical to LinearA (not separable in the compiled switch)");
+    checkNear(typeriser::ease(static_cast<E>(99), 0.25f), 0.25f, 1e-6f,
+              "an unknown easing degrades to linear rather than misbehaving");
+
+    // Ease-out curves must be ahead of linear in the middle of the range.
+    check(typeriser::ease(E::EaseOutQuad, 0.5f) > 0.5f, "EaseOutQuad is ahead of linear at t=0.5");
+    checkNear(typeriser::ease(E::EaseOutQuad, 0.5f), 0.75f, 1e-5f, "EaseOutQuad(0.5) = 1 - 0.5^2 = 0.75");
+    checkNear(typeriser::ease(E::EaseOutCubic, 0.5f), 0.875f, 1e-5f, "EaseOutCubic(0.5) = 1 - 0.5^3 = 0.875");
+    check(typeriser::ease(E::EaseOutCubic, 0.5f) > typeriser::ease(E::EaseOutQuad, 0.5f),
+          "cubic overshoots further than quad, as a stronger ease-out should");
+
+    // EaseOutBack must actually overshoot past 1 before settling, which is the
+    // whole point of the curve. If FMSUB/FMADD operand order were wrong this
+    // would not happen.
+    {
+      float peak = 0.0f;
+      for (int i = 0; i <= 100; ++i) {
+        const float v = typeriser::ease(E::EaseOutBack, static_cast<float>(i) / 100.0f);
+        if (v > peak) peak = v;
+      }
+      check(peak > 1.0f, "EaseOutBack overshoots past 1 somewhere in (0,1)");
+      check(peak < 1.15f, "and the overshoot is modest (about 1.10 for c1 = 1.70158)");
+    }
+
+    // EaseInOutCubic is symmetric about the midpoint and slow at both ends.
+    checkNear(typeriser::ease(E::EaseInOutCubic, 0.5f), 0.5f, 1e-5f, "EaseInOutCubic is 0.5 at t=0.5");
+    check(typeriser::ease(E::EaseInOutCubic, 0.25f) < 0.25f, "it starts slower than linear (eases in)");
+    check(typeriser::ease(E::EaseInOutCubic, 0.75f) > 0.75f, "and finishes faster (eases out)");
+    // Symmetry: f(t) + f(1-t) == 1 for a symmetric ease-in-out.
+    for (float t : {0.1f, 0.3f, 0.42f}) {
+      const float a = typeriser::ease(E::EaseInOutCubic, t);
+      const float b = typeriser::ease(E::EaseInOutCubic, 1.0f - t);
+      char label[96];
+      std::snprintf(label, sizeof label, "EaseInOutCubic symmetric at t=%.2f (f(t)+f(1-t)=1)", t);
+      checkNear(a + b, 1.0f, 1e-4f, label);
+    }
+    // Both halves of the piecewise join continuously at 0.5.
+    const float lo = typeriser::ease(E::EaseInOutCubic, 0.4999f);
+    const float hi = typeriser::ease(E::EaseInOutCubic, 0.5001f);
+    check(std::fabs(hi - lo) < 1e-3f, "the two halves of EaseInOutCubic join without a step");
+  }
+
   std::printf("\n%s\n", failures == 0 ? "ALL RECOVERED TYPERISER MATHS VERIFIED"
                                       : "TRANSCRIPTION ERRORS PRESENT");
   return failures == 0 ? 0 : 1;
