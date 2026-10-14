@@ -87,7 +87,13 @@ function decodeBlock(instructions, defBase, baseRegs, readWord64, readWord128) {
   // pool rather than as movz/movk immediates. The longer parameter names take this
   // path, which is why an implementation that only tracks w-registers produces
   // readable names for the short ones and empty strings for the rest.
-  const xregs = new Map();
+  // ADDRESSES and LOADED VALUES are tracked separately, and conflating them is a
+  // silent failure: `ldr x9, [x8]` leaves x9 holding the loaded WORD, so treating it
+  // as an address makes the next `stur x9, [...]` seek to whatever the string's
+  // bytes look like as an offset — usually out of bounds, so the store is dropped
+  // and the name comes out empty rather than wrong.
+  const xaddr = new Map();   // register -> address (adrp/add)
+  const xval = new Map();    // register -> 8 bytes loaded from that address
   const qregs = new Map();   // 128-bit name fragments
   // q-registers known to be all-zero, so a SIMD fill can be recorded as zeroing the
   // fields it covers. This is how the def is CLEARED: PF_Param_LAYER is 0, so a
@@ -139,11 +145,11 @@ function decodeBlock(instructions, defBase, baseRegs, readWord64, readWord128) {
     // immediate is PC-relative, so the annotation is the one to use; without it the
     // page is wrong and every literal read through it is wrong.
     if (op === "adrp" && (m = rest.match(/^(x\d+), -?\d+$/))) {
-      if (/^0x[0-9a-f]+$/.test(note)) xregs.set(m[1], BigInt(note));
+      if (/^0x[0-9a-f]+$/.test(note)) xaddr.set(m[1], BigInt(note));
       continue;
     }
     if (op === "add" && (m = rest.match(/^(x\d+), (x\d+), #(0x[0-9a-f]+)$/))) {
-      if (xregs.has(m[2])) xregs.set(m[1], xregs.get(m[2]) + BigInt(m[3]));
+      if (xaddr.has(m[2])) xaddr.set(m[1], xaddr.get(m[2]) + BigInt(m[3]));
       continue;
     }
     // ldr xM, [xN]  /  ldur xM, [xN, #off]  -> load the WORD AT the address.
@@ -152,17 +158,17 @@ function decodeBlock(instructions, defBase, baseRegs, readWord64, readWord128) {
     // error: the register still holds a plausible-looking value, so the follow-on
     // byte extraction produces name fragments that are wrong rather than empty.
     if (op === "ldr" && (m = rest.match(/^(x\d+), \[(x\d+)\]$/))) {
-      const addr = xregs.get(m[2]);
+      const addr = xaddr.get(m[2]);
       if (addr === undefined) continue;
       const w = readWord64(Number(addr));
-      if (w !== null) xregs.set(m[1], w);
+      if (w !== null) xval.set(m[1], w);
       continue;
     }
     if (op === "ldur" && (m = rest.match(/^(x\d+), \[(x\d+), #(0x[0-9a-f]+)\]$/))) {
-      const addr = xregs.get(m[2]);
+      const addr = xaddr.get(m[2]);
       if (addr === undefined) continue;
       const w = readWord64(Number(addr + BigInt(m[3])));
-      if (w !== null) xregs.set(m[1], w);
+      if (w !== null) xval.set(m[1], w);
       continue;
     }
     if (op === "movi.2d" && /^v(\d+), #0+$/.test(rest)) {
@@ -187,7 +193,7 @@ function decodeBlock(instructions, defBase, baseRegs, readWord64, readWord128) {
     }
     // ldr qN, [xM]  -> sixteen bytes of name, loaded from a literal.
     if (op === "ldr" && (m = rest.match(/^(q\d+), \[(x\d+)\]$/))) {
-      const addr = xregs.get(m[2]);
+      const addr = xaddr.get(m[2]);
       if (addr === undefined) continue;
       const bytes = readWord128(Number(addr));
       if (bytes) qregs.set(m[1], Buffer.from(bytes));
@@ -206,10 +212,16 @@ function decodeBlock(instructions, defBase, baseRegs, readWord64, readWord128) {
     if (op === "stur" && (m = rest.match(/^(x\d+), \[(\w+), #(0x[0-9a-f]+)\]$/))) {
       const off = offOf(m[2], Number(m[3]));
       if (off === null) continue;
-      const addr = xregs.get(m[1]);
-      if (addr === undefined) continue;
-      const word = readWord64(Number(addr));
-      if (word === null) continue;
+      // A register holding a LOADED WORD is the common case — that is how every
+      // name fragment arrives. Falling back to treating it as an address covers the
+      // rarer shape where the address itself is stored.
+      let word = xval.get(m[1]);
+      if (word === undefined) {
+        const addr = xaddr.get(m[1]);
+        if (addr === undefined) continue;
+        word = readWord64(Number(addr));
+      }
+      if (word === null || word === undefined) continue;
       for (let k = 0; k < 8; k++) {
         const byte = Number((word >> BigInt(8 * k)) & 0xffn);
         nameBytes.set(off + k, byte);
@@ -402,16 +414,40 @@ function parseParams(plugin, workdir) {
     for (const [off, v] of stores) {
       const r = rel(off);
       if (r < PF_DEF.u || v === null || v === undefined) continue;
+      // All-zero fields come from the SIMD clear that opens every block and carry
+      // no information about THIS parameter, so they are dropped from the report.
+      if (v === 0) continue;
       union[`u+0x${(r - PF_DEF.u).toString(16)}`] = `0x${v.toString(16)}`;
     }
     params.push({
       id: id ?? null,
       type: PARAM_TYPE[ptype] ?? (ptype === undefined ? "?" : `?${ptype}`),
       name,
+      // Names assembled from two OVERLAPPING loads normally compose correctly, but
+      // a few compose twice and come out with a repeated word
+      // ("Smoothing Smoothing Window"). Those are worse than a missing name because
+      // they look deliberate, so they are flagged rather than presented as good.
+      nameSuspect: isSuspectName(name),
       union,
     });
   }
   return params;
+}
+
+/**
+ * Does a decoded name look like a botched overlap?
+ *
+ * The signature is a word of four or more characters repeated immediately — the
+ * trace composing the same fragment twice. This is a HEURISTIC and it is used only
+ * to mark names as untrustworthy, never to produce or repair one.
+ */
+function isSuspectName(name) {
+  if (!name) return false;
+  const words = name.match(/[A-Za-z]{4,}/g) ?? [];
+  for (let i = 0; i + 1 < words.length; i++) {
+    if (words[i].toLowerCase() === words[i + 1].toLowerCase()) return true;
+  }
+  return false;
 }
 
 function main() {
@@ -449,7 +485,9 @@ function main() {
       const extra = Object.keys(p.union).length ? `   ${JSON.stringify(p.union)}` : "";
       // An empty name is shown as undecoded rather than as "", so the table never
       // implies a parameter was deliberately left unnamed.
-      const shown = p.name ? `"${p.name}"` : "<name not decoded>";
+      const shown = !p.name ? "<name not decoded>"
+                  : p.nameSuspect ? `~"${p.name}"  <-- SUSPECT, do not trust`
+                  : `"${p.name}"`;
       console.log(`  ${String(p.id).padEnd(4)} ${p.type.padEnd(14)} ${shown}${extra}`);
     }
   }

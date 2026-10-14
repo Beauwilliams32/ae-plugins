@@ -88,6 +88,17 @@ test("every effect in the fleet yields a parameter table", (t) => {
       // decode gap for everything else.
       if (p.type === "GROUP_START" || p.type === "GROUP_END") continue;
       ++nameable;
+      // A name carrying the doubled-word signature of a botched overlap MUST be
+      // flagged. The flagging is a heuristic, so the assertion is one-directional:
+      // every suspect name is marked, and no trusted name has the signature.
+      const words = (p.name || "").match(/[A-Za-z]{4,}/g) ?? [];
+      let doubled = false;
+      for (let i = 0; i + 1 < words.length; i++) {
+        if (words[i].toLowerCase() === words[i + 1].toLowerCase()) doubled = true;
+      }
+      assert.equal(!!p.nameSuspect, doubled,
+        `${plugin}: parameter ${p.id} suspect flag disagrees with its name ${JSON.stringify(p.name)}`);
+
       if (p.name) {
         ++named;
         assert.ok(!/[\x00-\x1f]/.test(p.name),
@@ -110,6 +121,6 @@ test("every effect in the fleet yields a parameter table", (t) => {
   // loads. Every one of them decodes its id, type and bounds correctly — only the
   // name is missing — so a rebuild would still know what the parameter IS.
   const pct = (named / nameable) * 100;
-  assert.ok(pct >= 90,
+  assert.ok(pct >= 94,
     `only ${named}/${nameable} nameable parameters decoded a name (${pct.toFixed(1)}%)`);
 });
