@@ -109,6 +109,31 @@ The `.cube` memory layout is also confirmed from two independent directions:
 and `sampleLUT` *reads* it that way. Writer and reader were recovered separately
 and agree, which is a stronger check on the ordering than either alone.
 
+## Differential codegen verification
+
+`tools/codegen-diff.mjs` compiles a recovered namespace and compares each
+function's instruction stream against the shipped bundle's. For small routines the
+match is exact and unforgeable — `glitch::hashKey` reproduces all 34 instructions
+and all 16 constants, and the glitch namespace is 4/4 identical:
+
+```
+$ node tools/codegen-diff.mjs glitch
+  MATCH   glitch::clampf        5 instructions, identical
+  MATCH   glitch::patternFrame  7 instructions, identical
+  MATCH   glitch::hashKey      34 instructions, identical
+  MATCH   glitch::clampi        5 instructions, identical
+```
+
+It found a real transcription error: `patternFrame` was emitting `csel ..., gt`
+where the binary has `hi`, which pins the original's control structure — a negated
+`<=`, not a `>` ternary.
+
+The check is honest about its own reach. Larger functions differ in codegen
+legitimately (the originals inline `std::vector` growth and `luma709`; this source
+calls out where that is bit-identical, and register allocation differs). Those are
+verified by self-checks and oracles, **not** by this, and `test/codegen.test.mjs`
+gates `glitch` on zero differences while gating the rest on not regressing.
+
 ## The capability contract
 
 `CAPABILITIES.md` decodes every effect's recovered `eGLO`/`eGL2` PiPL atoms into

@@ -50,7 +50,6 @@ TR_SrtFileList()
 **Domain code** — namespaced logic, i.e. the actual signal/image processing: names and signatures are exact, because the binaries were built without stripping.
 
 ```cpp
-typeriser::Cue* std::__1::vector<typeriser::Cue, std::__1::allocator<typeriser::Cue>>::__emplace_back_slow_path<typeriser::Cue const&>(typeriser::Cue const&)
 typeriser::clampf(float, float, float)
 typeriser::cueIndexAt(std::__1::vector<typeriser::Cue, std::__1::allocator<typeriser::Cue>> const&, long long)
 typeriser::ease(typeriser::Easing, float)
@@ -95,6 +94,7 @@ typeinfo name for std::__1::basic_filebuf<char, std::__1::char_traits<char>>
 typeinfo name for std::__1::basic_ifstream<char, std::__1::char_traits<char>>
 typeinfo name for std::__1::basic_ostringstream<char, std::__1::char_traits<char>, std::__1::allocator<char>>
 typeinfo name for std::__1::basic_stringbuf<char, std::__1::char_traits<char>, std::__1::allocator<char>>
+typeriser::Cue* std::__1::vector<typeriser::Cue, std::__1::allocator<typeriser::Cue>>::__emplace_back_slow_path<typeriser::Cue const&>(typeriser::Cue const&)
 virtual thunk to std::__1::basic_ifstream<char, std::__1::char_traits<char>>::~basic_ifstream()
 virtual thunk to std::__1::basic_ostringstream<char, std::__1::char_traits<char>, std::__1::allocator<char>>::~basic_ostringstream()
 void std::__1::__inplace_merge<std::__1::_ClassicAlgPolicy, typeriser::parseSrt(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)::$_0&, std::__1::__wrap_iter<typeriser::Cue*>>(std::__1::__wrap_iter<typeriser::Cue*>, std::__1::__wrap_iter<typeriser::Cue*>, std::__1::__wrap_iter<typeriser::Cue*>, typeriser::parseSrt(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)::$_0&, std::__1::iterator_traits<std::__1::__wrap_iter<typeriser::Cue*>>::difference_type, std::__1::iterator_traits<std::__1::__wrap_iter<typeriser::Cue*>>::difference_type, std::__1::iterator_traits<std::__1::__wrap_iter<typeriser::Cue*>>::value_type*, long)

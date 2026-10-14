@@ -87,6 +87,24 @@ function parsePipl(rsrcPath) {
   return chunks ? { ...out, _chunks: chunks } : null;
 }
 
+/**
+ * Is this demangled symbol the plugin's own namespaced code?
+ *
+ * Only the text before the first "(" is considered, so a parameter list full of
+ * std:: types cannot make an authored function look like library code, and an
+ * RTTI artefact whose *whole* name is a std:: type cannot make a library symbol
+ * look authored.
+ */
+function classifyDomainName(name) {
+  const head = name.split("(")[0];
+  if (!head.includes("::")) return false;
+  if (/\bstd::/.test(head)) return false;
+  // Explicitly-authored-looking artefact prefixes are never domain code.
+  if (/^(VTT|vtable|typeinfo|typeinfo name|construction vtable)\b/.test(name)) return false;
+  if (/^typeinfo for\b/.test(name)) return false;
+  return true;
+}
+
 /** Split nm output into authored API vs domain code vs std library. */
 function classifySymbols(binary) {
   const raw = sh("nm", ["-C", binary]);
@@ -114,7 +132,22 @@ function classifySymbols(binary) {
     else if (/(PF_InData|PF_OutData|PF_ParamDef|PF_EventExtra|PF_LayerDef|PF_EffectWorld|AEGP_|SPBasic|DRAWBOT_)/.test(name))
       scope = "adobe-sdk";
     else if (/^[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+\s*\(/.test(name)) scope = "plugin-api";
-    else if (/^[a-zA-Z_][A-Za-z0-9_]*::/.test(name)) scope = "domain";
+    // Deciding "is this the plugin's own namespaced code?" needs care, and both
+    // obvious rules are wrong:
+    //
+    //   /^ns::/  misses every demangled symbol carrying a RETURN TYPE, e.g.
+    //            `void glitch::apply<unsigned char>(...)`, which used to land in
+    //            "other" and made the fleet look like it had less domain code
+    //            than it does.
+    //   /ns::/   anywhere also matches libc++/RTTI artefacts such as
+    //            `VTT for std::__1::basic_ifstream<...>` and
+    //            `bool std::__1::__sort3<...>`, which inflated the count by 109
+    //            when tried.
+    //
+    // The rule that works: look only at the text BEFORE the first '(' — that is
+    // the return type plus the qualified callee, with all parameters excluded —
+    // require a '::' in it, and reject it if the qualifier chain runs through std.
+    else if (classifyDomainName(name)) scope = "domain";
     else scope = "other";
     syms.push({ kind, scope, name });
   }

@@ -47,6 +47,8 @@ noisefield::fbm3(noisefield::PermTable const&, float, float, float, int, float, 
 noisefield::fbmAmplitudeSum(int, float)
 noisefield::fieldAt(noisefield::PermTable const&, float, float, noisefield::Params const&)
 noisefield::noise3(noisefield::PermTable const&, float, float, float)
+void noisefield::apply<unsigned char>(noisefield::View<unsigned char const> const&, noisefield::View<unsigned char>&, noisefield::Params const&, float)
+void noisefield::apply<unsigned short>(noisefield::View<unsigned short const> const&, noisefield::View<unsigned short>&, noisefield::Params const&, float)
 ```
 
 **Other named symbols:**
@@ -54,8 +56,6 @@ noisefield::noise3(noisefield::PermTable const&, float, float, float)
 ```cpp
 EffectMain
 __dyld_private
-void noisefield::apply<unsigned char>(noisefield::View<unsigned char const> const&, noisefield::View<unsigned char>&, noisefield::Params const&, float)
-void noisefield::apply<unsigned short>(noisefield::View<unsigned short const> const&, noisefield::View<unsigned short>&, noisefield::Params const&, float)
 ```
 
 ## Recovered parameters

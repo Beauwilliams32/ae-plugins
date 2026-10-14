@@ -40,9 +40,7 @@
     "byScope": {
       "other": [
         "EffectMain",
-        "__dyld_private",
-        "void noisefield::apply<unsigned char>(noisefield::View<unsigned char const> const&, noisefield::View<unsigned char>&, noisefield::Params const&, float)",
-        "void noisefield::apply<unsigned short>(noisefield::View<unsigned short const> const&, noisefield::View<unsigned short>&, noisefield::Params const&, float)"
+        "__dyld_private"
       ],
       "domain": [
         "noisefield::(anonymous namespace)::curlField(noisefield::PermTable const&, float, float, float, noisefield::Params const&)",
@@ -53,7 +51,9 @@
         "noisefield::fbm3(noisefield::PermTable const&, float, float, float, int, float, float)",
         "noisefield::fbmAmplitudeSum(int, float)",
         "noisefield::fieldAt(noisefield::PermTable const&, float, float, noisefield::Params const&)",
-        "noisefield::noise3(noisefield::PermTable const&, float, float, float)"
+        "noisefield::noise3(noisefield::PermTable const&, float, float, float)",
+        "void noisefield::apply<unsigned char>(noisefield::View<unsigned char const> const&, noisefield::View<unsigned char>&, noisefield::Params const&, float)",
+        "void noisefield::apply<unsigned short>(noisefield::View<unsigned short const> const&, noisefield::View<unsigned short>&, noisefield::Params const&, float)"
       ],
       "adobe-sdk": [
         "AEGP_SuiteHandler::AEGP_SuiteHandler(SPBasicSuite const*)",

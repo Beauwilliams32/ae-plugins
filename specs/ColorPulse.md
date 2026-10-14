@@ -38,7 +38,6 @@ _none recovered_
 **Domain code** — namespaced logic, i.e. the actual signal/image processing: names and signatures are exact, because the binaries were built without stripping.
 
 ```cpp
-colorpulse::RGB& std::__1::vector<colorpulse::RGB, std::__1::allocator<colorpulse::RGB>>::emplace_back<colorpulse::RGB const&>(colorpulse::RGB const&)::'lambda0'()::operator()() const
 colorpulse::averageColor(colorpulse::RGB const*, unsigned long)
 colorpulse::brightestRegionColor(colorpulse::RGB const*, int, int, int)
 colorpulse::clampf(float, float, float)
@@ -57,6 +56,7 @@ colorpulse::smoothScalar(float, float, float)
 (anonymous namespace)::GridFromWorld8(PF_Pixel const*, unsigned int, int, int, colorpulse::Region, std::__1::vector<colorpulse::RGB, std::__1::allocator<colorpulse::RGB>>*, int*, int*)
 EffectMain
 __dyld_private
+colorpulse::RGB& std::__1::vector<colorpulse::RGB, std::__1::allocator<colorpulse::RGB>>::emplace_back<colorpulse::RGB const&>(colorpulse::RGB const&)::'lambda0'()::operator()() const
 float& std::__1::vector<float, std::__1::allocator<float>>::emplace_back<float>(float&&)::'lambda0'()::operator()() const
 ```
 

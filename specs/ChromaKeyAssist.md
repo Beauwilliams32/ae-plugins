@@ -58,6 +58,8 @@ chromakey::rgbToYCbCr(chromakey::RGB const&)
 chromakey::sensitivityToThreshold(float)
 chromakey::spillScore(chromakey::YCbCr const&, chromakey::YCbCr const&, float)
 chromakey::uniformityScore(float const*, unsigned long)
+void chromakey::renderView<unsigned char>(chromakey::View<unsigned char const> const&, chromakey::View<unsigned char>&, float, chromakey::Params const&, chromakey::ViewMode, float, float const*, float const*)
+void chromakey::renderView<unsigned short>(chromakey::View<unsigned short const> const&, chromakey::View<unsigned short>&, float, chromakey::Params const&, chromakey::ViewMode, float, float const*, float const*)
 ```
 
 **Other named symbols:**
@@ -67,8 +69,6 @@ chromakey::uniformityScore(float const*, unsigned long)
 (anonymous namespace)::g_readouts
 EffectMain
 __dyld_private
-void chromakey::renderView<unsigned char>(chromakey::View<unsigned char const> const&, chromakey::View<unsigned char>&, float, chromakey::Params const&, chromakey::ViewMode, float, float const*, float const*)
-void chromakey::renderView<unsigned short>(chromakey::View<unsigned short const> const&, chromakey::View<unsigned short>&, float, chromakey::Params const&, chromakey::ViewMode, float, float const*, float const*)
 void std::__1::__tree_balance_after_insert[abi:nqe220106]<std::__1::__tree_node_base<void*>*>(std::__1::__tree_node_base<void*>*, std::__1::__tree_node_base<void*>*)
 void std::__1::__tree_remove[abi:nqe220106]<std::__1::__tree_node_base<void*>*>(std::__1::__tree_node_base<void*>*, std::__1::__tree_node_base<void*>*)
 ```

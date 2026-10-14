@@ -43,6 +43,8 @@
         "EffectMain",
         "__dyld_private",
         "float& std::__1::vector<float, std::__1::allocator<float>>::emplace_back<float const&>(float const&)::'lambda0'()::operator()() const",
+        "motioncurve::Image* std::__1::vector<motioncurve::Image, std::__1::allocator<motioncurve::Image>>::__emplace_back_slow_path<motioncurve::Image const&>(motioncurve::Image const&)",
+        "motioncurve::Image* std::__1::vector<motioncurve::Image, std::__1::allocator<motioncurve::Image>>::__emplace_back_slow_path<motioncurve::Image>(motioncurve::Image&&)",
         "void std::__1::__if_likely_else[abi:nqe220106]<motioncurve::Image& std::__1::vector<motioncurve::Image, std::__1::allocator<motioncurve::Image>>::emplace_back<motioncurve::Image const&>(motioncurve::Image const&)::'lambda'(), motioncurve::Image& std::__1::vector<motioncurve::Image, std::__1::allocator<motioncurve::Image>>::emplace_back<motioncurve::Image const&>(motioncurve::Image const&)::'lambda0'()>(bool, motioncurve::Image& std::__1::vector<motioncurve::Image, std::__1::allocator<motioncurve::Image>>::emplace_back<motioncurve::Image const&>(motioncurve::Image const&)::'lambda'(), motioncurve::Image& std::__1::vector<motioncurve::Image, std::__1::allocator<motioncurve::Image>>::emplace_back<motioncurve::Image const&>(motioncurve::Image const&)::'lambda0'())",
         "void std::__1::__if_likely_else[abi:nqe220106]<motioncurve::Image& std::__1::vector<motioncurve::Image, std::__1::allocator<motioncurve::Image>>::emplace_back<motioncurve::Image const&>(motioncurve::Image const&)::'lambda'(), motioncurve::Image& std::__1::vector<motioncurve::Image, std::__1::allocator<motioncurve::Image>>::emplace_back<motioncurve::Image const&>(motioncurve::Image const&)::'lambda0'()>(bool, motioncurve::Image& std::__1::vector<motioncurve::Image, std::__1::allocator<motioncurve::Image>>::emplace_back<motioncurve::Image const&>(motioncurve::Image const&)::'lambda'(), motioncurve::Image& std::__1::vector<motioncurve::Image, std::__1::allocator<motioncurve::Image>>::emplace_back<motioncurve::Image const&>(motioncurve::Image const&)::'lambda0'()) (.cold.1)",
         "void std::__1::__nth_element[abi:nqe220106]<std::__1::_ClassicAlgPolicy, std::__1::__less<void, void>&, std::__1::__wrap_iter<float*>>(std::__1::__wrap_iter<float*>, std::__1::__wrap_iter<float*>, std::__1::__wrap_iter<float*>, std::__1::__less<void, void>&)"
@@ -70,8 +72,6 @@
       ],
       "domain": [
         "motioncurve::(anonymous namespace)::medianOfWindow(std::__1::vector<float, std::__1::allocator<float>> const&, int, int)",
-        "motioncurve::Image* std::__1::vector<motioncurve::Image, std::__1::allocator<motioncurve::Image>>::__emplace_back_slow_path<motioncurve::Image const&>(motioncurve::Image const&)",
-        "motioncurve::Image* std::__1::vector<motioncurve::Image, std::__1::allocator<motioncurve::Image>>::__emplace_back_slow_path<motioncurve::Image>(motioncurve::Image&&)",
         "motioncurve::accumulate(std::__1::vector<motioncurve::Vec2, std::__1::allocator<motioncurve::Vec2>> const&)",
         "motioncurve::buildPyramid(motioncurve::Image const&, int)",
         "motioncurve::clampf(float, float, float)",

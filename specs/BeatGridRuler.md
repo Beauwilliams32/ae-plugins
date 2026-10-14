@@ -38,7 +38,6 @@ _none recovered_
 **Domain code** — namespaced logic, i.e. the actual signal/image processing: names and signatures are exact, because the binaries were built without stripping.
 
 ```cpp
-beatgrid::BeatMarker& std::__1::vector<beatgrid::BeatMarker, std::__1::allocator<beatgrid::BeatMarker>>::emplace_back<beatgrid::BeatMarker const&>(beatgrid::BeatMarker const&)::'lambda0'()::operator()() const
 beatgrid::OnsetEnvelope::frameTimeSeconds(int) const
 beatgrid::analyzeBeatGrid(float const*, unsigned long, double, float, float, float, int, int)
 beatgrid::clampf(float, float, float)
@@ -59,6 +58,7 @@ beatgrid::subdivisionFactor(beatgrid::Subdivision)
 ```cpp
 EffectMain
 __dyld_private
+beatgrid::BeatMarker& std::__1::vector<beatgrid::BeatMarker, std::__1::allocator<beatgrid::BeatMarker>>::emplace_back<beatgrid::BeatMarker const&>(beatgrid::BeatMarker const&)::'lambda0'()::operator()() const
 double& std::__1::vector<double, std::__1::allocator<double>>::emplace_back<double>(double&&)::'lambda0'()::operator()() const
 unsigned short& std::__1::vector<unsigned short, std::__1::allocator<unsigned short>>::emplace_back<unsigned short>(unsigned short&&)::'lambda0'()::operator()() const
 void std::__1::__tree_balance_after_insert[abi:nqe220106]<std::__1::__tree_node_base<void*>*>(std::__1::__tree_node_base<void*>*, std::__1::__tree_node_base<void*>*)

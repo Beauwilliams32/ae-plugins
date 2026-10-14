@@ -42,6 +42,8 @@ glitch::clampf(float, float, float)
 glitch::clampi(int, int, int)
 glitch::hashKey(unsigned int, unsigned int, unsigned int)
 glitch::patternFrame(unsigned int, float)
+void glitch::apply<unsigned char>(glitch::View<unsigned char const> const&, glitch::View<unsigned char>&, glitch::Params const&, unsigned int, float)
+void glitch::apply<unsigned short>(glitch::View<unsigned short const> const&, glitch::View<unsigned short>&, glitch::Params const&, unsigned int, float)
 ```
 
 **Other named symbols:**
@@ -49,8 +51,6 @@ glitch::patternFrame(unsigned int, float)
 ```cpp
 EffectMain
 __dyld_private
-void glitch::apply<unsigned char>(glitch::View<unsigned char const> const&, glitch::View<unsigned char>&, glitch::Params const&, unsigned int, float)
-void glitch::apply<unsigned short>(glitch::View<unsigned short const> const&, glitch::View<unsigned short>&, glitch::Params const&, unsigned int, float)
 ```
 
 ## Recovered parameters

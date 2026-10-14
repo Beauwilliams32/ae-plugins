@@ -39,7 +39,6 @@ _none recovered_
 
 ```cpp
 shake::ShakeProfile::~ShakeProfile()
-shake::Vec2& std::__1::vector<shake::Vec2, std::__1::allocator<shake::Vec2>>::emplace_back<shake::Vec2 const&>(shake::Vec2 const&)::'lambda0'()::operator()() const
 shake::accumulate(std::__1::vector<shake::Vec2, std::__1::allocator<shake::Vec2>> const&)
 shake::clampf(float, float, float)
 shake::extractJitter(shake::ShakeProfile const&, int)
@@ -57,6 +56,7 @@ shake::trackTranslation(float const*, float const*, int, int, int, int)
 ```cpp
 EffectMain
 __dyld_private
+shake::Vec2& std::__1::vector<shake::Vec2, std::__1::allocator<shake::Vec2>>::emplace_back<shake::Vec2 const&>(shake::Vec2 const&)::'lambda0'()::operator()() const
 void std::__1::__nth_element[abi:nqe220106]<std::__1::_ClassicAlgPolicy, std::__1::__less<void, void>&, std::__1::__wrap_iter<float*>>(std::__1::__wrap_iter<float*>, std::__1::__wrap_iter<float*>, std::__1::__wrap_iter<float*>, std::__1::__less<void, void>&)
 ```
 
