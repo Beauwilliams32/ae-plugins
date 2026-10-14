@@ -41,7 +41,12 @@ is merely identified.
 | **Shared-DSP duplication proof** (machine-code compare, namespace-agnostic) | `tools/dsp-duplication.mjs` | **Working** — 9 functions, 26 copies, no drift | `test/spectra.test.mjs` |
 | Drift gate on the copied DSP | `tools/dsp-duplication.mjs` | **Working** — non-zero exit if any carrier diverges | `test/spectra.test.mjs` |
 | Per-effect namespace inventory (16 namespaces) | `specs/*.json` → `symbols.byScope.domain` | **Recovered** | `test/spectra.test.mjs` (reproducibility) |
-| The other 15 effects' function bodies | `specs/*.md` | **Identified only** — architecture recovered, bodies not | none yet |
+| **`lutblend::clampf` / `lerpf` / `luma709`** | `src/lutblend/lutblend.cpp` | **Recovered + verified** | `test/lutblend.test.mjs` |
+| **`lutblend::CubeLUT::valid`** + full `CubeLUT` layout | `src/lutblend/lutblend.{h,cpp}` | **Recovered + verified** | `test/lutblend.test.mjs` |
+| Cross-bundle check: the two `clampf` copies agree | `test/lutblend.test.mjs` | **Verified** | own test |
+| `lutblend::parseCube` / `sampleLUT` / `applyLUTBlend` / `makeIdentity` | `specs/LUTBlend.md` | **Identified only** | none yet |
+| `typeriser::` engine (parseSrt, karaokeWordAt, wordProgress, ease) | `specs/TypeRiser.md` | **Identified only** | none yet |
+| The other 13 effects' function bodies | `specs/*.md` | **Identified only** — architecture recovered, bodies not | none yet |
 | Buildable plugin bundles (AE SDK at `0x000d001d`) | — | **Not started** | none |
 
 ## Gate

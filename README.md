@@ -77,6 +77,22 @@ Two findings already worth acting on:
 - **The fleet is a single build pass.** Every effect reports version `0x00080001`
   against SDK `0x000d001d`.
 
+## Domain engines recovered so far
+
+Beyond the shared `spectra::` audio module, two effects carry their own
+self-contained engines. LUTBlend's is partially recovered:
+
+| Module | Contents | State |
+|---|---|---|
+| `spectra::` | FFT, Hann window, STFT, band analysis, falloff envelope | **recovered + verified** (4 effects) |
+| `lutblend::` | `clampf`, `lerpf`, `luma709`, `CubeLUT::valid` + layout | **partially recovered** (`parseCube`, `sampleLUT`, `applyLUTBlend` pending) |
+| `typeriser::` | `parseSrt`, `parseTimestamp`, `karaokeWordAt`, `wordProgress`, `ease` | identified only |
+
+One cross-bundle detail worth recording: `spectra::clampf` and `lutblend::clampf`
+were recovered from two different plugins in two different namespaces and turned
+out **instruction-for-instruction identical**, down to the `fcsel` ordering that
+makes the low bound win on an inverted range. A test asserts the two still agree.
+
 ## Roadmap
 
 1. **Recover the DSP.** Disassemble per effect, starting with the effects that expose
