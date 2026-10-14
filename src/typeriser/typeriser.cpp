@@ -1,14 +1,19 @@
 // typeriser.cpp — recovered implementations for the TypeRiser karaoke timing core.
 //
-// Only RECOVERED functions appear here. parseSrt (512 instructions) is
-// identified but not transcribed, and is absent rather than stubbed; every
-// helper it delegates to (trim, splitWords, parseTimestamp, parseTimingLine,
-// cueIndexAt) is now recovered in full.
+// Only RECOVERED functions appear here. The TypeRiser bundle exports 12 authored
+// functions in this namespace and 10 are below; wrapWords (52 instructions) and
+// wordStyle (164 instructions) are identified but not transcribed, and are
+// absent rather than stubbed.
+//
+// The SRT path is complete end to end: parseSrt -> parseTimingLine ->
+// parseTimestamp -> trim, with splitWords and cueIndexAt alongside it.
 
 #include "typeriser.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 
 namespace typeriser {
 
@@ -580,6 +585,211 @@ std::vector<std::string> splitWords(const std::string& s) {
 
   if (!word.empty()) out.push_back(word);
   return out;
+}
+
+
+// ---------------------------------------------------------------------------
+// parseSrt(const std::string&) -> std::vector<Cue>
+//
+// __ZN9typeriser8parseSrtE..., 512 instructions, the largest function in the
+// TypeRiser namespace and the last one recovered. It is the top of the SRT path:
+// everything else on that path (trim, parseTimestamp, parseTimingLine) is a
+// helper it calls.
+//
+// The composition is legible from the call graph alone: 6 x trim, 2 x
+// parseTimingLine, 1 x atoi, a vector<string> accumulating LINES, a vector<Cue>
+// result, and one __stable_sort over it.
+//
+// STAGE 1 — strip a UTF-8 BOM (0xc94..0xd0c)
+//     ldursb w9, [x29, #-0x59]     ; the string's size/SSO byte
+//     and    w8, w9, #0xff
+//     tbnz   w9, #0x1f <heap>      ; sign bit picks heap vs SSO, as everywhere
+//     cmp    w8, #0x3 / b.lo <skip>
+//     ... s[0] == 0xef && s[1] == 0xbb && s[2] == 0xbf ...
+//     bl basic_string::erase(0, 3)
+//   The heap variant compares size > 2 rather than >= 3 — the same test written
+//   the other way round. Note the input is first COPIED into a local string
+//   (__init_copy_ctor_external at 0xc90), so the caller's string is not mutated
+//   and the parameter stays effectively const.
+//
+// STAGE 2 — split into lines (0xd10..0xf10)
+//   Two locals are zeroed up front: a vector<string> of lines and a string
+//   holding the line under construction. The loop walks the input ONE BYTE AT A
+//   TIME and dispatches on the byte:
+//
+//     cmp w8, #0xd / b.eq <CR>     ; 0x0d
+//     cmp w8, #0xa / b.ne <append> ; 0x0a
+//
+//   LF (0xd94): flush the line, CLEAR the buffer, advance by one.
+//   CR (0xdbc): flush the line, CLEAR the buffer, and then — the part worth
+//     reading twice — peek at the NEXT byte:
+//         0xe50  x8 = i + 1
+//         0xe68  cmp x8, size / b.hs <advance>   ; nothing to look at
+//         0xe7c  w9 = data[x8]
+//         0xe80  cmp w9, #0xa
+//         0xe84  csel x20, x8, x20, eq           ; i = i+1 ONLY if it is an LF
+//     so a CRLF pair is consumed as ONE break and a bare CR is a break on its
+//     own. Several Mac-era SRT files use bare CR, which is why this is here.
+//   Anything else (0xd48): push_back onto the line buffer and advance.
+//
+//   A flush copies the buffer into the vector and clears it, EXCEPT on the final
+//   flush after the loop (0xeac..0xf00), where the heap buffer is freed instead
+//   because it is the last use. That final flush is UNCONDITIONAL, so input that
+//   already ends in a newline produces one extra, empty line. It is harmless (an
+//   empty line is skipped below) but it is real, and it is why an empty input
+//   still yields a one-element vector rather than an empty one.
+//
+// STAGE 3 — walk the lines into cues (0xf18..0x1208)
+//     x21 = line count, from (bytes / 24) via the usual magic multiply
+//   The outer loop (0xf60) begins by testing trim(lines[i]).empty() and, if so,
+//   simply advancing (0xf84/0xf88). So BLANK LINES ARE SKIPPED, not treated as
+//   block delimiters; the structure is positional, not delimiter-driven.
+//
+//   For a non-empty line it zeroes a 48-byte Cue and two long longs, then tries
+//   two shapes:
+//
+//     (a) 0xfcc  parseTimingLine(trim(lines[i]), &start, &end)
+//         If that succeeds there is NO ordinal line: ++i and ok = true (0xfd4).
+//
+//     (b) otherwise the line must be the ordinal (0xfe0):
+//             bl atoi(trim(lines[i]).c_str())
+//             str w0, [sp, #0x58]        ; Cue::index, offset 0x0
+//         and the NEXT line is tried as the timing line:
+//             0x1020 parseTimingLine(trim(lines[i + 1]), &start, &end)
+//             0x1040 csel x25, x8, x28, ne   ; i += ok ? 2 : 1
+//         If there is no next line (0x1048) then ok = false and i += 1.
+//
+//   Note the out-parameter order: x1 = sp+0x50 and x2 = sp+0x48, and later
+//   `ldp x9, x8, [sp, #0x48]` feeds Cue::start from 0x50 and Cue::end from 0x48.
+//   That is parseTimingLine(line, &start, &end) — the same order as its own
+//   signature, just allocated in the opposite stack order.
+//
+//   Then the TEXT loop (0x1050..0x1114) consumes consecutive lines until one
+//   trims to empty or the input runs out:
+//         0x10c0 cbz <accumulator length> <skip>   ; only join when non-empty
+//         0x10c8 push_back('\n')
+//         0x10fc append(trim(lines[i]))
+//   So each line is individually trimmed and joined with '\n'. The accumulator
+//   is NOT trimmed at the end — only tested.
+//
+//   Finally (0x1118..0x1204) the cue is pushed only if BOTH hold:
+//         0x1118 cbz w20 <skip>          ; a timing line was actually found
+//         0x1120 trim(accumulator) -> length
+//         0x113c cbz x20 <skip>          ; and the text is not empty after trim
+//   A block with a valid timing line but no text is therefore DROPPED, and the
+//   trimmed length is used only for that test — cue.text keeps the untrimmed
+//   accumulator (string::operator= at 0x1150).
+//
+// STAGE 4 — sort (0x120c..0x1298)
+//   The public std::stable_sort is inlined here, which is why the buffer
+//   allocation is visible: operator new(count * 48, nothrow) at 0x1244, halving
+//   and retrying on failure (0x124c..0x1258) — libc++'s standard behaviour when
+//   it cannot get a full-size merge buffer.
+//
+//   The COMPARATOR is not here: it is inlined into __stable_sort_move, a
+//   separate function. Reading it there (0x2e40):
+//         ldr  x9,  [x8, #0x8]     ; a->start
+//         ldr  x10, [x21, #0x8]    ; b->start
+//         cmp  x9,  x10
+//         b.ge <take from b>
+//   i.e. the first run is consumed only while a->start < b->start. A signed
+//   64-bit compare on offset 0x8 alone, so: std::stable_sort by Cue::start
+//   ascending. Sorting on start alone cannot resolve overlaps — which is exactly
+//   why cueIndexAt() in this same namespace does a bounded backward walk after
+//   its binary search instead of trusting neighbour order.
+//
+// Two consequences worth stating, because both are easy to get wrong:
+//   * Every failure mode is non-fatal. A malformed timing line makes ok false,
+//     which skips that block; the loop still advances past it. parseSrt has no
+//     error return and never throws on bad input.
+//   * `i += ok ? 2 : 1` in the ordinal path means a block whose timing line is
+//     bad still consumes its ordinal line and then re-examines the following
+//     line from scratch. Recovery is per-line, not per-block.
+// ---------------------------------------------------------------------------
+std::vector<Cue> parseSrt(const std::string& input) {
+  // STAGE 1. The input is copied before the BOM is removed, so the caller's
+  // string is untouched.
+  std::string s = input;
+  if (s.size() >= 3 &&
+      static_cast<unsigned char>(s[0]) == 0xEF &&
+      static_cast<unsigned char>(s[1]) == 0xBB &&
+      static_cast<unsigned char>(s[2]) == 0xBF) {
+    s.erase(0, 3);
+  }
+
+  // STAGE 2.
+  std::vector<std::string> lines;
+  std::string line;
+  for (size_t i = 0; i < s.size(); ++i) {
+    const char c = s[i];
+    if (c == '\r') {
+      lines.push_back(line);
+      line.clear();
+      // A CRLF pair is one break; a bare CR is a break on its own.
+      if (i + 1 < s.size() && s[i + 1] == '\n') ++i;
+      continue;
+    }
+    if (c == '\n') {
+      lines.push_back(line);
+      line.clear();
+      continue;
+    }
+    line.push_back(c);
+  }
+  // Unconditional, so a trailing newline yields one extra empty line.
+  lines.push_back(line);
+
+  // STAGE 3.
+  std::vector<Cue> cues;
+  size_t i = 0;
+  while (i < lines.size()) {
+    if (trim(lines[i]).empty()) {  // blank lines are skipped, not delimiters
+      ++i;
+      continue;
+    }
+
+    Cue cue;
+    long long start = 0;
+    long long end = 0;
+    bool ok;
+    const std::string first = trim(lines[i]);
+
+    if (parseTimingLine(first, &start, &end)) {
+      // No ordinal line in this block.
+      ++i;
+      ok = true;
+    } else {
+      cue.index = std::atoi(first.c_str());
+      if (i + 1 < lines.size()) {
+        ok = parseTimingLine(trim(lines[i + 1]), &start, &end);
+        i += ok ? 2 : 1;
+      } else {
+        ok = false;
+        ++i;
+      }
+    }
+
+    std::string text;
+    while (i < lines.size()) {
+      if (trim(lines[i]).empty()) break;
+      if (!text.empty()) text.push_back('\n');
+      text += trim(lines[i]);
+      ++i;
+    }
+
+    if (!ok) continue;
+    if (trim(text).empty()) continue;
+
+    cue.start = start;
+    cue.end = end;
+    cue.text = text;
+    cues.push_back(cue);
+  }
+
+  // STAGE 4.
+  std::stable_sort(cues.begin(), cues.end(),
+                   [](const Cue& a, const Cue& b) { return a.start < b.start; });
+  return cues;
 }
 
 

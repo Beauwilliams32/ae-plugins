@@ -18,23 +18,44 @@
 namespace typeriser {
 
 // ---------------------------------------------------------------------------
-// [RECOVERED LAYOUT] Cue — pinned by cueIndexAt(), which reads two fields:
+// [RECOVERED LAYOUT] Cue — 48 bytes. Every field below is pinned by code that
+// reads or writes it, not inferred from the size.
 //
+// cueIndexAt() reads the interval:
 //     umaddl x14, w13, w12, x9   ; x12 = 0x30 == 48, the stride
 //     ldr    x14, [x14, #0x8]    ; start, in the same units as the time argument
 //     add    x9, x9, #0x10
 //     ldur   x11, [x9, #-0x8]    ; start again (@0x8)
 //     ldr    x11, [x9]           ; end (@0x10)
 //
-// So a Cue is 48 bytes and holds a half-open [start, end) interval at 0x8 and
-// 0x10. The remaining bytes (0 at the base, 0x18..0x30) are held in the same
-// allocation but are not read by this function, so their purpose is NOT
-// recovered and is deliberately not guessed at here.
+// parseSrt() writes the other two:
+//     str  w0, [sp, #0x58]                 ; atoi() -> offset 0x0, an int
+//     add  x0, x23, #0x18                  ; &cue.text
+//     bl   basic_string::operator=         ; std::string at offset 0x18
+//
+// 4 (index) + 4 (padding) + 8 (start) + 8 (end) + 24 (string) == 48, which
+// matches the 0x30 stride cueIndexAt uses. So a Cue is exactly:
+//
+//     int index; long long start; long long end; std::string text;
+//
+// `start`/`end` are in MILLISECONDS, the unit parseTimestamp returns, and the
+// interval is half-open: [start, end).
+//
+// Earlier revisions of this header described offsets 0x0 and 0x18..0x30 as
+// "not recovered and deliberately not guessed at". parseSrt recovered both, and
+// the guess-free version turned out to be this.
 // ---------------------------------------------------------------------------
 struct Cue {
-  long long start = 0;   // [recovered] offset 0x8
-  long long end = 0;     // [recovered] offset 0x10
+  int index = 0;         // [recovered] offset 0x0 — the SRT ordinal, via atoi
+  long long start = 0;   // [recovered] offset 0x8 — milliseconds
+  long long end = 0;     // [recovered] offset 0x10 — milliseconds, exclusive
+  std::string text;      // [recovered] offset 0x18 — lines joined with '\n'
 };
+
+static_assert(sizeof(Cue) == 48, "Cue must stay the 0x30 stride cueIndexAt assumes");
+static_assert(offsetof(Cue, start) == 0x8, "cueIndexAt reads start at 0x8");
+static_assert(offsetof(Cue, end) == 0x10, "cueIndexAt reads end at 0x10");
+static_assert(offsetof(Cue, text) == 0x18, "parseSrt writes text at 0x18");
 
 // ---------------------------------------------------------------------------
 // [exact] Scalar helper.
@@ -130,5 +151,20 @@ float wordProgress(long long start, long long end, int wordIndex,
 // sorting on `start` alone cannot rule out an earlier cue with a longer end.
 // ---------------------------------------------------------------------------
 int cueIndexAt(const std::vector<Cue>& cues, long long t);
+
+// ---------------------------------------------------------------------------
+// [exact] Parse a whole SRT document into cues, sorted by start time.
+//
+// Tolerant by construction rather than by accident: it strips a UTF-8 BOM,
+// accepts LF, CRLF and bare CR, lets the ordinal line be absent, and drops
+// blocks that carry no text. Malformed blocks are SKIPPED, not fatal — the
+// return value is always a (possibly empty) vector, never an error.
+//
+// The result is stable-sorted by `start`, so cues that share a start time keep
+// their document order. See the .cpp for the full derivation, including the two
+// behaviours most likely to surprise: a trailing newline yields a final empty
+// line, and a cue whose text is empty is dropped.
+// ---------------------------------------------------------------------------
+std::vector<Cue> parseSrt(const std::string& text);
 
 }  // namespace typeriser

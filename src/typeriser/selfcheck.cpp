@@ -271,6 +271,120 @@ int main() {
   }
 
 
+  std::printf("typeriser::parseSrt\n");
+  {
+    // A well-formed two-cue document, LF, with ordinals.
+    const std::string two =
+        "1\n00:00:01,000 --> 00:00:02,500\nHello\n\n"
+        "2\n00:00:03,000 --> 00:00:04,000\nWorld\n";
+    auto cues = typeriser::parseSrt(two);
+    check(cues.size() == 2, "a two-cue document yields two cues");
+    check(cues[0].index == 1 && cues[0].start == 1000 && cues[0].end == 2500,
+          "the first cue carries its ordinal and its interval");
+    check(cues[0].text == "Hello", "the first cue carries its text");
+    check(cues[1].index == 2 && cues[1].start == 3000 && cues[1].text == "World",
+          "the second cue parses independently");
+
+    // Cue layout: 48 bytes, with index at 0 and text at 0x18.
+    check(sizeof(typeriser::Cue) == 48, "Cue stays the 48-byte stride cueIndexAt uses");
+    check(offsetof(typeriser::Cue, start) == 0x8 && offsetof(typeriser::Cue, end) == 0x10,
+          "start/end stay at the offsets cueIndexAt reads");
+    check(offsetof(typeriser::Cue, text) == 0x18,
+          "text stays at the offset parseSrt's operator= writes");
+
+    // Line endings. The CR branch consumes a following LF, so CRLF is ONE break.
+    auto crlf = typeriser::parseSrt("1\r\n00:00:01,000 --> 00:00:02,500\r\nHi\r\n\r\n");
+    check(crlf.size() == 1 && crlf[0].text == "Hi", "CRLF yields one break, not two");
+
+    auto cr = typeriser::parseSrt("1\r00:00:01,000 --> 00:00:02,500\rHi\r\r");
+    check(cr.size() == 1 && cr[0].text == "Hi", "a bare CR also terminates a line");
+
+    // Mixed endings in one document.
+    auto mixed = typeriser::parseSrt(
+        "1\r\n00:00:01,000 --> 00:00:02,000\r\nA\r\n\r\n"
+        "2\n00:00:03,000 --> 00:00:04,000\nB\n");
+    check(mixed.size() == 2 && mixed[0].text == "A" && mixed[1].text == "B",
+          "LF and CRLF can be mixed in one document");
+
+    // UTF-8 BOM is stripped before anything else.
+    auto bom = typeriser::parseSrt("\xEF\xBB\xBF" "1\n00:00:01,000 --> 00:00:02,000\nB\n");
+    check(bom.size() == 1 && bom[0].index == 1,
+          "a leading UTF-8 BOM does not corrupt the ordinal line");
+
+    // The ordinal line is optional; a bare timing line still parses, with index 0.
+    auto noidx = typeriser::parseSrt("00:00:01,000 --> 00:00:02,000\nNo index\n");
+    check(noidx.size() == 1 && noidx[0].index == 0 && noidx[0].start == 1000,
+          "a missing ordinal line leaves index at 0");
+
+    // Multi-line text is joined with '\n', each line trimmed individually.
+    auto multi = typeriser::parseSrt(
+        "1\n00:00:01,000 --> 00:00:02,500\n  Line one  \n\tLine two\n\n");
+    check(multi.size() == 1 && multi[0].text == "Line one\nLine two",
+          "text lines are trimmed and joined with a single newline");
+
+    // A trailing newline produces one extra EMPTY line, which must not become a cue.
+    check(multi.size() == 1, "the extra trailing empty line does not create a cue");
+
+    // A block with a timing line but no text is DROPPED.
+    auto notext = typeriser::parseSrt(
+        "1\n00:00:01,000 --> 00:00:02,500\n\n2\n00:00:03,000 --> 00:00:04,000\nKept\n");
+    check(notext.size() == 1 && notext[0].index == 2,
+          "a cue with empty text is dropped entirely");
+
+    // Whitespace-only text counts as empty too (the test is on the TRIMMED text).
+    auto blank = typeriser::parseSrt("1\n00:00:01,000 --> 00:00:02,500\n   \n");
+    check(blank.empty(), "whitespace-only text is treated as empty");
+
+    // Output is STABLE-sorted by start; equal starts keep document order.
+    auto sorted = typeriser::parseSrt(
+        "1\n00:00:09,000 --> 00:00:10,000\nLate\n\n"
+        "2\n00:00:01,000 --> 00:00:02,000\nEarly\n");
+    check(sorted.size() == 2 && sorted[0].text == "Early" && sorted[1].text == "Late",
+          "cues come back sorted by start regardless of document order");
+
+    auto tied = typeriser::parseSrt(
+        "7\n00:00:01,000 --> 00:00:02,000\nFirst\n\n"
+        "8\n00:00:01,000 --> 00:00:03,000\nSecond\n");
+    check(tied.size() == 2 && tied[0].index == 7 && tied[1].index == 8,
+          "cues sharing a start keep document order (stable, not just sorted)");
+
+    // Malformed blocks are skipped, and parsing RECOVERS at the next line.
+    auto bad = typeriser::parseSrt(
+        "1\nGARBAGE\nText\n\n2\n00:00:03,000 --> 00:00:04,000\nGood\n");
+    check(bad.size() == 1 && bad[0].index == 2 && bad[0].text == "Good",
+          "a malformed block is skipped and the next block still parses");
+
+    // A block with an ordinal but no timing line at all.
+    auto notiming = typeriser::parseSrt("1\nJust text, no times\n");
+    check(notiming.empty(), "an ordinal with no timing line yields no cue");
+
+    // Degenerate inputs never throw and are all empty.
+    check(typeriser::parseSrt("").empty(), "empty input yields no cues");
+    check(typeriser::parseSrt("\n\n\n").empty(), "blank lines alone yield no cues");
+    check(typeriser::parseSrt("-->").empty(), "a bare arrow yields no cues");
+
+    // Input without a trailing newline keeps its last line.
+    auto tail = typeriser::parseSrt("1\n00:00:01,000 --> 00:00:02,000\nTail");
+    check(tail.size() == 1 && tail[0].text == "Tail",
+          "the final line is flushed even with no trailing newline");
+
+    // The caller's string is not mutated (parseSrt copies before stripping).
+    std::string original = "\xEF\xBB\xBF" "1\n00:00:01,000 --> 00:00:02,000\nX\n";
+    const std::string before = original;
+    (void)typeriser::parseSrt(original);
+    check(original == before, "the input string is left untouched (including its BOM)");
+
+    // A realistic multi-cue document, exercising the whole path at once.
+    auto real = typeriser::parseSrt(
+        "1\n00:00:00,500 --> 00:00:02,000\nIt was the best of times\n\n"
+        "2\n00:00:02,100 --> 00:00:04,000\nit was the worst of times\n\n"
+        "3\n00:00:04,200 --> 00:00:06,000\nit was the age of wisdom\n");
+    check(real.size() == 3, "a realistic three-cue document parses completely");
+    check(real[0].start == 500 && real[2].end == 6000, "its outer bounds are correct");
+    check(real[1].text == "it was the worst of times", "its middle text is intact");
+  }
+
+
   std::printf("typeriser::splitWords\n");
   {
     auto eq = [](const std::vector<std::string>& got, std::initializer_list<const char*> want) {
