@@ -60,4 +60,14 @@ float lerpf(float a, float b, float t);
 // exactly those coefficients and sum to 1.0.
 float luma709(float r, float g, float b);
 
+// ---------------------------------------------------------------------------
+// Sample the LUT at a normalised input, writing three channels to out[0..2].
+//
+// [recovered] Handles both LUT shapes, selected by CubeLUT::is3D:
+//   * 3D  -> trilinear interpolation across the eight surrounding lattice points
+//   * 1D  -> three independent per-channel curves, each indexed by its own
+//            coordinate rather than by one shared axis
+// ---------------------------------------------------------------------------
+void sampleLUT(const CubeLUT& lut, float r, float g, float b, float* out);
+
 }  // namespace lutblend

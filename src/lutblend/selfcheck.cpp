@@ -112,6 +112,103 @@ int main() {
     check(mk(false, 2, 1.0f).data.size() == 2 * 3, "2-entry 1D LUT holds 6 floats");
   }
 
+
+  std::printf("lutblend::sampleLUT\n");
+  {
+    // An IDENTITY LUT is the strongest available check: trilinear interpolation
+    // of a linear ramp must reproduce the input exactly, so any index, stride or
+    // weight error shows up as a mismatch rather than hiding in a tolerance.
+    auto identity3d = [](int n) {
+      lutblend::CubeLUT l;
+      l.is3D = true; l.size = n;
+      l.minR = l.minG = l.minB = 0.0f;
+      l.maxR = l.maxG = l.maxB = 1.0f;
+      l.data.resize(static_cast<size_t>(n) * n * n * 3);
+      const float d = static_cast<float>(n - 1);
+      // .cube ordering, with RED VARYING FASTEST. The recovered index expression
+      // is k*size^2 + j*size + i where i is the R index, so R has stride 1. An
+      // earlier version of this helper looped R outermost, which produced a LUT
+      // whose red and blue were transposed — and the identity round-trip caught
+      // it immediately, which is exactly why an identity LUT is the right test.
+      size_t w = 0;
+      for (int b = 0; b < n; ++b)
+        for (int g = 0; g < n; ++g)
+          for (int r = 0; r < n; ++r) {
+            l.data[w++] = static_cast<float>(r) / d;
+            l.data[w++] = static_cast<float>(g) / d;
+            l.data[w++] = static_cast<float>(b) / d;
+          }
+      return l;
+    };
+
+    {
+      const lutblend::CubeLUT l = identity3d(17);
+      check(l.valid(), "the identity LUT passes valid()");
+      float o[3];
+      // Lattice points must be reproduced exactly.
+      lutblend::sampleLUT(l, 0.0f, 0.0f, 0.0f, o);
+      checkNear(o[0], 0.0f, 1e-6f, "3D identity: black maps to black");
+      lutblend::sampleLUT(l, 1.0f, 1.0f, 1.0f, o);
+      checkNear(o[0], 1.0f, 1e-5f, "3D identity: white maps to white");
+      lutblend::sampleLUT(l, 0.5f, 0.25f, 0.75f, o);
+      checkNear(o[0], 0.5f, 1e-5f, "3D identity: a mid R value round-trips");
+      checkNear(o[1], 0.25f, 1e-5f, "3D identity: a mid G value round-trips");
+      checkNear(o[2], 0.75f, 1e-5f, "3D identity: a mid B value round-trips");
+
+      // Interior values between lattice points, which is what trilinear buys.
+      lutblend::sampleLUT(l, 0.301f, 0.602f, 0.903f, o);
+      checkNear(o[0], 0.301f, 1e-4f, "3D identity: off-lattice R interpolates exactly");
+      checkNear(o[1], 0.602f, 1e-4f, "3D identity: off-lattice G interpolates exactly");
+      checkNear(o[2], 0.903f, 1e-4f, "3D identity: off-lattice B interpolates exactly");
+
+      // Out-of-range inputs clamp rather than extrapolate.
+      lutblend::sampleLUT(l, -2.0f, 5.0f, 0.5f, o);
+      checkNear(o[0], 0.0f, 1e-5f, "3D identity: R below the domain clamps to 0");
+      checkNear(o[1], 1.0f, 1e-5f, "3D identity: G above the domain clamps to 1");
+    }
+
+    // A non-unit declared domain is honoured: input 0.5 with domain [0,2] is the
+    // midpoint of the ramp, i.e. normalised 0.25.
+    {
+      lutblend::CubeLUT l = identity3d(17);
+      l.maxR = l.maxG = l.maxB = 2.0f;
+      check(l.valid(), "identity LUT with a widened domain is still valid");
+      float o[3];
+      lutblend::sampleLUT(l, 0.5f, 1.0f, 1.5f, o);
+      checkNear(o[0], 0.25f, 1e-4f, "domain [0,2]: input 0.5 normalises to 0.25");
+      checkNear(o[1], 0.5f, 1e-4f, "domain [0,2]: input 1.0 normalises to 0.5");
+      checkNear(o[2], 0.75f, 1e-4f, "domain [0,2]: input 1.5 normalises to 0.75");
+    }
+
+    // 1D: three independent curves, each fed by its OWN coordinate. Build a LUT
+    // whose three channels are deliberately different ramps, so mixing up which
+    // coordinate indexes which channel cannot pass.
+    {
+      lutblend::CubeLUT l;
+      l.is3D = false; l.size = 3;
+      l.minR = l.minG = l.minB = 0.0f;
+      l.maxR = l.maxG = l.maxB = 1.0f;
+      l.data = {
+        0.0f, 0.0f, 0.0f,     // entry 0: all channels 0
+        0.5f, 0.1f, 0.9f,     // entry 1
+        1.0f, 1.0f, 1.0f,     // entry 2: all channels 1
+      };
+      check(l.valid(), "the 1D test LUT is valid");
+      float o[3];
+      // Input (1.0, 0.0, 0.5) -> R indexes entry 2 ch0 = 1.0,
+      //                         G indexes entry 0 ch1 = 0.0,
+      //                         B indexes entry 1 ch2 = 0.9
+      lutblend::sampleLUT(l, 1.0f, 0.0f, 0.5f, o);
+      checkNear(o[0], 1.0f, 1e-6f, "1D: R is indexed by the R coordinate");
+      checkNear(o[1], 0.0f, 1e-6f, "1D: G is indexed by the G coordinate");
+      checkNear(o[2], 0.9f, 1e-6f, "1D: B is indexed by the B coordinate");
+      // A mid input lands between entries and interpolates.
+      lutblend::sampleLUT(l, 0.25f, 0.25f, 0.25f, o);
+      checkNear(o[0], 0.25f, 1e-5f, "1D: halfway between entry 0 and 1 interpolates");
+      checkNear(o[2], 0.45f, 1e-5f, "1D: and uses that channel's own values");
+    }
+  }
+
   std::printf("\n%s\n", failures == 0 ? "ALL RECOVERED LUTBLEND MATHS VERIFIED"
                                       : "TRANSCRIPTION ERRORS PRESENT");
   return failures == 0 ? 0 : 1;

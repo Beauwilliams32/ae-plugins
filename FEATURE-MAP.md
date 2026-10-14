@@ -44,7 +44,9 @@ is merely identified.
 | **`lutblend::clampf` / `lerpf` / `luma709`** | `src/lutblend/lutblend.cpp` | **Recovered + verified** | `test/lutblend.test.mjs` |
 | **`lutblend::CubeLUT::valid`** + full `CubeLUT` layout | `src/lutblend/lutblend.{h,cpp}` | **Recovered + verified** | `test/lutblend.test.mjs` |
 | Cross-bundle check: the two `clampf` copies agree | `test/lutblend.test.mjs` | **Verified** | own test |
-| `lutblend::parseCube` / `sampleLUT` / `applyLUTBlend` / `makeIdentity` | `specs/LUTBlend.md` | **Identified only** | none yet |
+| **`lutblend::sampleLUT`** (trilinear 3D + per-channel 1D, domain clamp) | `src/lutblend/lutblend.cpp` | **Recovered + verified** | `test/lutblend.test.mjs` (identity LUT) |
+| `.cube` data ordering: red fastest (index = b·size² + g·size + r) | `src/lutblend/lutblend.cpp` | **Recovered** | identity round-trip |
+| `lutblend::parseCube` / `applyLUTBlend` / `makeIdentity` | `specs/LUTBlend.md` | **Identified only** | none yet |
 | `typeriser::` engine (parseSrt, karaokeWordAt, wordProgress, ease) | `specs/TypeRiser.md` | **Identified only** | none yet |
 | The other 13 effects' function bodies | `specs/*.md` | **Identified only** — architecture recovered, bodies not | none yet |
 | Buildable plugin bundles (AE SDK at `0x000d001d`) | — | **Not started** | none |
