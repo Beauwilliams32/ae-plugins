@@ -134,4 +134,54 @@ std::vector<float> hannWindow(int n) {
 // ---------------------------------------------------------------------------
 float hannCoherentGain() { return 0.5f; }
 
+// ---------------------------------------------------------------------------
+// Spectrogram::~Spectrogram()
+//
+// __ZN7spectra11SpectrogramD1Ev exists in the binary at 0x1690. Its body is the
+// standard member teardown of the frames vector, so the defaulted destructor is
+// behaviourally equivalent. It is defined out-of-line here only because the
+// class declares it (the binary exports it as a real symbol) and the test
+// instantiates Spectrogram on the stack, which needs the definition to link.
+// ---------------------------------------------------------------------------
+Spectrogram::~Spectrogram() = default;
+
+// ---------------------------------------------------------------------------
+// Spectrogram::hzToBin(float hz) const
+//
+// __ZNK7spectra11Spectrogram7hzToBinEf — recovered in full, all 56 bytes:
+//
+//     ldr   d1, [x0, #0x8]      ; d1 = this->hzPerBin
+//     fcmp  d1, #0.0
+//     b.ls  <ret_zero>          ; hzPerBin <= 0 -> return 0, not a divide
+//     fcvt  d0, s0              ; (double)hz
+//     fdiv  d0, d0, d1          ; hz / hzPerBin
+//     fcvtas x8, d0             ; round to nearest, ties away from zero
+//     ldr   w9, [x0]            ; w9 = this->binCount
+//     sub   w9, w9, #0x1        ; binCount - 1
+//     cmp   w9, w8
+//     csel  w8, w9, w8, lt      ; clamp high: bin > binCount-1 -> binCount-1
+//     bic   w0, w8, w8, asr #31 ; clamp low: clears the sign bit, i.e. <0 -> 0
+//     ret
+//   <ret_zero>: mov w0, #0x0 ; ret
+//
+// Two things worth recording beyond the formula:
+//
+//   * fcvtas rounds ties AWAY FROM ZERO, not to even. A tie at exactly half a
+//     bin therefore goes up in magnitude; for non-negative input that means up.
+//   * The low clamp is done with `bic ..., asr #31` rather than a compare: for a
+//     negative value the arithmetic shift yields all ones, and clearing those
+//     bits in the result gives 0. That is a branchless max(x, 0).
+//
+// The guard returns 0 rather than dividing, so a spectrogram whose bin width was
+// never set reads as bin 0 instead of producing inf/NaN.
+// ---------------------------------------------------------------------------
+int Spectrogram::hzToBin(float hz) const {
+  if (!(hzPerBin > 0.0)) return 0;
+  int bin = static_cast<int>(std::llround(static_cast<double>(hz) / hzPerBin));
+  const int lastBin = binCount - 1;
+  if (lastBin < bin) bin = lastBin;
+  if (bin < 0) bin = 0;
+  return bin;
+}
+
 }  // namespace spectra

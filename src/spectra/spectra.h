@@ -48,13 +48,26 @@ struct AnalysisConfig {
 // requires knowing the FFT size and sample rate.
 class Spectrogram {
  public:
-  // [exact] recovered from _ZNK7spectra11Spectrogram8hzToBinEf
+  // [exact] recovered from _ZNK7spectra11Spectrogram7hzToBinEf
   int hzToBin(float hz) const;
   ~Spectrogram();  // [exact] _ZN7spectra11SpectrogramD1Ev
 
+  // [RECOVERED LAYOUT] hzToBin() reads exactly two fields, and its arithmetic
+  // pins both their types and their offsets:
+  //
+  //     ldr w9, [x0]        ; 32-bit int at offset 0
+  //     ldr d1, [x0, #0x8]  ; 64-bit double at offset 8
+  //
+  // The int is decremented by one and used as an upper bound, so it is the bin
+  // count. The double divides the frequency, so it is the Hz-per-bin width.
+  // That makes this the first part of this class that is recovered rather than
+  // guessed — the remaining fields below are still [inferred].
+  int binCount;     // [recovered] offset 0
+  double hzPerBin;  // [recovered] offset 8  (0 or negative is a guarded no-op)
+
+  // [inferred] placement unknown; only its existence and element type come from
+  // bandValues(Spectrogram const&, ...).
   std::vector<std::vector<float>> frames;
-  int fftSize = 0;
-  int sampleRate = 0;
 };
 
 // ---------------------------------------------------------------------------

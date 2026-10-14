@@ -89,6 +89,41 @@ int main() {
     checkNear(static_cast<float>(mean), spectra::hannCoherentGain(), 1e-4f, label);
   }
 
+  std::printf("Spectrogram::hzToBin\n");
+  {
+    // 1024 bins covering 0..22050 Hz => 21.533203125 Hz per bin.
+    spectra::Spectrogram s;
+    s.binCount = 1024;
+    s.hzPerBin = 22050.0 / 1024.0;
+
+    check(s.hzToBin(0.0f) == 0, "DC maps to bin 0");
+    check(s.hzToBin(21.0f) == 1, "just under one bin width rounds to bin 1");
+    check(s.hzToBin(1000.0f) == 46, "1 kHz lands on the expected bin");
+
+    // The guard: a bin width that was never set must not divide.
+    spectra::Spectrogram unset;
+    unset.binCount = 1024;
+    unset.hzPerBin = 0.0;
+    check(unset.hzToBin(1000.0f) == 0, "hzPerBin == 0 returns 0 rather than inf/NaN");
+    unset.hzPerBin = -5.0;
+    check(unset.hzToBin(1000.0f) == 0, "negative hzPerBin also returns 0 (b.ls, not b.eq)");
+
+    // Clamping, both ends.
+    spectra::Spectrogram small;
+    small.binCount = 8;
+    small.hzPerBin = 1000.0;
+    check(small.hzToBin(99999.0f) == 7, "clamps high to binCount - 1");
+    check(small.hzToBin(-500.0f) == 0, "clamps negative to 0 (branchless bic)");
+    check(small.hzToBin(-0.4f) == 0, "a value rounding to -0 is clamped to 0");
+
+    // fcvtas rounds ties away from zero, so a half-bin goes up.
+    spectra::Spectrogram tie;
+    tie.binCount = 64;
+    tie.hzPerBin = 100.0;
+    check(tie.hzToBin(50.0f) == 1, "exact half-bin rounds away from zero (fcvtas, not banker's)");
+    check(tie.hzToBin(150.0f) == 2, "and again one bin up");
+  }
+
   std::printf("\n%s\n", failures == 0 ? "ALL RECOVERED MATHS VERIFIED" : "TRANSCRIPTION ERRORS PRESENT");
   return failures == 0 ? 0 : 1;
 }

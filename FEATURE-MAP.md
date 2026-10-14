@@ -25,7 +25,9 @@ is merely identified.
 | `spectra::fftRadix2` guard clause | `specs/SpectraKeys.md` | **Identified** — guard recovered, butterfly body not | none yet |
 | `spectra::analyse` / `analyseBands` / `rawBandLevel` / `bandValues` | `specs/SpectraKeys.md` | **Identified only** | none yet |
 | `spectra::downmixToMono` | `specs/SpectraKeys.md` | **Identified only** | none yet |
-| `spectra::Spectrogram::hzToBin` | `specs/SpectraKeys.md` | **Identified only** | none yet |
+| `spectra::Spectrogram::hzToBin` | `src/spectra/spectra.cpp` | **Recovered + verified** | `selfcheck.cpp` via `test/spectra.test.mjs` |
+| `Spectrogram` field layout (binCount @0, hzPerBin @8) | `src/spectra/spectra.h` | **Recovered** from `hzToBin`'s loads | `selfcheck.cpp` |
+| `spectra::Spectrogram::~Spectrogram` | `src/spectra/spectra.cpp` | **Recovered** (defaulted; matches the binary's vector teardown) | compile/link in `test/spectra.test.mjs` |
 | The other 15 effects' function bodies | `specs/*.md` | **Identified only** — architecture recovered, bodies not | none yet |
 | Buildable plugin bundles (AE SDK at `0x000d001d`) | — | **Not started** | none |
 
