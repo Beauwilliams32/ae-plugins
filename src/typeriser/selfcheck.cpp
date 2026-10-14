@@ -218,6 +218,36 @@ int main() {
   // A typical SRT block line, which is the actual use case.
   check(typeriser::parseTimestamp("00:01:23,456") == 83456, "a realistic SRT timestamp parses");
 
+
+  std::printf("typeriser::splitWords\n");
+  {
+    auto eq = [](const std::vector<std::string>& got, std::initializer_list<const char*> want) {
+      if (got.size() != want.size()) return false;
+      size_t i = 0;
+      for (const char* w : want) if (got[i++] != w) return false;
+      return true;
+    };
+
+    check(eq(typeriser::splitWords("hello world"), {"hello", "world"}), "two words");
+    check(eq(typeriser::splitWords("one"), {"one"}), "a single word with no trailing space is KEPT (final flush)");
+    // Empty runs collapse rather than producing empty words.
+    check(eq(typeriser::splitWords("a  b"), {"a", "b"}), "a run of spaces yields no empty word");
+    check(eq(typeriser::splitWords("a\t\nb"), {"a", "b"}), "tabs and newlines also separate");
+    check(eq(typeriser::splitWords("  a  "), {"a"}), "leading and trailing whitespace produce no empty words");
+    check(eq(typeriser::splitWords("   "), {}), "all whitespace yields nothing");
+    check(eq(typeriser::splitWords(""), {}), "empty input yields nothing");
+    // A realistic SRT cue line.
+    check(eq(typeriser::splitWords("It was the best of times"),
+             {"It", "was", "the", "best", "of", "times"}),
+          "a realistic caption line splits into six words");
+    // Punctuation is NOT a separator: this splits on whitespace only.
+    check(eq(typeriser::splitWords("well-known, isn't"), {"well-known,", "isn't"}),
+          "punctuation stays attached (whitespace-only splitting)");
+    // Non-ASCII goes through the __maskrune path; an accented byte is not a space.
+    check(eq(typeriser::splitWords("caf\xc3\xa9 noir"), {"caf\xc3\xa9", "noir"}),
+          "a non-ASCII byte is not treated as whitespace");
+  }
+
   std::printf("\n%s\n", failures == 0 ? "ALL RECOVERED TYPERISER MATHS VERIFIED"
                                       : "TRANSCRIPTION ERRORS PRESENT");
   return failures == 0 ? 0 : 1;

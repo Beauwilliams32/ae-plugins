@@ -52,7 +52,8 @@ is merely identified.
 | Third `clampf` copy; all three agree | `test/typeriser.test.mjs` | **Verified** across 3 bundles/namespaces | own test |
 | **`typeriser::ease`** + `Easing` enum (7 cases) | `src/typeriser/typeriser.cpp` | **Recovered + verified** | `test/typeriser.test.mjs` |
 | **`typeriser::trim` / `parseTimestamp`** (SRT time -> ms, with validation) | `src/typeriser/typeriser.cpp` | **Recovered + verified** | `test/typeriser.test.mjs` |
-| `typeriser::parseSrt` (512 instrs) / `splitWords` | `specs/TypeRiser.md` | **Identified only** | none yet |
+| **`typeriser::splitWords`** (whitespace split, empty runs collapsed) | `src/typeriser/typeriser.cpp` | **Recovered + verified** | `test/typeriser.test.mjs` |
+| `typeriser::parseSrt` (512 instrs) | `specs/TypeRiser.md` | **Identified only** | none yet |
 | The other 13 effects' function bodies | `specs/*.md` | **Identified only** — architecture recovered, bodies not | none yet |
 | Buildable plugin bundles (AE SDK at `0x000d001d`) | — | **Not started** | none |
 

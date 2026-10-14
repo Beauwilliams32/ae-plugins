@@ -70,6 +70,15 @@ enum class Easing : int {
 std::string trim(const std::string& s);
 
 // ---------------------------------------------------------------------------
+// [exact] Split on whitespace, dropping empty runs.
+//
+// Uses ctype whitespace (_CTYPE_S) with a __maskrune fallback for non-ASCII
+// bytes, so it behaves like isspace in the current locale. See the .cpp for the
+// three structural details worth knowing.
+// ---------------------------------------------------------------------------
+std::vector<std::string> splitWords(const std::string& s);
+
+// ---------------------------------------------------------------------------
 // [exact] Parse an SRT timestamp into MILLISECONDS, or -1 if malformed.
 //
 // Accepts H+:MM:SS then ,mmm or .mmm with one to three fraction digits. Minutes

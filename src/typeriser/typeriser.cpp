@@ -414,4 +414,68 @@ long long parseTimestamp(const std::string& raw) {
 }
 
 
+// ---------------------------------------------------------------------------
+// splitWords(const std::string&) -> std::vector<std::string>
+//
+// __ZN9typeriser10splitWordsE..., 123 instructions, recovered in full. A
+// whitespace splitter, and most of the instruction count is vector growth and
+// libc++ small-string handling rather than splitting logic.
+//
+// STRUCTURE:
+//     mov  x19, x8 / zero it        ; the result vector
+//     zero a local string at sp+8   ; the current-word buffer
+//     ... decode the input's data pointer and length (the SSO csel dance again) ...
+//     cbz  x22 <done>               ; an empty input returns an empty vector
+//     x23 = __DefaultRuneLocale
+//
+//   loop, one character at a time:
+//     ldrsb x20, [x21]
+//     tbnz  x20, #0x3f <maskrune>   ; a byte >= 0x80 goes to __maskrune
+//     add   x8, x23, x20, lsl #2
+//     ldr   w8, [x8, #0x3c]         ; ctype flags for an ASCII byte, looked up
+//     and   w0, w8, #0x4000         ; _CTYPE_S == whitespace, no call at all
+//   <maskrune>: and w0, x20, #0xff / mov w1, #0x4000 / bl ___maskrune
+//     cbz   w0 <not-space>
+//
+//   NOT a space (0x18d8): push the character onto the word buffer and advance.
+//   IS a space (0x191c..0x1988): if the buffer is non-empty, append it to the
+//     result and CLEAR the buffer; if it is empty, do nothing. That `cbz x9` on
+//     the buffer length is what collapses runs of whitespace into a single break
+//     and keeps leading/trailing whitespace from producing empty words.
+//
+//   After the loop (0x199c..0x1a30) the SAME flush runs once more, so the final
+//   word is emitted. Without that trailing flush a sentence with no trailing
+//   whitespace would silently lose its last word — the most likely way to get
+//   this wrong.
+//
+// Three details worth keeping:
+//   * ASCII is tested with a table lookup, not a call; only bytes >= 0x80 reach
+//     __maskrune. So the common path allocates nothing and calls nothing.
+//   * Empty runs are skipped rather than emitted, so "a  b" gives two words, not
+//     three, and " a " gives one.
+//   * The result vector is returned by value through the hidden first argument
+//     (x8), which is how we know the return type is a vector rather than a
+//     single string.
+// ---------------------------------------------------------------------------
+std::vector<std::string> splitWords(const std::string& s) {
+  std::vector<std::string> out;
+  std::string word;
+
+  for (size_t i = 0; i < s.size(); ++i) {
+    const unsigned char ch = static_cast<unsigned char>(s[i]);
+    if (!std::isspace(ch)) {
+      word.push_back(static_cast<char>(ch));
+      continue;
+    }
+    if (!word.empty()) {
+      out.push_back(word);
+      word.clear();
+    }
+  }
+
+  if (!word.empty()) out.push_back(word);
+  return out;
+}
+
+
 }  // namespace typeriser
