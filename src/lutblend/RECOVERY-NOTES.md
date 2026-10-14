@@ -193,6 +193,43 @@ This also means a failed parse can leave the caller's `out` untouched, since
 nothing is written through the pointer until the local is complete — but that is
 inferred from the shape, not read, and is listed below.
 
+### Value parsing — RECOVERED
+
+The LUT-size range check is confirmed, and it confirms the message literally:
+
+```
+fcvtzs w28, s0            ; truncate the parsed double to int
+sub    w8, w28, #0x2
+cmp    w8, #0xff          ; UNSIGNED
+b.hs   <"out of range [2,256]">
+str    w28, [x29, #-0xc4] ; lut.size = size
+```
+
+`(unsigned)(size - 2) < 255` is taken as valid, i.e. `size - 2 <= 254`, i.e.
+**`2 <= size <= 256`** — exactly the bound the message names. Size is truncated
+with `fcvtzs` rather than rounded, so `LUT_3D_SIZE 33.9` would be 33; whether that
+is intended or a latent bug is not recoverable from the code.
+
+Every numeric field goes through the same three-part acceptance test, visible in
+the data-row path at 0x1ec8:
+
+```
+strtod(tok, &endptr)
+endptr == tok               -> reject   ; nothing was consumed at all
+*endptr != '\0'            -> reject   ; trailing garbage after the number
+(|d| < +inf) == false       -> reject   ; inf and NaN are rejected explicitly
+```
+
+The finiteness test is `and x8, x8, #0x7fffffffffffffff` then a compare against
+`0x7ff0000000000000`, so it clears the sign bit and tests for infinity — a
+standard `isfinite`. Non-finite LUT values are therefore refused, not stored.
+
+Data rows accumulate three values at a time. The handler parses one token into a
+three-float scratch buffer (`x29-0x90`, `-0x8c`, `-0x88`), and once the row is
+complete pushes all three into `lut->data` with three consecutive
+`vector<float>::push_back` calls (0x1f18, 0x1f28, 0x1f38), then resets the
+per-line status to 0. A completion flag at `[sp+0x24]` bit 0 gates the push.
+
 ### What still needs reading
 
 Specifically unresolved, to be settled from the disassembly rather than guessed:
