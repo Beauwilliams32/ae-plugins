@@ -46,6 +46,11 @@ struct BandSpec {
   float floorDb;       // [recovered] offset 0x10
   float ceilingDb;     // [recovered] offset 0x14
   float gainDb;        // [recovered] offset 0x18
+  float outputMin;     // [recovered] offset 0x1c  (bandValues maps the level here)
+  float outputMax;     // [recovered] offset 0x20
+  int falloffMode;     // [recovered] offset 0x24: 1 Instant, 2 Linear, 3 Exponential, 4 None/Integrate
+  float falloffTime;   // [recovered] offset 0x28  (seconds; floored at 1e-4f)
+  bool binarise;       // [recovered] offset 0x2c  (true -> every level becomes 0 or 1)
 };
 
 // [inferred] FFT analysis settings. The parameter strings expose "FFT Size",
@@ -79,7 +84,9 @@ class Spectrogram {
   // That makes this the first part of this class that is recovered rather than
   // guessed — the remaining fields below are still [inferred].
   int binCount;     // [recovered] offset 0
+  int frameCount;   // [recovered] offset 4   (bandValues resizes its result to this)
   double hzPerBin;  // [recovered] offset 8  (0 or negative is a guarded no-op)
+  // frames @0x10: contiguous vector<float>, stride 24 bytes (sizeof a vector)
 
   // [inferred] placement unknown; only its existence and element type come from
   // bandValues(Spectrogram const&, ...).
@@ -125,6 +132,8 @@ float rawBandLevel(const std::vector<float>& spectrum,
                    const Spectrogram& spectrogram,
                    const BandSpec& band);
 
-float bandValues(const Spectrogram& spectrogram, const BandSpec& band, double time);
+// Per-frame band levels with the effect's falloff/decay applied, mapped through
+// the band's output range. `time` is in seconds and sets the frame rate as 1/time.
+std::vector<float> bandValues(const Spectrogram& spectrogram, const BandSpec& band, double time);
 
 }  // namespace spectra

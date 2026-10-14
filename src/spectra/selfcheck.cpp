@@ -290,6 +290,97 @@ int main() {
               "empty spectrum returns 0");
   }
 
+
+  std::printf("bandValues (falloff envelope + output mapping)\n");
+  {
+    // 3 frames of 4 bins: a loud frame then two silent ones, so the envelope
+    // has something to decay from.
+    spectra::Spectrogram sp;
+    sp.binCount = 4;
+    sp.frameCount = 3;
+    sp.hzPerBin = 100.0;
+    sp.frames.assign(3, std::vector<float>(4, 0.0f));
+    sp.frames[0][0] = 1.0f;
+
+    auto mk = [&]() {
+      spectra::BandSpec b{};
+      b.lowHz = 0.0f; b.highHz = 400.0f; b.mode = 2;   // Average over all 4 bins
+      b.thresholdDb = -100.0f;                          // silence reads 0, not negative
+      b.floorDb = -100.0f; b.ceilingDb = 0.0f; b.gainDb = 0.0f;
+      b.outputMin = 0.0f; b.outputMax = 1.0f;
+      b.falloffMode = 1; b.falloffTime = 1.0f; b.binarise = false;
+      return b;
+    };
+
+    // Frame 0 averages to 0.25 -> -12.04 dB -> 0.8796 of a [-100, 0] window.
+    const float expect0 = (20.0f * std::log10(0.25f) + 100.0f) / 100.0f;
+
+    // Instant: every frame reports its own level, no decay carried over.
+    {
+      const std::vector<float> v = spectra::bandValues(sp, mk(), 1.0);
+      check(v.size() == 3, "one output per frame");
+      checkNear(v[0], expect0, 1e-4f, "Instant: loud frame mapped through the window");
+      checkNear(v[1], 0.0f, 1e-6f, "Instant: the silent frame drops straight to the threshold");
+      checkNear(v[2], 0.0f, 1e-6f, "Instant: and stays there");
+    }
+
+    // Exponential: value = level + (prev - level) * decay, decay = exp(-(1/time)/falloff).
+    {
+      spectra::BandSpec b = mk();
+      b.falloffMode = 3; b.falloffTime = 1.0f;
+      const std::vector<float> v = spectra::bandValues(sp, b, 1.0);
+      const float decay = static_cast<float>(std::exp(-1.0));
+      checkNear(v[1], expect0 * decay, 1e-4f, "Exponential: frame 1 decays from the peak by exp(-1)");
+      checkNear(v[2], expect0 * decay * decay, 1e-4f, "Exponential: frame 2 decays again");
+      check(v[1] > v[2] && v[2] > 0.0f, "Exponential decay is gradual, not a cliff");
+    }
+
+    // Linear: a constant step per frame, floored at the current level.
+    {
+      spectra::BandSpec b = mk();
+      b.falloffMode = 2; b.falloffTime = 10.0f;   // step = (1/1)/10 = 0.1
+      const std::vector<float> v = spectra::bandValues(sp, b, 1.0);
+      checkNear(v[1], expect0 - 0.1f, 1e-4f, "Linear: frame 1 drops by exactly one step");
+      checkNear(v[2], expect0 - 0.2f, 1e-4f, "Linear: frame 2 drops by two steps");
+    }
+
+    // None (Integrate): accumulates and clamps into [0, 1].
+    {
+      spectra::BandSpec b = mk();
+      b.falloffMode = 4;
+      const std::vector<float> v = spectra::bandValues(sp, b, 1.0);
+      check(v[0] > 0.0f, "Integrate: accumulates the first frame");
+      check(v[1] >= v[0] && v[1] <= 1.0f, "Integrate: keeps rising and clamps at 1");
+      check(v[2] >= v[1] && v[2] <= 1.0f, "Integrate: still within range on the third frame");
+    }
+
+    // Output mapping is a lerp into [outputMin, outputMax].
+    {
+      spectra::BandSpec b = mk();
+      b.outputMin = 100.0f; b.outputMax = 200.0f;
+      const std::vector<float> v = spectra::bandValues(sp, b, 1.0);
+      checkNear(v[0], 100.0f + expect0 * 100.0f, 1e-3f, "output range remaps the envelope (lerp to 100..200)");
+      checkNear(v[1], 100.0f, 1e-3f, "a thresholded frame sits at outputMin");
+    }
+
+    // The binarise flag collapses any level to 0 or 1 before the envelope.
+    {
+      spectra::BandSpec b = mk();
+      b.binarise = true;
+      const std::vector<float> v = spectra::bandValues(sp, b, 1.0);
+      checkNear(v[0], 1.0f, 1e-6f, "binarise: the loud frame becomes exactly 1");
+    }
+
+    // Guards.
+    {
+      check(spectra::bandValues(sp, mk(), 0.0).empty(), "time == 0 returns empty (no frame rate)");
+      check(spectra::bandValues(sp, mk(), -1.0).empty(), "negative time returns empty");
+      spectra::Spectrogram none;
+      none.binCount = 4; none.frameCount = 0; none.hzPerBin = 100.0;
+      check(spectra::bandValues(none, mk(), 1.0).empty(), "frameCount 0 returns empty");
+    }
+  }
+
   std::printf("\n%s\n", failures == 0 ? "ALL RECOVERED MATHS VERIFIED" : "TRANSCRIPTION ERRORS PRESENT");
   return failures == 0 ? 0 : 1;
 }

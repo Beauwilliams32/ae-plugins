@@ -444,4 +444,110 @@ float rawBandLevel(const std::vector<float>& spectrum,
 }
 
 
+// ---------------------------------------------------------------------------
+// bandValues(const Spectrogram& spectrogram, const BandSpec& band, double time)
+//
+// __ZN7spectra10bandValuesE..., 105 instructions, recovered in full. This is the
+// top of the analysis chain: rawBandLevel() scores one frame, and this walks
+// every frame applying the falloff envelope and the output mapping. It is what
+// the "Falloff Time (s)", "Output Min" and "Output Max" parameters actually do.
+//
+// PROLOGUE (0x18d4..0x1964):
+//     ldr w1, [x0, #0x4]          ; spectrogram.frameCount
+//     fcmp d0, #0.0 / ccmp w1,#1  ; require time > 0 AND frameCount >= 1
+//     b.lt <return empty>
+//     bl  vector::resize          ; result.resize(frameCount)
+//     fmov d0, #1.0 / fdiv d0,d0,d8   ; 1.0 / time
+//     fcvt s9, d0                 ; s9 = (float)(1/time)   -> frames per second
+//     ldr  s0, [x19, #0x28]       ; band.falloffTime
+//     fmov s1, 0x38d1b717         ; 1e-4f  (guard against a zero falloff)
+//     fcsel s12, s1, s0, mi       ; falloff = max(falloffTime, 1e-4f)
+//     ldr  x21, [x20, #0x10]      ; spectrogram.frames.data()
+//     fneg s0, s9 / fdiv s0, s0, s12 / bl _expf
+//                                 ; s8 = expf(-(1/time) / falloff)  <- decay factor
+//     fdiv s12, s9, s12           ; s12 = (1/time) / falloff         <- linear step
+//
+//   Note the two different quantities built from the same ratio: an EXPONENTIAL
+//   factor for mode 3 and an additive STEP for mode 2. Using one for both would
+//   look plausible and be wrong.
+//
+// PER-FRAME LOOP (0x1988..0x19fc). Each frame is a std::vector<float>, so the
+//   stride is 24 bytes (0x18), not the element size:
+//     bl rawBandLevel(frame, spectrogram, band)   ; level for this frame
+//     fcmp s0,#0.0 / fcsel s1, s11, s10, gt       ; s1 = (level > 0) ? 1 : 0
+//     ldrb w24, [x19,#0x2c] / fcsel s0, s1, s0, ne; if (band.binarise) level = s1
+//
+//   Then the falloff mode decides the value. The mode numbers are confirmed by
+//   the effect's own popup string "Instant|Linear|Exponential|None (Integrate)",
+//   and each branch matches its name:
+//
+//     mode 1 Instant     -> value = level                        (0x19b4 -> store)
+//     mode 2 Linear      -> if (level >= prev) value = level
+//                           else value = max(prev - step, level)  (0x19c0..0x19d4)
+//     mode 3 Exponential -> if (level >= prev) value = level
+//                           else value = level + (prev - level) * decay
+//                                                                (0x1a00..0x1a10)
+//     mode 4 None/Integrate -> value = clamp(level*fps + prev, 0, 1)
+//                                                                (0x19e8..0x19f8)
+//     mode 0 (not in the popup) -> value = prev, i.e. hold           (falls to 0x196c)
+//
+//   Every rising edge is handled by the same "if (level >= prev) use level"
+//   test, so the envelope only ever shapes the DECAY; attack is always instant.
+//
+// OUTPUT MAPPING (0x196c..0x1978), once per frame, after the envelope:
+//     ldp  s0, s1, [x19, #0x1c]   ; outputMin, outputMax
+//     fsub s1, s1, s0             ; max - min
+//     fmadd s0, s13, s1, s0       ; value*(max-min) + min   <- a lerp
+//     str  s0, [x22], #0x4        ; result[i] = mapped
+//   So the 0..1 envelope is remapped into the band's output range; that range is
+//   what the effect then bakes as keyframes.
+// ---------------------------------------------------------------------------
+std::vector<float> bandValues(const Spectrogram& spectrogram, const BandSpec& band, double time) {
+  std::vector<float> out;
+  if (!(time > 0.0)) return out;
+  if (spectrogram.frameCount < 1) return out;
+
+  out.assign(static_cast<size_t>(spectrogram.frameCount), 0.0f);
+
+  const float fps = static_cast<float>(1.0 / time);
+  const float falloff = band.falloffTime < 1e-4f ? 1e-4f : band.falloffTime;
+  const float decay = std::exp(-fps / falloff);
+  const float step = fps / falloff;
+
+  float prev = 0.0f;
+  for (int i = 0; i < spectrogram.frameCount; ++i) {
+    float level = rawBandLevel(spectrogram.frames[static_cast<size_t>(i)], spectrogram, band);
+    if (band.binarise) level = level > 0.0f ? 1.0f : 0.0f;
+
+    float value;
+    switch (band.falloffMode) {
+      case 1:  // Instant
+        value = level;
+        break;
+      case 2:  // Linear
+        if (level >= prev) value = level;
+        else { const float floorv = prev - step; value = level < floorv ? floorv : level; }
+        break;
+      case 3:  // Exponential
+        if (level >= prev) value = level;
+        else value = level + (prev - level) * decay;
+        break;
+      case 4: {  // None (Integrate)
+        const float acc = level * fps + prev;
+        const float hi = acc > 1.0f ? 1.0f : acc;
+        value = acc < 0.0f ? 0.0f : hi;
+        break;
+      }
+      default:  // mode 0 (not offered in the popup): hold
+        value = prev;
+        break;
+    }
+    prev = value;
+
+    out[static_cast<size_t>(i)] = value * (band.outputMax - band.outputMin) + band.outputMin;
+  }
+  return out;
+}
+
+
 }  // namespace spectra
