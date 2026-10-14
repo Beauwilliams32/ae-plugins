@@ -16,15 +16,27 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
+import { namespaceOf } from "../tools/namespaces.mjs";
+
 const ROOT = path.join(import.meta.dirname, "..");
 const DOCS = ["README.md", "FEATURE-MAP.md", "CATALOG.md", "PARAMETERS.md", "CAPABILITIES.md"];
 
 const read = (p) => readFileSync(path.join(ROOT, p), "utf8");
 
+// Each recovered DIRECTORY with the C++ NAMESPACE it declares. They are not the same
+// name — `src/autoflickerfix/` declares `namespace aff` — so the README is checked
+// against the namespace (which is what it documents) while the differ is invoked with
+// the directory (which is what it takes). Assuming one for the other is the mistake
+// tools/namespaces.mjs was written to stop, and this test made it in both directions.
 function recoveredNamespaces() {
   return readdirSync(path.join(ROOT, "src"))
     .filter((d) => existsSync(path.join(ROOT, "src", d, `${d}.cpp`)))
-    .sort();
+    .sort()
+    .map((dir) => {
+      const ns = namespaceOf(ROOT, dir);
+      assert.ok(ns, `src/${dir}/ declares no namespace`);
+      return { dir, ns };
+    });
 }
 
 test("documentation does not hardcode a test count", () => {
@@ -99,7 +111,7 @@ test("the namespace list in the documentation matches src/", () => {
   const actual = recoveredNamespaces();
   const text = read("README.md");
 
-  for (const ns of actual) {
+  for (const { ns } of actual) {
     assert.match(text, new RegExp(`\`${ns}::\``),
       `README does not mention the recovered namespace ${ns}::`);
   }
@@ -110,7 +122,8 @@ test("the namespace list in the documentation matches src/", () => {
     const nums = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8 };
     if (nums[word] !== undefined) {
       assert.equal(nums[word], actual.length,
-        `README says "${m[0]}" but src/ holds ${actual.length} namespaces: ${actual.join(", ")}`);
+        `README says "${m[0]}" but src/ holds ${actual.length} namespaces: `
+        + actual.map((x) => x.ns).join(", "));
     }
   }
 });
@@ -120,10 +133,10 @@ test("the per-namespace recovered counts in the documentation match codegen-diff
   if (!existsSync(bundles)) { t.skip("fleet not installed"); return; }
 
   const text = read("README.md");
-  for (const ns of recoveredNamespaces()) {
+  for (const { dir, ns } of recoveredNamespaces()) {
     let out;
     try {
-      out = execFileSync("node", [path.join(ROOT, "tools", "codegen-diff.mjs"), ns],
+      out = execFileSync("node", [path.join(ROOT, "tools", "codegen-diff.mjs"), dir],
                          { cwd: ROOT, encoding: "utf8", stdio: "pipe" });
     } catch (e) {
       out = `${e.stdout ?? ""}`;

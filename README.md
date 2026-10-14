@@ -60,7 +60,7 @@ modifies, moves or copies them.
 
 Be clear-eyed about this:
 
-- **Most function bodies.** Seven namespaces are recovered (see below); the other
+- **Most function bodies.** Eight namespaces are recovered (see below); the other
   effects' DSP is still machine code. Names and signatures are free, behaviour needs
   per-function disassembly, and that is the bulk of the remaining work.
 - **`lutblend::parseCube`** (1924 instructions) and `echo::buildLadder` /
@@ -78,7 +78,7 @@ Be clear-eyed about this:
   is untested. See `plugins/*/README.md` for exactly what is and is not claimed.
 
 So this repository contains a **complete architectural specification** of the fleet,
-six recovered source namespaces, and two effects that build into loadable bundles —
+eight recovered source namespaces, and two effects that build into loadable bundles —
 **not** a finished or verified product.
 
 ## The fleet
@@ -97,7 +97,7 @@ Two findings already worth acting on:
 
 ## Recovered source
 
-Seven recovered namespaces, all transcribed from the disassembly with per-function commentary
+Eight recovered namespaces, all transcribed from the disassembly with per-function commentary
 citing the instructions that establish each behaviour:
 
 | Module | Contents | State |
@@ -107,17 +107,19 @@ citing the instructions that establish each behaviour:
 | `speedramp::` | `easeValue`, `easeIntegral`, `speedAt`, `mapTime`, `computeBlend`, plus `RampParams` and `FrameBlend` | **complete — all 5 functions, 261 instructions** |
 | `lutblend::` | `clampf`, `lerpf`, `luma709`, `CubeLUT::valid`, `sampleLUT`, `makeIdentity`, `applyLUTBlend`, plus the `CubeLUT` layout | **7 of 8** (`parseCube` pending — 1924 instructions, the largest function in the fleet) |
 | `echo::` | `clampf`, `blendPixel`, `compositeOver`, plus `ImageF` and `BlendMode` | **3 of 6** (`buildLadder`, `sampleBilinear`, `transformBilinear` unread) |
-| `colorpulse::` | `clampf`, `smoothScalar`, `luma709`, `smoothColor`, `saturationBoost`, plus the `RGB` layout | **5 of 10** — four are INSTRUCTION-IDENTICAL. The colour analysers (`averageColor`, `sampleColor`, `brightestRegionColor`, `dominantColor`) and `regionBounds` are unread |
+| `colorpulse::` | `clampf`, `smoothScalar`, `luma709`, `smoothColor`, `saturationBoost`, plus the `RGB` layout | **5 of 10, ALL FIVE INSTRUCTION-IDENTICAL**. The colour analysers (`averageColor`, `sampleColor`, `brightestRegionColor`, `dominantColor`) and `regionBounds` are unread |
+| `aff::` | The AutoFlickerFix DSP: `clampf`, `dbToGainClamp`, `computeGain`, `centerRegion`, `meanOf`, `medianOf`, `trimmedMean` (both overloads), `medianFilter`, `temporalTarget`, plus the `GainClamp` and `RegionBounds` layouts | **complete — all 10 functions, 719 instructions, 7 of them INSTRUCTION-IDENTICAL**. The host integration (`EffectMain`, `SampleWorldStat`, `DrawStatsBar`) is unread |
 | `spectra::` | FFT, Hann window, STFT, band analysis, falloff envelope | **recovered, shared by 4 effects** |
 
 Three fleet-wide duplications are recorded rather than silently deduplicated, because
 each was verified rather than assumed:
 
 * `clampf` is the fleet's most duplicated idiom: **15 of the 16 bundles** carry one, in
-  seven different namespaces, and the six that are recovered here are instruction for
-  instruction identical. `test/clampf.test.mjs` compares all five against each other,
+  eight different namespaces, and the seven that are recovered here are instruction for
+  instruction identical. `test/clampf.test.mjs` compares all of them against each other,
   including on INVERTED ranges, which is the only input where a `min(max(v,lo),hi)`
-  rewrite would diverge.
+  rewrite would diverge. The test discovers the copies from the tree, so a newly
+  recovered one is covered without editing it.
 * `typeriser::wordStyle` re-implements the five easing curves `typeriser::ease` already
   has, inline. Both were recovered independently and a test drives each against the
   other — including the one place they legitimately differ.
@@ -163,15 +165,53 @@ and all 16 constants, and the glitch namespace is 4/4 identical:
 
 ```
 $ node tools/codegen-diff.mjs glitch
-  MATCH   glitch::clampf        5 instructions, identical
+  absent  glitch::apply(IhEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf) (not implemented — 1157 instrs)
+  MATCH   glitch::clampf  5 instructions, identical
   MATCH   glitch::patternFrame  7 instructions, identical
-  MATCH   glitch::hashKey      34 instructions, identical
-  MATCH   glitch::clampi        5 instructions, identical
+  MATCH   glitch::hashKey  34 instructions, identical
+  absent  glitch::apply(ItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf) (not implemented — 1228 instrs)
+  MATCH   glitch::clampi  5 instructions, identical
+
+4 identical, 0 differing, 2 not implemented
 ```
+
+Two things about that output are worth reading rather than skimming. The comparison unit is
+the full MANGLED SYMBOL, not the function name, so `glitch::apply` appears twice — it has
+two instantiations, and both are reported as absent rather than one hiding the other. And
+the three differ defects listed below were each found by noticing that a function the
+bundle and this source clearly agreed on was being reported as differing.
 
 It found a real transcription error: `patternFrame` was emitting `csel ..., gt`
 where the binary has `hi`, which pins the original's control structure — a negated
 `<=`, not a `>` ternary.
+
+It also had **three defects of its own**, and finding them mattered more than finding
+anything in the recovered code, because each one made the tool report differences that
+were not there:
+
+* **Calls were compared against a raw address.** otool prints a call through the
+  lazy-binding stub as `bl 0x38b8 ; symbol stub for: ___exp10f` while clang prints
+  `bl ___exp10f`, so the two sides never matched at any call site. Every function that
+  calls something differed by construction.
+* **Three-operand branches were never resolved.** `tbz`/`tbnz`/`cbz`/`cbnz` carry a
+  register (and a bit index) before the target, and the target was captured with `(\S+)$`,
+  which cannot match `tbnz w10, #0x2, 0xc88`. Those branches stayed as label text on one
+  side and a numeric address on the other.
+* **A label resolved to the END of its basic block.** A label in clang's output sticks to
+  every instruction that follows it, and the first-index-wins rule was missing, so the
+  fresh side pointed at the last instruction of each block while the shipped side (indexed
+  by exact address) pointed at the first. Every branch into a block of more than one
+  instruction differed.
+
+Fixing them raised the measured instruction-identical counts for `spectra` (3 → 6),
+`colorpulse` (4 → 5) and `speedramp` (1 → 2) **without any transcription changing**, and
+turned the previously reported "`saturationBoost` differs only in basic-block order" into
+what it always was: a match. The floors in `test/codegen.test.mjs` were raised accordingly
+and the reason for each rise is written down there.
+
+A fourth gap was not a false positive but a false silence: keying on the bare function
+name collapsed OVERLOADS, so `aff::trimmedMean` was reported once while only one of its two
+overloads had ever been compared. The comparison unit is now the mangled symbol.
 
 The check is honest about its own reach. Larger functions differ in codegen
 legitimately (the originals inline `std::vector` growth and `luma709`; this source
