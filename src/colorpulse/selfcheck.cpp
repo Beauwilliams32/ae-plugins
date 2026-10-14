@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <vector>
 
 namespace {
 int failures = 0, passes = 0;
@@ -237,6 +238,93 @@ int main() {
         colorpulse::Region::BottomRightThreeQuarters, 400, 300);
     check(again.minX == br.minX && again.maxX == br.maxX,
           "repeating a call gives the identical rectangle");
+  }
+
+  std::printf("averageColor\n");
+  {
+    // The two guards are on the INPUTS and both return black, checked before the stack
+    // frame exists in the bundle, i.e. as early returns rather than a special case.
+    const colorpulse::RGB nulled = colorpulse::averageColor(nullptr, 8);
+    check(nulled.r == 0.0f && nulled.g == 0.0f && nulled.b == 0.0f,
+          "a null pixel run returns black");
+    const colorpulse::RGB none = colorpulse::averageColor(nullptr, 0);
+    check(none.g == 0.0f, "a null run with a zero count returns black too");
+
+    const colorpulse::RGB one[1] = {{0.25f, 0.5f, 0.75f}};
+    const colorpulse::RGB single = colorpulse::averageColor(one, 1);
+    near(single.r, 0.25f, 1e-7f, "a single colour averages to itself (r)");
+    near(single.g, 0.5f, 1e-7f, "and to itself (g)");
+    near(single.b, 0.75f, 1e-7f, "and to itself (b)");
+
+    const colorpulse::RGB three[3] = {{1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}};
+    const colorpulse::RGB avg = colorpulse::averageColor(three, 3);
+    near(avg.r, 1.0f / 3.0f, 1e-7f, "the mean of a 3-colour run (r)");
+    near(avg.g, 1.0f / 3.0f, 1e-7f, "the mean of a 3-colour run (g)");
+    near(avg.b, 1.0f / 3.0f, 1e-7f, "the mean of a 3-colour run (b)");
+
+    // It is an UNWEIGHTED mean: a run of n identical colours is that colour regardless of
+    // n, which distinguishes averaging from summing (which would scale by n).
+    std::vector<colorpulse::RGB> many(1000, colorpulse::RGB{0.4f, 0.4f, 0.4f});
+    const colorpulse::RGB flat = colorpulse::averageColor(many.data(), many.size());
+    near(flat.r, 0.4f, 1e-6f, "1000 identical colours average to that colour, not 400");
+
+    // The accumulation is in DOUBLE. 2^24 is not representable as a float plus one, so a
+    // float accumulator loses the +1 entirely; the double one keeps it.
+    {
+      std::vector<colorpulse::RGB> big(1024, colorpulse::RGB{16777216.0f, 0.0f, 0.0f});
+      big.push_back(colorpulse::RGB{1.0f, 0.0f, 0.0f});
+      double exact = 0.0;
+      for (const colorpulse::RGB& c : big) exact += static_cast<double>(c.r);
+      const double want = exact * (1.0 / static_cast<double>(big.size()));
+      const colorpulse::RGB got = colorpulse::averageColor(big.data(), big.size());
+      near(got.r, static_cast<float>(want), 0.5f,
+           "a large run keeps its low bits: both the sum and the final multiply are double");
+    }
+
+    // THE DIVISION IS A RECIPROCAL AND A MULTIPLY. Both are asserted: that the result
+    // MATCHES `sum * (1.0/n)`, and that this is observably different from `sum / n` for
+    // at least one count -- otherwise the distinction would be unfalsifiable and the
+    // first assertion would pass against either spelling.
+    {
+      // A run whose double sum is exactly representable, so the only rounding under test
+      // is the final one.
+      std::vector<colorpulse::RGB> run(7, colorpulse::RGB{1.0f, 3.0f, 7.0f});
+      const double sumR = 7.0 * 1.0, sumG = 7.0 * 3.0, sumB = 7.0 * 7.0;
+      const double n = 7.0;
+      const colorpulse::RGB got = colorpulse::averageColor(run.data(), run.size());
+      check(got.r == static_cast<float>(sumR * (1.0 / n)),
+            "the mean is sum * (1/n), not sum / n (r)");
+      check(got.g == static_cast<float>(sumG * (1.0 / n)),
+            "the mean is sum * (1/n), not sum / n (g)");
+      check(got.b == static_cast<float>(sumB * (1.0 / n)),
+            "the mean is sum * (1/n), not sum / n (b)");
+
+      // How FAR the two spellings diverge, measured rather than asserted.
+      //
+      // The first version of this check required a count where the two narrow to
+      // DIFFERENT floats, and it failed: no such count exists in the range scanned. That
+      // is the honest result. The reciprocal error is around 2^-52 relative — one ulp of
+      // DOUBLE — while narrowing to float rounds at 2^-24, so the difference is almost
+      // always annihilated on the way out. The header used to claim the returned value
+      // "differs ... for many counts", which is wrong, and this measurement is what
+      // corrected it.
+      //
+      // So the pin is on the SPELLING, not on an observable output difference: the
+      // bundle's `fdiv d3, d4, d3` only exists if the source says `1.0 / count`, and the
+      // three assertions above pin the function to that form.
+      int doubleDiffer = 0, floatDiffer = 0;
+      for (int k = 2; k < 5000; ++k) {
+        const double d = static_cast<double>(k);
+        const double sum = static_cast<double>(k) + 1.0;
+        if (sum * (1.0 / d) != sum / d) ++doubleDiffer;
+        if (static_cast<float>(sum * (1.0 / d)) != static_cast<float>(sum / d)) ++floatDiffer;
+      }
+      check(doubleDiffer > 0,
+            "sum*(1/n) and sum/n genuinely differ as DOUBLES, so the source choice is real");
+      check(floatDiffer == 0,
+            "but across 2..4999 counts they never narrow to different floats — the choice "
+            "is unobservable in the returned RGB, and the pin above is on the spelling");
+    }
   }
 
   std::printf("\n%s\n", failures == 0

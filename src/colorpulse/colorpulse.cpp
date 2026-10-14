@@ -206,4 +206,53 @@ Rect regionBounds(Region region, int width, int height) {
   return Rect{minX, minY, maxX, maxY};
 }
 
+// ---------------------------------------------------------------------------
+// averageColor(const RGB*, size_t)
+//
+// __ZN10colorpulse12averageColorEPKNS_3RGBEm, 201 instructions, recovered in full.
+//
+//     movi.2d v2/v1/v0, #0        ; r, g, b accumulators cleared
+//     cbz   x0, 0xbdc             ; pixels == nullptr -> return {0,0,0}
+//     cbz   x1, 0xbdc             ; count  == 0       -> return {0,0,0}
+//     stp   d15, d14, [sp, #-0x40]!   ; and only THEN is a frame allocated
+//
+//     cmp x1, #0x3 / b.hi         ; <= 3 takes the scalar path
+//     cmp x1, #0x10 / b.hs        ; >= 16 takes the unrolled ld3.4s path
+//
+//     ld3.4s { v11, v12, v13 }, [x11]   ; FOUR RGB records in one instruction
+//     fcvtl2 v16.2d, v11.4s             ; and every lane widened to double
+//
+// The tail is the part worth reading closely:
+//
+//     ucvtf d3, x1 / fmov d4, #1.0 / fdiv d3, d4, d3   ; inv = 1.0 / count, ONCE
+//     fmul  d0, d3, d0 / fcvt s0, d0                   ; r * inv
+//     fmul  d1, d3, d1 / fcvt s1, d1                   ; g * inv
+//     fmul  d2, d3, d2 / fcvt s2, d2                   ; b * inv
+//
+// A reciprocal computed once and multiplied three times. `sum / count` would be three
+// `fdiv`s and would round differently, so the source has to say `1.0 / count`
+// explicitly — clang does not make that substitution without fast-math. Reproduced as
+// written rather than tidied into a division.
+// ---------------------------------------------------------------------------
+RGB averageColor(const RGB* pixels, size_t count) {
+  RGB out{0.0f, 0.0f, 0.0f};
+  if (pixels == nullptr) return out;
+  if (count == 0) return out;
+
+  double r = 0.0;
+  double g = 0.0;
+  double b = 0.0;
+  for (size_t i = 0; i < count; ++i) {
+    r += static_cast<double>(pixels[i].r);
+    g += static_cast<double>(pixels[i].g);
+    b += static_cast<double>(pixels[i].b);
+  }
+
+  const double inv = 1.0 / static_cast<double>(count);
+  out.r = static_cast<float>(r * inv);
+  out.g = static_cast<float>(g * inv);
+  out.b = static_cast<float>(b * inv);
+  return out;
+}
+
 }  // namespace colorpulse
