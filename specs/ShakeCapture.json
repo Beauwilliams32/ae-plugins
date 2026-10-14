@@ -1,7 +1,7 @@
 {
   "plugin": "ShakeCapture",
   "bundle": "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/ShakeCapture.plugin",
-  "recoveredAt": "2026-10-14T06:32:55.767Z",
+  "binaryModified": "2026-09-28T18:30:33.841Z",
   "binary": {
     "bytes": 137280,
     "sha256": "c404ccb310ddf44d83efb8692cef3d2c16a22b6d3dcc5f70d73e5cc341905857",

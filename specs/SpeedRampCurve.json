@@ -1,7 +1,7 @@
 {
   "plugin": "SpeedRampCurve",
   "bundle": "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/SpeedRampCurve.plugin",
-  "recoveredAt": "2026-10-14T06:32:55.814Z",
+  "binaryModified": "2026-09-28T18:30:33.856Z",
   "binary": {
     "bytes": 101008,
     "sha256": "c8f45660dbc5ce4ffd02784778578cebffd0124fd54342f61d02b40e556a79d4",

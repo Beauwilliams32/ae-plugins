@@ -1,7 +1,7 @@
 {
   "plugin": "PathScribe",
   "bundle": "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/PathScribe.plugin",
-  "recoveredAt": "2026-10-14T06:32:55.745Z",
+  "binaryModified": "2026-09-28T18:30:33.835Z",
   "binary": {
     "bytes": 156144,
     "sha256": "362b553fd200f87cec471bf776d5e4e52e792a9c257f7e8e3b6985d8dbd67bde",

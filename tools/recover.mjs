@@ -19,7 +19,7 @@
 //   node tools/recover.mjs --out /tmp/specs    # write elsewhere
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 
@@ -196,7 +196,10 @@ function recoverOne(name, dir, opts) {
   return {
     plugin: name,
     bundle,
-    recoveredAt: new Date().toISOString(),
+    // Sourced from the bundle, not from the clock: a recovery tool whose output
+    // changes every run makes its own diffs meaningless, and the binary's mtime
+    // is the meaningful date anyway (when this artefact was built/installed).
+    binaryModified: statSync(binary).mtime.toISOString(),
     binary: {
       bytes: bytes.length,
       sha256: createHash("sha256").update(bytes).digest("hex"),

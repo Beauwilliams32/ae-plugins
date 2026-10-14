@@ -1,7 +1,7 @@
 {
   "plugin": "ChromaKeyAssist",
   "bundle": "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/ChromaKeyAssist.plugin",
-  "recoveredAt": "2026-10-14T06:32:55.541Z",
+  "binaryModified": "2026-09-28T18:30:33.783Z",
   "binary": {
     "bytes": 137872,
     "sha256": "38cf581cbb0c0d52e8452b704a348e21b37bcf23e60e297e3707f2617e76585b",

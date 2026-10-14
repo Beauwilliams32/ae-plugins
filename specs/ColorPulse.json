@@ -1,7 +1,7 @@
 {
   "plugin": "ColorPulse",
   "bundle": "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/ColorPulse.plugin",
-  "recoveredAt": "2026-10-14T06:32:55.569Z",
+  "binaryModified": "2026-09-28T18:30:33.789Z",
   "binary": {
     "bytes": 137168,
     "sha256": "fc32fd4b1228038d7aec025872c9822a61ed218dd86676dab68a37691c2dc6e1",

@@ -1,7 +1,7 @@
 {
   "plugin": "AutoFlickerFix",
   "bundle": "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/AutoFlickerFix.plugin",
-  "recoveredAt": "2026-10-14T06:32:55.462Z",
+  "binaryModified": "2026-09-28T18:30:33.762Z",
   "binary": {
     "bytes": 135904,
     "sha256": "cdd175f03b7fcf26fca4fe20d992e74088ae5a23f9b3bbe699630eb9a535c023",

@@ -1,7 +1,7 @@
 {
   "plugin": "BeatSnap",
   "bundle": "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/BeatSnap.plugin",
-  "recoveredAt": "2026-10-14T06:32:55.515Z",
+  "binaryModified": "2026-09-28T18:30:33.776Z",
   "binary": {
     "bytes": 155120,
     "sha256": "6da4c7296d48522a313149740f2152b495af3cc1fdf1f46233fa1963774ee83f",

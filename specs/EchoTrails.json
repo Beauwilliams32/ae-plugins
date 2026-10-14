@@ -1,7 +1,7 @@
 {
   "plugin": "EchoTrails",
   "bundle": "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/EchoTrails.plugin",
-  "recoveredAt": "2026-10-14T06:32:55.596Z",
+  "binaryModified": "2026-09-28T18:30:33.796Z",
   "binary": {
     "bytes": 101872,
     "sha256": "d8e34a500f228737ee10f5e56b28a908d0b32e2cf90ac471a500bd6312f24f5e",

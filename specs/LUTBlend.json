@@ -1,7 +1,7 @@
 {
   "plugin": "LUTBlend",
   "bundle": "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/LUTBlend.plugin",
-  "recoveredAt": "2026-10-14T06:32:55.650Z",
+  "binaryModified": "2026-09-28T18:30:33.809Z",
   "binary": {
     "bytes": 256432,
     "sha256": "eb9157729480bc379d8ea1aa0cea9dac48d29d1a9a71fe03490c9eba997ce10a",
