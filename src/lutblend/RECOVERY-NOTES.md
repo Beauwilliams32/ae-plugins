@@ -283,3 +283,81 @@ on; the handler bodies are not.
 * `makeIdentity` with `size == 1` divides by the `size - 1` normaliser and yields
   NaN. Preserved deliberately: `CubeLUT::valid()` rejects `size < 2` and
   `parseCube` rejects `[0, 1]`, so no shipped path reaches it.
+
+## `EffectMain` and the plugin layer — first pass
+
+Not part of `lutblend::`, but recovered from the same bundle and needed by anything
+that wants to rebuild the plugin.
+
+`EffectMain` is exported as `_EffectMain` at 0x4408 and is ~658 instructions. It
+contains the render logic INLINE (it calls `lutblend::applyLUTBlend` twice,
+`lutblend::clampf` six times and `lutblend::luma709` four times directly), so it is
+not merely a dispatcher.
+
+### Parameter registration — located
+
+`PF_ADD_PARAM` is a macro over a suite function pointer, so it shows up as `blr`
+rather than `bl`. The pattern repeats once per parameter:
+
+```
+add  x22, sp, #0x50          ; &def
+... build the PF_ParamDef at sp+0x50 ...
+ldr  x8, [x21, #0x10]        ; the add-param function pointer
+ldr  x0, [x21, #0xb8]        ; in_data
+add  x2, sp, #0x50           ; &def
+mov  w1, #-0x1               ; append after the last param
+blr  x8
+cbnz w0, <error handler>     ; a non-zero result aborts
+```
+
+Each block re-zeroes the 0x48-byte `PF_ParamDef` before filling it, which is what
+makes the individual blocks readable.
+
+### PF_ParamDef offsets — verified against the SDK, not guessed
+
+The stores line up exactly with the struct at `AE_Effect.h:2407`, which is a useful
+independent check that the reading is right:
+
+| Offset | Field |
+|---|---|
+| 0x00 | `uu.id` |
+| 0x04 | `ui_flags` |
+| 0x08 / 0x0a | `ui_width` / `ui_height` |
+| 0x0c | `param_type` |
+| 0x10 | `PF_DEF_NAME[PF_MAX_EFFECT_PARAM_NAME_LEN + 1]` = 32 bytes |
+| 0x30 | `flags` |
+| 0x34 | `unused` |
+| 0x38 | `PF_ParamDefUnion u` |
+
+The first block stores `param_type = 7` and the name as the 4 bytes `"LUT "` at
+0x10 followed by `'A'` at 0x14 — so the name is `"LUT A"` and `7` is
+`PF_Param_POPUP`, which matches the plugin's own description ("they appear in the
+LUT A / LUT B menus"). That correspondence is the check that the offset table is
+right; a single wrong offset would have made the name garbage.
+
+Recovering the remaining parameters is mechanical now — read each block's
+`uu.id`, `param_type`, name bytes and union fields — but it has NOT been done, so
+the full parameter table is still unrecovered.
+
+### Other recovered structure
+
+* **There is a LUT cache.** The bundle instantiates
+  `std::map<std::string, std::shared_ptr<const lutblend::CubeLUT>>`, so parsed LUTs
+  are shared and reference-counted rather than re-read per frame. `parseCube` being
+  called from a cached path is consistent with the bounds checking it does.
+* **`__ZL11identityLUTv`** — a file-static function returning an identity LUT, used
+  as a fallback when a LUT is missing or fails to parse.
+* **The plugin has its own LUT layer**, separate from `lutblend::`:
+  `LB_ScanLutFolder`, `LB_LutFileList`, `LB_LutFolderPath`, `LB_BuildPopupMenu`,
+  `LB_LutForPopupValue(int)`. The recovered parameter strings name the folder as
+  `/Documents/Williams Media LUTs`. None of these are recovered.
+* Reading files goes through `std::ifstream`, so `parseCube` receives file contents
+  as a string rather than opening the file itself.
+
+### Parameter names recovered from the spec (not from the blocks)
+
+`specs/LUTBlend.json` has 11 raw parameter strings, of which the ordered ones are
+`/Documents/Williams Media LUTs`, `Blend (%)`, `Strength (%)`, `Preserve Luma`, plus
+a popup AFTER `Blend (%)` with options `Slider`, `Global Luma`, `Per-pixel Luma`.
+So the blend mode is a three-way choice and the "blend" value comes from either the
+slider or the image. Types, IDs, defaults and order are NOT yet recovered.
