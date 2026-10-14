@@ -42,16 +42,26 @@ function findSdk() {
   return null;
 }
 
-function findShippedRsrc() {
+function findShippedRsrc(plugin) {
   for (const d of ["/Applications/Adobe After Effects 2026/Plug-ins/Williams Media",
                    "/Applications/Adobe After Effects 2025/Plug-ins/Williams Media"]) {
-    const p = path.join(d, "LUTBlend.plugin", "Contents", "Resources", "LUTBlend.rsrc");
+    const p = path.join(d, `${plugin}.plugin`, "Contents", "Resources", `${plugin}.rsrc`);
     if (existsSync(p)) return p;
   }
   return null;
 }
 
-test("tools/build-plugin.sh assembles a structurally valid LUTBlend bundle", (t) => {
+// Both built effects, so a second one joining the fleet is covered rather than
+// needing a new test copied per plugin.
+const BUILT = [
+  { plugin: "LUTBlend", rsrc: "LUTBlend.rsrc",
+    dsp: ["applyLUTBlend", "sampleLUT", "makeIdentity", "luma709"] },
+  { plugin: "GlitchKit", rsrc: "GlitchKit.rsrc",
+    dsp: ["hashKey", "patternFrame", "clampi", "clampf"] },
+];
+
+for (const { plugin, dsp } of BUILT) {
+test(`tools/build-plugin.sh assembles a structurally valid ${plugin} bundle`, (t) => {
   const sdk = findSdk();
   if (!sdk) {
     t.skip("AE SDK not found — set AE_SDK_DIR to <SDK>/Examples to run the build");
@@ -59,16 +69,16 @@ test("tools/build-plugin.sh assembles a structurally valid LUTBlend bundle", (t)
   }
 
   try {
-    execFileSync("bash", [path.join(ROOT, "tools", "build-plugin.sh"), "LUTBlend"], {
+    execFileSync("bash", [path.join(ROOT, "tools", "build-plugin.sh"), plugin], {
       cwd: ROOT, stdio: "pipe", env: { ...process.env, AE_SDK_DIR: sdk },
     });
   } catch (e) {
     assert.fail(`build failed:\n${e.stdout ?? ""}${e.stderr ?? ""}`);
   }
 
-  const bundle = path.join(ROOT, "build", "LUTBlend.plugin");
-  const bin = path.join(bundle, "Contents", "MacOS", "LUTBlend");
-  const rsrc = path.join(bundle, "Contents", "Resources", "LUTBlend.rsrc");
+  const bundle = path.join(ROOT, "build", `${plugin}.plugin`);
+  const bin = path.join(bundle, "Contents", "MacOS", plugin);
+  const rsrc = path.join(bundle, "Contents", "Resources", `${plugin}.rsrc`);
 
   // --- the bundle has the parts a host looks for ---------------------------
   for (const p of [bin, rsrc,
@@ -91,7 +101,7 @@ test("tools/build-plugin.sh assembles a structurally valid LUTBlend bundle", (t)
   assert.equal(archs, "arm64", `unexpected architectures: ${archs}`);
 
   // --- the PiPL must be the RECOVERED one, not a fresh invention -----------
-  const shipped = findShippedRsrc();
+  const shipped = findShippedRsrc(plugin);
   if (shipped) {
     const built = readFileSync(rsrc);
     const real = readFileSync(shipped);
@@ -105,13 +115,14 @@ test("tools/build-plugin.sh assembles a structurally valid LUTBlend bundle", (t)
   // engine's own symbols survive into the linked binary, so that class of silent
   // object-file collision cannot come back unnoticed.
   const all = execFileSync("nm", [bin], { encoding: "utf8" });
-  for (const fn of ["applyLUTBlend", "sampleLUT", "makeIdentity", "luma709"]) {
-    assert.match(all, new RegExp(fn), `recovered lutblend::${fn} is not in the bundle`);
+  for (const fn of dsp) {
+    assert.match(all, new RegExp(fn), `recovered ${fn} is not in the ${plugin} bundle`);
   }
 
   // --- and the bundle is not trivially small -------------------------------
   assert.ok(statSync(bin).size > 4096, "the linked binary is suspiciously small");
 });
+}
 
 test("the plugin's declared capability matches the recovered words", (t) => {
   // Whatever GLOBAL_SETUP writes into out_flags/out_flags2 is what AE copies into

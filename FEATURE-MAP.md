@@ -73,12 +73,13 @@ is merely identified.
 | SpectraKeys match-name inconsistency (`WMH SpectraKeys` vs the fleet's `WM_<Name>`) | `packaging/README.md` | **Identified only** — a deliberate rename changes AE's plugin identity, so it is left as found rather than silently "fixed" | none |
 | **LUTBlend parameter table** (6 params: types, IDs, names, bounds, Drive choices) | `plugins/LUTBlend/LUTBlendParams.h` | **Recovered** from `EffectMain`'s `PF_Cmd_PARAMS_SETUP` blocks | `test/build.test.mjs` |
 | **`EffectMain` + param registration + render callbacks** (LUTBlend) | `plugins/LUTBlend/LUTBlend.cpp` | **NEW CODE, not recovered** — the original body is lost. Reproduces the recovered parameter contract and calls the recovered DSP | `test/build.test.mjs` |
-| **A buildable `.plugin` bundle** (LUTBlend, arm64) | `tools/build-plugin.sh` → `build/LUTBlend.plugin` | **Assembled + structurally verified** — exports `EffectMain`, PiPL payload byte-identical to the shipped bundle, DSP symbols present in the link. **NOT loaded by AE; host acceptance untested** | `test/build.test.mjs` |
+| **A buildable `.plugin` bundle** — LUTBlend AND GlitchKit, arm64 | `tools/build-plugin.sh` → `build/LUTBlend.plugin` | **Assembled + structurally verified** — exports `EffectMain`, PiPL payload byte-identical to the shipped bundle, DSP symbols present in the link. **NOT loaded by AE; host acceptance untested** | `test/build.test.mjs` |
 | **Capability words** — `eGLO` = `DEEP_COLOR_AWARE`, `eGL2` = `SUPPORTS_THREADED_RENDERING` | `plugins/LUTBlend/LUTBlendParams.h` | **Recovered + enforced** — decoded against the SDK, assigned verbatim, and asserted from source so they cannot drift. The plugin had invented three flags and missed one | `test/build.test.mjs` (3 negative controls) |
 | 16-bit render path (`BlendPixel16`, depth dispatch on `PF_WORLD_IS_DEEP`) | `plugins/LUTBlend/LUTBlend.cpp` | **NEW CODE** — required by the recovered `DEEP_COLOR_AWARE`, and mirroring the shipped plugin's own halfword-reading path | `test/build.test.mjs` |
 | **LUT discovery + `.cube` loading** — folder scan, popup menus, parsed-LUT cache | `plugins/LUTBlend/LutLibrary.cpp` | **NEW CODE** implementing the recovered GRAMMAR (7 directives, arities, `[2,256]` bound, finite-only numerics, 12 of 13 error strings). The `LB_*` discovery layer is unrecovered; `parseCube` remains only partly read | `test/lutlib.test.mjs` (negative-controlled) |
 | "`<keyword>` is not an integer" (13th recovered message) | `src/lutblend/RECOVERY-NOTES.md` | **Identified only** — the branch reaching it is not located, so the loader deliberately does not emit it rather than invent a trigger | none |
-| `EffectMain` for the other 15 effects | — | **Not started** | none |
+| **GlitchKit `EffectMain` + five glitch modes** | `plugins/GlitchKit/GlitchKit.cpp` | **NEW CODE** driving the RECOVERED `hashKey`/`patternFrame`, so the patterns come from the shipped plugin's own generator | `test/build.test.mjs`, `test/codegen.test.mjs` |
+| `EffectMain` for the other 14 effects | — | **Not started** | none |
 
 ## Gate
 

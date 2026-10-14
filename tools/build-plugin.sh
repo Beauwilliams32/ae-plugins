@@ -51,6 +51,7 @@ PIPL_R="$ROOT/packaging/${PLUGIN}PiPL.r"
 # guessed, because guessing wrong would silently link the wrong engine.
 case "$PLUGIN" in
   LUTBlend)   NS=lutblend ;;
+  GlitchKit)  NS=glitch ;;
   SpectraKeys|BeatSnap|BeatGridRuler|PathScribe) NS=spectra ;;
   TypeRiser)  NS=typeriser ;;
   *) echo "error: no recovered DSP namespace mapped for $PLUGIN" >&2; exit 1 ;;
