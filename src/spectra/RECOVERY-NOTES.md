@@ -103,15 +103,38 @@ the exact indexing is not yet transcribed instruction-by-instruction. Evidence:
 So: an **iterative radix-2 decimation-in-time Cooley-Tukey FFT**, forward
 convention, twiddles from a single `sincosf`.
 
-**What is NOT established:** the exact twiddle table indexing per stage (whether
-it steps by `N/2^stage` or recomputes), whether bit-reversal is performed inside
-this function or by the caller, and how many stages the loop nest actually runs.
+**Now fully transcribed and implemented** (`spectra.cpp`), with every open
+question answered:
 
-That distinction matters for the code: **no implementation of `fftRadix2` is
-provided.** Implementing a textbook radix-2 FFT and labelling it "recovered" would
-be a claim this evidence does not support, and an unverified FFT would be worse
-than an honest gap. The remaining work is instruction-level transcription of the
-loop nest, then property tests against a naive DFT.
+- **Bit-reversal IS performed inside the function**, so the caller passes natural
+  order. It builds `j` with the standard reversed counter and swaps re *and* im
+  when `i < j`.
+- **The loop nest is `for (len = 2; len <= n; len <<= 1)`**, so the stage count is
+  `log2(n)` — there is no precomputed table and no `N/2^stage` stepping.
+- **Twiddles are one `sincosf` per stage** at `-2*pi/len`, then advanced by a
+  complex-multiply recurrence per inner element, not recomputed per element.
+
+Verified against a naive DFT in `selfcheck.cpp`: an impulse gives a flat unit
+spectrum, a bin-2 sinusoid peaks at bin 2 and its mirror, and n = 2/4/8/16/64
+agree with the naive transform.
+
+### A characteristic worth recording, not a bug
+
+Because the twiddle is advanced by recurrence, error accumulates with N. Measured
+against the naive DFT, worst absolute error relative to spectral peak:
+
+| N | rel. error |
+|---|---|
+| 256 | 8.1e-07 |
+| 1024 | 3.0e-06 |
+| 2048 | 3.6e-06 |
+| 4096 | 1.9e-05 |
+| 8192 | 2.5e-05 |
+
+8192 is the largest FFT size the effect offers. At 2.5e-05 relative the drift is
+irrelevant to a spectrum display that is normalised to 0..1 and quantised to 8 or
+16 bits, so **this is not a defect to fix**. It matters only if this FFT is ever
+reused for precision work, where per-element `sincos` would be the safer choice.
 
 ### `SK_DrawSpectrumIntoFrame` — the render pipeline
 

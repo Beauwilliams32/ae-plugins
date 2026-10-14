@@ -11,6 +11,7 @@
 
 #include "spectra.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace spectra {
@@ -182,6 +183,132 @@ int Spectrogram::hzToBin(float hz) const {
   if (lastBin < bin) bin = lastBin;
   if (bin < 0) bin = 0;
   return bin;
+}
+
+// ---------------------------------------------------------------------------
+// fftRadix2(std::vector<float>& re, std::vector<float>& im)
+//
+// __ZN7spectra9fftRadix2E..., 100 instructions, recovered in full. This is the
+// most valuable single recovery in the fleet: tools/dsp-duplication.mjs proves
+// the identical code is vendored into PathScribe and BeatSnap too, so one
+// correct transcription covers three effects.
+//
+// Structure, stage by stage, with the instructions that establish each part.
+//
+// 1. GUARD (0x9cc..0xa14). Returns without touching anything unless all three
+//    hold, and it compares BYTE LENGTHS for the size equality:
+//        n = (re.end - re.data) / 4        asr x20, x8, #2
+//        n >= 2                            cmp x20, #0x2 / b.lo <ret>
+//        (im.end - im.data) == (re.end - re.data)   cmp x9, x8 / b.ne <ret>
+//        isPowerOfTwo(n)                   subs w9,w8,#1 / and w8,w8,w9
+//                                          ccmp / b.eq <proceed>
+//
+// 2. BIT-REVERSAL PERMUTATION (0xa18..0xa6c), so the caller does NOT pre-shuffle
+//    and must pass natural order. j is built by the standard reversed counter:
+//        mov x8,#0 (j=0) ; mov w9,#1 (i=1)
+//      <0xa30> bit = n >> 1                    mov x10,x20 ; lsr x10,x10,#1
+//              test j & bit                    tst  x8, x10
+//              j ^= bit                        eor  x8, x8, x10
+//              loop while the bit WAS set      b.ne <back to lsr>
+//              j ^= bit                        (falls through on the last shift)
+//        if (i >= j) skip the swap              cmp x9,x8 / b.hs
+//      The swap moves BOTH arrays:
+//        ldr s0,[x19,x9,lsl#2] / ldr s1,[x19,x8,lsl#2] / str s1.. / str s0..   (re)
+//        ldr s0,[x21,x9,lsl#2] / ldr s1,[x21,x8,lsl#2] / str s1.. / str s0..   (im)
+//
+// 3. STAGES (0xa70..0xa8c): len starts at 2 and doubles while len <= n.
+//        mov w22,#0x2 ; ... ; lsl x22,x22,#1 ; cmp x22,x20 ; b.hi <ret>
+//    The twiddle base angle is loaded ONCE per stage as a single float:
+//        mov w8,#0xfdb / movk w8,#0xc0c9,lsl#16
+//      = 0xc0c90fdb = float(-2*pi). Negative, i.e. the FORWARD transform
+//      convention, so no conjugation is applied anywhere.
+//
+// 4. PER-STAGE TWIDDLES (0xa90..0xaa8): one combined call, not sin and cos
+//    separately:
+//        ucvtf s0, x22        ; (float)len
+//        fdiv  s0, s8, s0     ; -2*pi / len
+//        bl    ___sincosf_stret   ; s0 = sin, s1 = cos
+//        fneg  s2, s0         ; s2 = -sin, kept for the recurrence below
+//        lsr   x9, x22, #1    ; half = len / 2
+//        lsl   x10, x22, #2   ; stride = len * 4 bytes
+//
+// 5. BUTTERFLY (0xacc..0xb40), outer i += len, inner j in [0, half):
+//        ldr s5, [x13]             ; a_re = re[i+j]
+//        ldr s6, [x13, x9, lsl#2]  ; b_re = re[i+j+half]
+//        ldr s7, [x14, x9, lsl#2]  ; b_im = im[i+j+half]
+//        ldr s16,[x14]             ; a_im = im[i+j]
+//        fnmul s17, s3, s7         ; t_re = -(w_im * b_im)
+//        fmadd s17, s6, s4, s17    ;      + w_re * b_re
+//        fmul  s7,  s4, s7         ; t_im = w_re * b_im
+//        fmadd s6,  s6, s3, s7     ;      + w_im * b_re
+//        fadd  -> re[i+j], im[i+j]           (a + t)
+//        fsub  -> re[i+j+half], im[i+j+half] (a - t)
+//
+// 6. TWIDDLE RECURRENCE (0xb24..0xb30). The next twiddle is the current one
+//    rotated by the base angle — a complex multiply by (cos, sin) — NOT a
+//    recomputed sincos per element. Starting from (w_re, w_im) = (1, 0):
+//        fmul   s5, s3, s2         ; w_im * (-sin)
+//        fmul   s3, s1, s3         ; cos * w_im
+//        fmadd  s3, s4, s0, s3     ; new_w_im = w_re*sin + w_im*cos
+//        fmadd  s4, s4, s1, s5     ; new_w_re = w_re*cos - w_im*sin
+//
+//    Note two things a reimplementation commonly gets wrong: the recurrence
+//    accumulates rounding error where per-element sincos would not, and the
+//    -sin term (s2) is negated once per stage rather than per element.
+//
+// Verified in selfcheck.cpp against a naive DFT, which is the only check that
+// can catch a sign or indexing error in the transform rather than just in the
+// arithmetic. The test also asserts the guard rejects non-power-of-two input.
+// ---------------------------------------------------------------------------
+void fftRadix2(std::vector<float>& re, std::vector<float>& im) {
+  const size_t n = re.size();
+  if (n < 2) return;
+  if (im.size() != re.size()) return;
+  if (!isPowerOfTwo(static_cast<int>(n))) return;
+
+  // Bit-reversal permutation (in-body, not the caller's job).
+  for (size_t i = 1, j = 0; i < n; ++i) {
+    size_t bit = n >> 1;
+    for (; (j & bit) != 0; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      std::swap(re[i], re[j]);
+      std::swap(im[i], im[j]);
+    }
+  }
+
+  const float twoPi = 6.28318530717958647692f;  // 0x40c90fdb
+
+  for (size_t len = 2; len <= n; len <<= 1) {
+    const float angle = -twoPi / static_cast<float>(len);  // forward convention
+    const float sinA = std::sin(angle);
+    const float cosA = std::cos(angle);
+    const size_t half = len >> 1;
+
+    for (size_t i = 0; i < n; i += len) {
+      float wRe = 1.0f, wIm = 0.0f;
+      for (size_t j = 0; j < half; ++j) {
+        const size_t lo = i + j;
+        const size_t hi = lo + half;
+        const float aRe = re[lo], bRe = re[hi];
+        const float aIm = im[lo], bIm = im[hi];
+
+        const float tRe = wRe * bRe - wIm * bIm;
+        const float tIm = wRe * bIm + wIm * bRe;
+
+        re[lo] = aRe + tRe;
+        im[lo] = aIm + tIm;
+        re[hi] = aRe - tRe;
+        im[hi] = aIm - tIm;
+
+        // Rotate the twiddle by the base angle.
+        const float nwRe = wRe * cosA - wIm * sinA;
+        const float nwIm = wRe * sinA + wIm * cosA;
+        wRe = nwRe;
+        wIm = nwIm;
+      }
+    }
+  }
 }
 
 }  // namespace spectra

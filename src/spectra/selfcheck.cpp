@@ -12,7 +12,9 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
+#include <algorithm>
 
 namespace {
 
@@ -122,6 +124,103 @@ int main() {
     tie.hzPerBin = 100.0;
     check(tie.hzToBin(50.0f) == 1, "exact half-bin rounds away from zero (fcvtas, not banker's)");
     check(tie.hzToBin(150.0f) == 2, "and again one bin up");
+  }
+
+  std::printf("fftRadix2 (verified against a naive DFT)\n");
+  {
+    // Naive O(n^2) DFT with the same forward convention the recovered code uses
+    // (angle -2*pi*k*n/N). This is the only check that can catch a sign,
+    // bit-reversal or indexing error; the property checks alone cannot.
+    auto naiveDft = [](std::vector<float> re, std::vector<float> im,
+                       std::vector<double>& outRe, std::vector<double>& outIm) {
+      const size_t n = re.size();
+      outRe.assign(n, 0.0);
+      outIm.assign(n, 0.0);
+      for (size_t k = 0; k < n; ++k) {
+        double sr = 0.0, si = 0.0;
+        for (size_t t = 0; t < n; ++t) {
+          const double ang = -2.0 * M_PI * static_cast<double>(k * t) / static_cast<double>(n);
+          const double c = std::cos(ang), s = std::sin(ang);
+          sr += static_cast<double>(re[t]) * c - static_cast<double>(im[t]) * s;
+          si += static_cast<double>(re[t]) * s + static_cast<double>(im[t]) * c;
+        }
+        outRe[k] = sr; outIm[k] = si;
+      }
+    };
+
+    // 1. An impulse transforms to a flat spectrum of 1.0.
+    {
+      std::vector<float> re(8, 0.0f), im(8, 0.0f);
+      re[0] = 1.0f;
+      spectra::fftRadix2(re, im);
+      bool flat = true;
+      for (size_t k = 0; k < 8; ++k) {
+        if (std::fabs(re[k] - 1.0f) > 1e-5f || std::fabs(im[k]) > 1e-5f) flat = false;
+      }
+      check(flat, "impulse -> flat unit spectrum (catches a broken bit-reversal)");
+    }
+
+    // 2. A sinusoid at exactly bin 2 peaks at bin 2, and its mirror.
+    {
+      const size_t n = 32;
+      std::vector<float> re(n), im(n, 0.0f);
+      for (size_t t = 0; t < n; ++t)
+        re[t] = std::sin(2.0 * M_PI * 2.0 * static_cast<double>(t) / static_cast<double>(n));
+      spectra::fftRadix2(re, im);
+      auto mag = [&](size_t k) { return std::sqrt(re[k] * re[k] + im[k] * im[k]); };
+      check(mag(2) > 10.0f, "a bin-2 sinusoid peaks at bin 2");
+      check(mag(30) > 10.0f, "and at its mirror bin N-2 (real input, conjugate symmetry)");
+      check(mag(7) < 1e-3f, "and is ~0 elsewhere");
+    }
+
+    // 3. Agreement with a naive DFT across sizes, including DC and Nyquist.
+    for (size_t n : {2u, 4u, 8u, 16u, 64u}) {
+      // Deterministic pseudo-random input, so a failure is reproducible.
+      uint32_t seed = 0x1234567u;
+      auto next = [&seed]() {
+        seed = seed * 1664525u + 1013904223u;
+        return (static_cast<float>(seed >> 8) / 8388608.0f) - 1.0f;  // ~[-1, 1)
+      };
+      std::vector<float> re(n), im(n);
+      for (size_t i = 0; i < n; ++i) { re[i] = next(); im[i] = next(); }
+
+      std::vector<float> re2 = re, im2 = im;
+      spectra::fftRadix2(re2, im2);
+
+      std::vector<double> dr, di;
+      naiveDft(re, im, dr, di);
+
+      double worst = 0.0;
+      for (size_t k = 0; k < n; ++k) {
+        worst = std::max(worst, std::fabs(re2[k] - dr[k]));
+        worst = std::max(worst, std::fabs(im2[k] - di[k]));
+      }
+      char label[112];
+      std::snprintf(label, sizeof label,
+                    "n=%zu matches the naive DFT (worst abs error %.2e; recurrence drift tolerated)",
+                    n, worst);
+      // The twiddle recurrence accumulates error, so the tolerance is a
+      // property of the recovered algorithm rather than of this transcription.
+      check(worst < 1e-2, label);
+    }
+
+    // 4. The guard: silently does nothing rather than misbehaving.
+    {
+      std::vector<float> re(6, 1.0f), im(6, 0.0f);  // 6 is not a power of two
+      const std::vector<float> before = re;
+      spectra::fftRadix2(re, im);
+      check(re == before, "non-power-of-two length is left untouched");
+
+      std::vector<float> r2(8, 1.0f), i2(4, 0.0f);  // size mismatch
+      const std::vector<float> r2before = r2;
+      spectra::fftRadix2(r2, i2);
+      check(r2 == r2before, "mismatched re/im sizes are left untouched");
+
+      std::vector<float> r3(1, 1.0f), i3(1, 0.0f);  // n < 2
+      const std::vector<float> r3before = r3;
+      spectra::fftRadix2(r3, i3);
+      check(r3 == r3before, "n < 2 is left untouched");
+    }
   }
 
   std::printf("\n%s\n", failures == 0 ? "ALL RECOVERED MATHS VERIFIED" : "TRANSCRIPTION ERRORS PRESENT");
