@@ -11,7 +11,7 @@ the split is enforced by directory so it cannot blur.
 | The parameter table (9 params: ids, types, names, bounds, mode names) | `GlitchKitParams.h` | **Recovered** from `EffectMain`'s `PF_ADD_PARAM` blocks (`tools/param-table.mjs`, `PARAMETERS.md`) |
 | Version words, flags, ABOUT wording, mode choice string | `GlitchKitParams.h` | **Recovered** from the PiPL and the bundle's string table |
 | The PiPL resource | `../packaging/GlitchKitPiPL.r` | **Recovered**, byte-verified against the shipped bundle |
-| The five render modes | `GlitchKit.cpp` | **NEW** — see below |
+| The five render modes | `GlitchRender.cpp` | **NEW** — see below. Split out of the host integration so they can be EXECUTED without AE |
 
 ## Why the recovered part matters more than it looks
 
@@ -51,17 +51,38 @@ same instructions as the shipped binary. **GlitchKit is the only namespace where
 holds for every recovered function** (4/4, versus 3/6 for lutblend and 1/10 for
 typeriser), which makes its DSP layer the best-verified source in the repo.
 
-## What is NOT verified
+## The modes are now executed, not just compiled
 
-**No After Effects host has ever loaded this bundle.** Everything above is structural.
-Specifically untested:
+The engine lives in `GlitchRender.cpp` and takes plain buffers and plain numbers, so
+`test/glitchrender.test.mjs` can run it on synthetic frames. That turns several claims
+from aspirational into checked:
+
+* **determinism** — same seed and same frame give a pixel-identical result, for all five
+  modes. This is the plugin's headline promise and the reason the recovered
+  `hashKey`/`patternFrame` matter;
+* a different frame gives a *different* pattern, so the modes are actually animated;
+* all five modes change the frame at full amount, and are pairwise distinct at the same
+  seed (a mode that silently aliased another would be caught);
+* `amount = 0` leaves the frame untouched, and Drive by Luma leaves a **black** frame
+  alone — both easy to get backwards;
+* **the 8-bit and 16-bit paths pick the same source pixel for every output pixel.**
+  This is the check that catches a 16-bit path reading at the wrong stride, which is
+  exactly the bug that was written once already in LUTBlend's luma pre-pass;
+* 1x1, zero-area, `blockSize = 0` and `scanlineHeight = 0` all terminate without
+  dividing by zero or reading out of bounds.
+
+Three negative controls confirm the test can fail: a time-dependent seed, a 16-bit
+stride forced to the 8-bit value, and `amount = 0` forced to still apply. Each fails
+with the expected message.
+
+## What is still NOT verified
+
+**No After Effects host has ever loaded this bundle.** The modes now execute, but on
+synthetic buffers driven directly, not through AE. Still untested:
 
 * whether AE accepts the plugin at launch;
-* whether the recovered `eGLO`/`eGL2` mean what this code assumes — it declares
-  `DEEP_COLOR_AWARE` and `SUPPORTS_THREADED_RENDERING`, and nothing else, so there is a
-  16-bit path and no float path;
-* whether the five modes produce anything worth looking at. The pixel arithmetic has
-  never run, and it is new code, not recovered code.
+* whether the recovered `eGLO`/`eGL2` mean what this code assumes;
+* whether the five modes look good. They are new code, and "runs deterministically and
+  distinctly" is not the same claim as "is worth looking at".
 
-Do not install this over the shipped plugin. It is a second proof that the recovered
-pieces compose, not a finished effect.
+Do not install this over the shipped plugin.

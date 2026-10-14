@@ -81,7 +81,8 @@ is merely identified.
 | 16-bit render path (`BlendPixel16`, depth dispatch on `PF_WORLD_IS_DEEP`) | `plugins/LUTBlend/LUTBlend.cpp` | **NEW CODE** — required by the recovered `DEEP_COLOR_AWARE`, and mirroring the shipped plugin's own halfword-reading path | `test/build.test.mjs` |
 | **LUT discovery + `.cube` loading** — folder scan, popup menus, parsed-LUT cache | `plugins/LUTBlend/LutLibrary.cpp` | **NEW CODE** implementing the recovered GRAMMAR (7 directives, arities, `[2,256]` bound, finite-only numerics, 12 of 13 error strings). The `LB_*` discovery layer is unrecovered; `parseCube` remains only partly read | `test/lutlib.test.mjs` (negative-controlled) |
 | "`<keyword>` is not an integer" (13th recovered message) | `src/lutblend/RECOVERY-NOTES.md` | **Identified only** — the branch reaching it is not located, so the loader deliberately does not emit it rather than invent a trigger | none |
-| **GlitchKit `EffectMain` + five glitch modes** | `plugins/GlitchKit/GlitchKit.cpp` | **NEW CODE** driving the RECOVERED `hashKey`/`patternFrame`, so the patterns come from the shipped plugin's own generator | `test/build.test.mjs`, `test/codegen.test.mjs` |
+| **GlitchKit `EffectMain`** + the five glitch modes (engine in `GlitchRender.cpp`, host-free) | `plugins/GlitchKit/` | **NEW CODE** driving the RECOVERED `hashKey`/`patternFrame`, so the patterns come from the shipped plugin's own generator | `test/build.test.mjs`, `test/codegen.test.mjs` |
+| **GlitchKit render core EXECUTED** — determinism, mode distinctness, 8/16-bit agreement, degenerate frames | `plugins/GlitchKit/GlitchRender.cpp` | **Verified by execution** on synthetic frames (3 negative controls). Not a host test | `test/glitchrender.test.mjs` |
 | `EffectMain` for the other 14 effects | — | **Not started** | none |
 
 ## Gate
@@ -90,7 +91,7 @@ is merely identified.
 npm run check && npm test
 ```
 
-`npm test` runs twenty-five tests: it asserts the disassembly constants decode as
+`npm test` runs thirty-one tests: it asserts the disassembly constants decode as
 claimed, compiles each recovered namespace with `clang++ -Werror` and runs its
 internal property checks (spectra 107, lutblend 102, typeriser 202 — 411 in
 total), diffs the recovered DSP against all 26 vendored machine-code copies,
