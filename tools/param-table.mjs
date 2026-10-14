@@ -199,6 +199,18 @@ function decodeBlock(instructions, defBase, baseRegs, readWord64, readWord128) {
       if (bytes) qregs.set(m[1], Buffer.from(bytes));
       continue;
     }
+    // ldur qN, [xM, #off]  -> sixteen bytes at an offset into the literal.
+    //
+    // This is how names longer than 16 characters are finished: the first load takes
+    // bytes 0..15 and this one takes bytes 10..25, overlapping deliberately so the
+    // pieces join. Without it the name is left truncated at the first 16 bytes.
+    if (op === "ldur" && (m = rest.match(/^(q\d+), \[(x\d+), #(0x[0-9a-f]+)\]$/))) {
+      const addr = xaddr.get(m[2]);
+      if (addr === undefined) continue;
+      const bytes = readWord128(Number(addr + BigInt(m[3])));
+      if (bytes) qregs.set(m[1], Buffer.from(bytes));
+      continue;
+    }
     // stur qN, [base, #off]  -> sixteen name bytes at once
     if (op === "stur" && (m = rest.match(/^(q\d+), \[(\w+), #(0x[0-9a-f]+)\]$/))) {
       const off = offOf(m[2], Number(m[3]));
