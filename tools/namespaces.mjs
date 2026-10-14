@@ -30,6 +30,7 @@ export const BUNDLES = {
   pathscribe: "PathScribe",
   beatgrid: "BeatGridRuler",
   maskflow: "MaskFlow",
+  shake: "ShakeCapture",
 };
 
 /** Recovered namespace directories, discovered from the tree. */

@@ -15,13 +15,13 @@ a function can be recovered and still differ from the binary in its instruction 
 | | |
 |---|---|
 | Effects in the fleet | 16 |
-| With a recovered source namespace | 14 |
-| Without one | 2 |
-| Named symbols recovered | 112 of 144 |
-| — instruction-identical to the shipped binary | 55 |
-| — recovered but differing in codegen | 57 |
-| Authored instructions recovered | 7452 of 19161 (38.9%) |
-| Lines of recovered source | 13607 |
+| With a recovered source namespace | 15 |
+| Without one | 1 |
+| Named symbols recovered | 114 of 155 |
+| — instruction-identical to the shipped binary | 56 |
+| — recovered but differing in codegen | 58 |
+| Authored instructions recovered | 7500 of 20883 (35.9%) |
+| Lines of recovered source | 13890 |
 
 ## Per effect
 
@@ -43,7 +43,7 @@ a class member is named after its class.
 | MotionCurveX | — | 0/0 | 0 | 0 | 0 | — | — |
 | NoiseField | `noisefield::` | 6/10 | 3 | 3 | 4 | 368/1577 | 23.3% |
 | PathScribe | `pathscribe::` | 13/18 | 8 | 5 | 5 | 786/1477 | 53.2% |
-| ShakeCapture | — | 0/0 | 0 | 0 | 0 | — | — |
+| ShakeCapture | `shake::` | 2/11 | 1 | 1 | 9 | 48/1722 | 2.8% |
 | SpectraKeys | `spectra::` | 14/14 | 7 | 7 | 0 | 1061/1061 | 100.0% |
 | SpeedRampCurve | `speedramp::` | 5/5 | 2 | 3 | 0 | 261/261 | 100.0% |
 | TypeRiser | `typeriser::` | 10/10 | 1 | 9 | 0 | 1106/1106 | 100.0% |

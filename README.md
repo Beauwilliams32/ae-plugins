@@ -73,7 +73,7 @@ npm run status                  # regenerate RECOVERY-STATUS.md
 
 Be clear-eyed about this:
 
-- **Most function bodies.** Fourteen namespaces are recovered (see below); the other
+- **Most function bodies.** Fifteen namespaces are recovered (see below); the other
   effects' DSP is still machine code. Names and signatures are free, behaviour needs
   per-function disassembly, and that is the bulk of the remaining work.
 - **`lutblend::parseCube`** (1924 instructions) is identified but unread, along with
@@ -92,7 +92,7 @@ Be clear-eyed about this:
   is untested. See `plugins/*/README.md` for exactly what is and is not claimed.
 
 So this repository contains a **complete architectural specification** of the fleet,
-fourteen recovered source namespaces, and two effects that build into loadable bundles —
+fifteen recovered source namespaces, and two effects that build into loadable bundles —
 **not** a finished or verified product.
 
 ## The fleet
@@ -111,7 +111,7 @@ Two findings already worth acting on:
 
 ## Recovered source
 
-Fourteen recovered namespaces, all transcribed from the disassembly with per-function commentary
+Fifteen recovered namespaces, all transcribed from the disassembly with per-function commentary
 citing the instructions that establish each behaviour:
 
 | Module | Contents | State |
@@ -130,6 +130,7 @@ citing the instructions that establish each behaviour:
 | `pathscribe::` | The analysis pipeline, shared with SpectraKeys: `clampf`, `isPowerOfTwo`, `linearToDb`, `dbToLinear`, `hannWindow`, `hannCoherentGain`, `fftRadix2`, `downmixToMono`, `analyse`, `Spectrogram`, plus its own `spanCoverage`, `binEdgeHz`, `smoothStep` | **13 of 18** — eight INSTRUCTION-IDENTICAL. Ten of the eighteen are SpectraKeys' code, so one recovery covers four effects; the copy is checked by divergence parity rather than by matching, since four of the ten legitimately differ. `barLevels` (112), `smoothedLevelsAtFrame` (179), `waveformColumns` (80) and the two rasterisers (173/147) are outstanding |
 | `beatgrid::` | The beat maths: `clampf`, `isPowerOfTwo`, `downmixToMono` (shared), `subdivisionFactor`, `phaseSawtooth`, `phaseInLayerTime`, `OnsetEnvelope::frameTimeSeconds` | **7 of 12** namespace symbols — twelve, not the fourteen entries `specs/BeatGridRuler.json` lists, because two of those are `std::vector` member instantiations that take beatgrid types and the differ counts them under `std`, where they are not this effect's code. The four own functions all compile to the bundle's instruction counts, two functions are instruction-identical, and the subdivision factors (0.5, 0.25, 0.125 and **4.0** — the odd one out) were read out of the literal pool rather than guessed. `computeOnsetEnvelope` (436), `estimateTempoBpm` (578), `estimatePhaseSeconds` (138), `generateBeatGrid` (94) and `analyzeBeatGrid` (57) are outstanding, and `WriteMarkerGrid` (811) stays out of `src/` because it takes Adobe SDK types |
 | `maskflow::` | The geometry helpers: `clampf` (shared, and the fifth carrier), `edgeCostScaleFromTolerance`, `computeDownsampleDims`, `smoothstep` | **4 of 9** — three came out INSTRUCTION-IDENTICAL on the first transcription. `smoothstep` extrapolates below its lower edge (a clamp that clamps nothing — almost certainly a typo for 0 in the original, and at x = -1 it returns 5) and returns negative infinity when its edges are equal. `downsampleBoxFilter` (126), `upsampleBilinear` (168), `buildMatte` (169), `computeMatteFullRes` (151) and `computeArrivalField` (290) need `Image` first and are outstanding |
+| `shake::` | `clampf` (shared) and `median` | **2 of 11** — `trackTranslation` alone is 960 instructions and is the effect's whole point, and every other function takes `Vec2`, `ShakeProfile` or `LoopMode`, none recovered. `median`'s even case is NOT the true median: its second `nth_element` call covers a ONE-ELEMENT range and pins nothing, so a permutation of 0..999 returns 469.5 against a true median of 499.5 — measured, and recorded rather than fixed because correcting it would change the effect |
 
 Three fleet-wide duplications are recorded rather than silently deduplicated, because
 each was verified rather than assumed:
