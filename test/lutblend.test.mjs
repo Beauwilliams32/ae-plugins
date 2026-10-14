@@ -44,7 +44,7 @@ test("recovered lutblend source compiles and its maths verifies", (t) => {
   }
 });
 
-test("the two recovered clampf copies agree", (t) => {
+test("lutblend::clampf agrees with spectra::clampf", (t) => {
   // spectra::clampf and lutblend::clampf were recovered from DIFFERENT bundles in
   // DIFFERENT namespaces and turned out instruction-for-instruction identical.
   // asserted here so a future edit to one is caught against the other.

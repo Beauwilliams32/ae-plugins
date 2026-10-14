@@ -160,11 +160,11 @@ CPP`]);
   }
 });
 
-test("all THREE recovered clampf copies agree", (t) => {
-  // spectra::clampf, lutblend::clampf and typeriser::clampf were recovered from
-  // three different bundles in three different namespaces and turned out
-  // instruction-for-instruction identical. Asserting all three against each other
-  // means editing one without the others fails the gate.
+test("typeriser::clampf agrees with the other recovered copies", (t) => {
+  // spectra::, lutblend:: and typeriser:: clampf turned out instruction-for-instruction
+  // identical. This compares those three; test/clampf.test.mjs compares ALL FIVE
+  // recovered copies, including glitch:: and echo::, and is the one that would catch two
+  // copies drifting together while the rest moved.
   const have = (cmd) => {
     try { execFileSync(cmd, ["--version"], { stdio: "ignore" }); return true; }
     catch { return false; }
