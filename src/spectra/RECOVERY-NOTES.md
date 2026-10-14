@@ -167,7 +167,7 @@ loop's colour maths is not yet recovered.
 
 ## Not recovered
 
-- `spectra::analyse`, `analyseBands`, `rawBandLevel`, `bandValues` bodies
+- `spectra::analyseBands`, `rawBandLevel`, `bandValues` bodies
 - `Spectrogram::hzToBin` body (present at `0x0b48`, not yet transcribed)
 - the `fftRadix2` butterfly
 - `SK_*` overlay drawing, `SK_BakeKeyframes`, `SK_FetchLayerAudio` bodies
@@ -184,3 +184,44 @@ loop's colour maths is not yet recovered.
 - Decode float immediates rather than eyeballing them. `0x3089705f` reads like an
   arbitrary epsilon and is exactly `1e-9f`; `0x40c90fdb` reads like noise and is
   exactly `2*pi`.
+
+## `spectra::analyse` — composition recovered, body not yet transcribed
+
+341 instructions, present identically in SpectraKeys and PathScribe (verified by
+`tools/dsp-duplication.mjs`), so it is two effects' worth of work.
+
+Its call graph is short and unusually informative — this is what it is made of:
+
+| Target | Count | Meaning |
+|---|---|---|
+| `spectra::fftRadix2` | 1 call site | the transform, reused rather than reimplemented |
+| `vector<vector<float>>::assign(size, const&)` | 1 | builds the 2-D `frames` result in one shot |
+| `Spectrogram::~Spectrogram` | 1 | unwinding path |
+| `cosf` | 5 | 4 SIMD-unrolled + 1 scalar tail |
+| `operator new` / `bzero` / `operator delete` | 4 / 4 / 6 | scratch buffers, zeroed then overwritten |
+
+**The `cosf` count is the interesting part.** Five calls, alongside the `2*pi`
+immediate (`0x40c90fdb`, at 0x0f94 and 0x1058), a `0.5f` (`0x3f000000`, 0x1064),
+a second `0.5f` (0x10f4) and a double `0.5` (0x1138), and a `2.0` (0x1100). That
+is the `0.5 * (1 - cos(2*pi*i/n))` shape from `hannWindow`, unrolled four-wide.
+
+So **`analyse` inlines its own Hann window rather than calling `hannWindow`**,
+which exists immediately beside it. The optimiser may simply have inlined it; the
+out-of-line `hannWindow` still exists because other callers use it. Either way it
+is a second copy of the same formula inside one effect, and worth folding into one
+implementation when the source is rebuilt.
+
+Recovered composition, therefore:
+
+```
+build the output frames array (assign)
+for each frame:
+    window it          <- inlined 0.5*(1-cos(2*pi*i/n)), 4-wide unrolled + scalar tail
+    fftRadix2(re, im)  <- the shared transform
+    magnitude          <- not yet transcribed
+```
+
+**What is still unknown:** the frame hop and overlap, how magnitude is computed
+(power versus magnitude, and whether it is normalised by the window's coherent
+gain), and how `AnalysisConfig` fields map onto the above. Those are the next
+transcription target; nothing here should be implemented from this outline alone.
