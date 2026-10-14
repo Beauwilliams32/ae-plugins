@@ -12,6 +12,7 @@
 
 #pragma once
 #include <cstddef>
+#include <string>
 #include <vector>
 
 namespace typeriser {
@@ -60,6 +61,22 @@ enum class Easing : int {
   EaseInOutCubic = 5, // [recovered] 4t^3 below 0.5, mirrored above
   // Any other value also returns t unchanged.
 };
+
+// ---------------------------------------------------------------------------
+// [recovered] Strip leading and trailing whitespace. Internal linkage in the
+// binary (never exported), and implemented with ctype's isspace via
+// __DefaultRuneLocale and the _CTYPE_S bit (0x4000).
+// ---------------------------------------------------------------------------
+std::string trim(const std::string& s);
+
+// ---------------------------------------------------------------------------
+// [exact] Parse an SRT timestamp into MILLISECONDS, or -1 if malformed.
+//
+// Accepts H+:MM:SS then ,mmm or .mmm with one to three fraction digits. Minutes
+// and seconds must be <= 59; hours are not range-checked. See the .cpp for the
+// full set of acceptance rules, all of which were read off the compiled code.
+// ---------------------------------------------------------------------------
+long long parseTimestamp(const std::string& s);
 
 // ---------------------------------------------------------------------------
 // [exact] Apply an easing curve to a normalised t.

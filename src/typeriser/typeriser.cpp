@@ -6,6 +6,7 @@
 
 #include "typeriser.h"
 
+#include <cctype>
 #include <cmath>
 
 namespace typeriser {
@@ -270,6 +271,146 @@ float ease(Easing kind, float t) {
     default:
       return x;
   }
+}
+
+
+// ---------------------------------------------------------------------------
+// trim(const std::string&)
+//
+// __ZN9typeriserL4trimE..., internal linkage (the L in the mangling), so it is
+// only reachable from inside this translation unit. Recovered shape:
+//
+//     ldrb  w8, [x0, #0x17]        ; std::string's size byte
+//     sxtb  w9, w8                 ; sign-extend: negative means a heap string
+//     ldr   x10, [x0, #0x8]        ; heap data pointer
+//     csel  x21, x10, x8, lt       ; pick data pointer or the SSO buffer
+//     cbz   x21 <empty fast path>
+//     adrp  x22, __DefaultRuneLocale
+//     ...
+//     ldr   w8, [x8, #0x3c]        ; the rune's ctype flags
+//     and   w0, w8, #0x4000        ; _CTYPE_S == whitespace
+//
+// The 0x4000 bit in macOS's _DefaultRuneLocale is _CTYPE_S, i.e. isspace. So this
+// is an ordinary whitespace trim, not something bespoke. The sign-extension dance
+// is libc++'s small-string optimisation, not parser logic.
+// ---------------------------------------------------------------------------
+std::string trim(const std::string& s) {
+  size_t begin = 0;
+  size_t end = s.size();
+  while (begin < end) {
+    const unsigned char ch = static_cast<unsigned char>(s[begin]);
+    if (!std::isspace(ch)) break;
+    ++begin;
+  }
+  while (end > begin) {
+    const unsigned char ch = static_cast<unsigned char>(s[end - 1]);
+    if (!std::isspace(ch)) break;
+    --end;
+  }
+  return s.substr(begin, end - begin);
+}
+
+// ---------------------------------------------------------------------------
+// parseTimestamp(const std::string&)
+//
+// __ZN9typeriser14parseTimestampE..., 103 instructions, recovered in full. A
+// hand-rolled parser — no strtol, no sscanf, no locale — that returns
+// MILLISECONDS or -1.
+//
+// STRUCTURE (0x924..0x9e0):
+//     bl  trim(s)                    ; the input is trimmed first
+//     zero 4 int64 accumulators at sp+0x20..0x38
+//     ... walk the characters ...
+//       digit path (0x978..0x9a4):
+//         sub  w16, w15, #0x30 / cmp #9 / b.hi <not a digit>
+//         and  x15, x15, #0xf
+//         ldr  x16, [x13, w11, sxtw #3]   ; acc[field]
+//         madd x15, x16, x14, x15         ; acc = acc*10 + digit   (w14 == 10)
+//         str  x15, [x13, w11, sxtw #3]
+//         cmp  w9, #0x3 / b.gt <finish>   ; a 5th digit in one field aborts
+//       separator path (0x9a8..0x9dc):
+//         ':'          -> advance to the next field
+//         ',' or '.'   -> jump straight to field 3 (the fraction)
+//   and every transition requires the field to have had at least one digit
+//   (`cbz w9 <finish>`).
+//
+//   The accumulator is stored back to the stack on EVERY digit, so the fields are
+//   built incrementally rather than collected into a buffer first.
+//
+// VALIDATION AND COMBINATION (0xa20..0xa94):
+//     mov x19, #-1                        ; the default result
+//     cmp w11, #0x3 / b.ne <ret -1>       ; must have reached the fraction field
+//     cbz w9 <ret -1>                     ; ...with at least one digit in it
+//     ldr x10, [sp,#0x28] / cmp #0x3b / b.gt <ret -1>   ; minutes <= 59
+//     ldr x11, [sp,#0x30] / cmp #0x3b / b.gt <ret -1>   ; seconds <= 59
+//     ldr x12, [sp,#0x38]                 ; fraction digits as an integer
+//       1 digit -> *100    (0x64)
+//       2 digits-> *10     (add x9, x12, x12, lsl #2 / lsl #1)
+//       3 digits-> *1
+//       4+      -> -1
+//     ldr x9, [sp,#0x20]                  ; hours
+//     madd x9, x9, 60, x10                ; hours*60 + minutes
+//     madd x9, x9, 60, x11                ; *60 + seconds
+//     madd x19, x9, 1000, x12             ; *1000 + milliseconds
+//
+// ACCEPTANCE RULES, which are the useful part of this recovery:
+//   * hours are NOT range-checked — only minutes and seconds must be <= 59.
+//   * minutes and seconds may be one digit, since only the COUNT is checked.
+//   * the fraction is REQUIRED, and 1..3 digits. A bare "00:00:01" is rejected,
+//     as is "00:00:01,1234".
+//   * at most 4 digits are accepted in any field before the parse aborts, so a
+//     5-digit hour would be rejected too.
+//   * any failure returns -1, and -1 is also a legitimate "no timestamp", so
+//     callers must treat it as an error sentinel rather than a position.
+// ---------------------------------------------------------------------------
+long long parseTimestamp(const std::string& raw) {
+  const std::string s = trim(raw);
+
+  long long acc[4] = {0, 0, 0, 0};
+  int field = 0;
+  int digits = 0;
+
+  for (size_t i = 0; i < s.size(); ++i) {
+    const char ch = s[i];
+    if (ch >= '0' && ch <= '9') {
+      acc[field] = acc[field] * 10 + (ch - '0');
+      if (digits > 3) return -1;  // a 5th digit: cmp w9,#3 / b.gt
+      ++digits;
+      continue;
+    }
+    if (ch == ':' && field <= 1) {
+      if (digits == 0) return -1;  // a field with no digits
+      digits = 0;
+      ++field;
+      continue;
+    }
+    if ((ch == ',' || ch == '.') && field == 2 && digits != 0) {
+      digits = 0;
+      field = 3;
+      continue;
+    }
+    return -1;
+  }
+
+  if (field != 3) return -1;
+  if (digits == 0) return -1;
+
+  const long long hours = acc[0];
+  const long long minutes = acc[1];
+  const long long seconds = acc[2];
+  long long millis = acc[3];
+
+  if (minutes > 59) return -1;
+  if (seconds > 59) return -1;
+
+  switch (digits) {
+    case 1: millis *= 100; break;
+    case 2: millis *= 10; break;
+    case 3: break;
+    default: return -1;
+  }
+
+  return ((hours * 60 + minutes) * 60 + seconds) * 1000 + millis;
 }
 
 

@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 namespace {
@@ -164,6 +165,58 @@ int main() {
     const float hi = typeriser::ease(E::EaseInOutCubic, 0.5001f);
     check(std::fabs(hi - lo) < 1e-3f, "the two halves of EaseInOutCubic join without a step");
   }
+
+
+  std::printf("typeriser::trim\n");
+  check(typeriser::trim("  hi  ") == "hi", "strips leading and trailing spaces");
+  check(typeriser::trim("\t\n 00:00:01,000 \r\n") == "00:00:01,000", "strips tabs, CR and LF too");
+  check(typeriser::trim("x") == "x", "leaves a single character alone");
+  check(typeriser::trim("") == "", "empty stays empty");
+  check(typeriser::trim("   ") == "", "all-whitespace becomes empty");
+  check(typeriser::trim("a b") == "a b", "inner whitespace is preserved");
+
+  std::printf("typeriser::parseTimestamp\n");
+  check(typeriser::parseTimestamp("00:00:00,000") == 0, "zero");
+  check(typeriser::parseTimestamp("00:00:01,500") == 1500, "one and a half seconds");
+  check(typeriser::parseTimestamp("00:00:01,050") == 1050, "leading zero in the fraction");
+  check(typeriser::parseTimestamp("00:00:01,005") == 1005, "two leading zeros");
+  check(typeriser::parseTimestamp("00:00:59,999") == 59999, "last representable second");
+  check(typeriser::parseTimestamp("00:01:00,000") == 60000, "one minute");
+  check(typeriser::parseTimestamp("01:00:00,000") == 3600000, "one hour");
+  check(typeriser::parseTimestamp("01:02:03,004") == 3723004, "h:m:s:ms combine correctly");
+  check(typeriser::parseTimestamp("99:59:59,999") == (99LL*3600+59*60+59)*1000+999,
+        "large two-digit hours are accepted (hours are NOT range-checked)");
+  check(typeriser::parseTimestamp("100:00:00,000") == 100LL*3600000,
+        "three-digit hours are accepted too");
+
+  // Fractions are right-padded conceptually: 1 digit is tenths, 2 hundredths.
+  check(typeriser::parseTimestamp("00:00:00,1") == 100, "1 fraction digit is tenths -> 100 ms");
+  check(typeriser::parseTimestamp("00:00:00,12") == 120, "2 fraction digits -> 120 ms");
+  check(typeriser::parseTimestamp("00:00:00,123") == 123, "3 fraction digits -> 123 ms");
+
+  // The '.' separator is accepted as well as ','.
+  check(typeriser::parseTimestamp("00:00:01.500") == 1500, "a dot also separates the fraction");
+
+  // Whitespace is trimmed first, which is why real SRT lines parse.
+  check(typeriser::parseTimestamp("  00:00:02,000  ") == 2000, "surrounding whitespace is trimmed");
+
+  // Rejections, each pinned to a rule read off the compiled code.
+  check(typeriser::parseTimestamp("") == -1, "empty is rejected");
+  check(typeriser::parseTimestamp("00:00:01") == -1, "a REQUIRED fraction: no fraction is rejected");
+  check(typeriser::parseTimestamp("00:00:01,") == -1, "a fraction separator with no digits is rejected");
+  check(typeriser::parseTimestamp("00:00:01,1234") == -1, "4 fraction digits are rejected");
+  check(typeriser::parseTimestamp("00:60:00,000") == -1, "minutes > 59 are rejected");
+  check(typeriser::parseTimestamp("00:00:60,000") == -1, "seconds > 59 are rejected");
+  check(typeriser::parseTimestamp("00:00:00,0000") == -1, "and 4 fraction digits stay rejected");
+  check(typeriser::parseTimestamp("not a time") == -1, "garbage is rejected");
+  check(typeriser::parseTimestamp("00-00-01,000") == -1, "the wrong separator is rejected");
+  check(typeriser::parseTimestamp("00:00:0a,000") == -1, "a letter inside a field is rejected");
+  // Hours being unchecked is a real asymmetry, not an oversight in the test.
+  check(typeriser::parseTimestamp("99999:00:00,000") == -1,
+        "but a 5-digit field aborts the parse (at most 4 digits per field)");
+
+  // A typical SRT block line, which is the actual use case.
+  check(typeriser::parseTimestamp("00:01:23,456") == 83456, "a realistic SRT timestamp parses");
 
   std::printf("\n%s\n", failures == 0 ? "ALL RECOVERED TYPERISER MATHS VERIFIED"
                                       : "TRANSCRIPTION ERRORS PRESENT");

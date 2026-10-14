@@ -51,7 +51,8 @@ is merely identified.
 | `typeriser::Cue` layout (48 bytes, start@0x8, end@0x10) | `src/typeriser/typeriser.h` | **Recovered** from `cueIndexAt` | `test/typeriser.test.mjs` |
 | Third `clampf` copy; all three agree | `test/typeriser.test.mjs` | **Verified** across 3 bundles/namespaces | own test |
 | **`typeriser::ease`** + `Easing` enum (7 cases) | `src/typeriser/typeriser.cpp` | **Recovered + verified** | `test/typeriser.test.mjs` |
-| `typeriser::parseSrt` (512 instrs) / `splitWords` / `parseTimestamp` | `specs/TypeRiser.md` | **Identified only** | none yet |
+| **`typeriser::trim` / `parseTimestamp`** (SRT time -> ms, with validation) | `src/typeriser/typeriser.cpp` | **Recovered + verified** | `test/typeriser.test.mjs` |
+| `typeriser::parseSrt` (512 instrs) / `splitWords` | `specs/TypeRiser.md` | **Identified only** | none yet |
 | The other 13 effects' function bodies | `specs/*.md` | **Identified only** — architecture recovered, bodies not | none yet |
 | Buildable plugin bundles (AE SDK at `0x000d001d`) | — | **Not started** | none |
 
