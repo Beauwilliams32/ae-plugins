@@ -21,6 +21,22 @@ import { namespaceOf } from "../tools/namespaces.mjs";
 const ROOT = path.join(import.meta.dirname, "..");
 const DOCS = ["README.md", "FEATURE-MAP.md", "CATALOG.md", "PARAMETERS.md", "CAPABILITIES.md"];
 
+/**
+ * Recovered functions the differ cannot compare, and why.
+ *
+ * The differ counts functions it can find in BOTH the shipped bundle and the
+ * rebuilt object. A function the compiler inlines everywhere has no out-of-line
+ * symbol on one side, so it is recoverable and verified but invisible to that
+ * count. Each entry here has to say why, and a namespace that develops the same
+ * situation without an entry fails the check below rather than passing quietly.
+ */
+const NOT_COMPARABLE = {
+  lutblend: {
+    count: 1,
+    why: "CubeLUT::valid() is a one-line member the compiler inlines, so the bundle has no symbol to compare against",
+  },
+};
+
 const read = (p) => readFileSync(path.join(ROOT, p), "utf8");
 
 // Each recovered DIRECTORY with the C++ NAMESPACE it declares. They are not the same
@@ -148,13 +164,29 @@ test("the per-namespace recovered counts in the documentation match codegen-diff
     const implemented = identical + differing;
 
     // If the README states "N of M" for this namespace, it must be right.
-    const claim = text.match(new RegExp(`\\*\\*([0-9]+) of ([0-9]+)\\*\\*[^|]*?\\\`${ns}::`))
-      || text.match(new RegExp(`\\\`${ns}::\\\`[^|]*\\|\\s*\\*\\*([0-9]+) of ([0-9]+)\\*\\*`));
+    //
+    // The claim is looked for in the namespace's OWN table row, not by searching the
+    // document for "N of M" near a namespace name. Both earlier attempts got that
+    // wrong in the same way: a row about one namespace legitimately names another —
+    // the `beatsnap::` row cites the `spectra::` originals its shared DSP was copied
+    // from — so the first `beatsnap::` row ever written made this test report
+    // "README says 7 of 11 for spectra::". Scoping to the line fixed the cross-row
+    // case and not that one, because the citation is on the same line.
+    const row = text.split("\n").find((line) => line.startsWith(`| \`${ns}::\``));
+    const claim = row?.match(/\*\*([0-9]+) of ([0-9]+)\*\*/);
     if (claim) {
-      assert.equal(Number(claim[1]), implemented,
-        `README says ${claim[1]} of ${claim[2]} for ${ns}::, but ${implemented} functions are implemented`);
-      assert.equal(Number(claim[2]) + Number(isNaN(absent) ? 0 : 0), Number(claim[2]),
-        "sanity");
+      const stated = Number(claim[1]);
+      const total = Number(claim[2]);
+      const invisible = NOT_COMPARABLE[ns]?.count ?? 0;
+      assert.equal(stated, implemented + invisible,
+        `${ns}:: row says ${stated} of ${total}, but the differ accounts for `
+        + `${implemented} implemented function(s)`
+        + (invisible ? ` plus ${invisible} it cannot compare (${NOT_COMPARABLE[ns].why})` : ""));
+      if (!Number.isNaN(absent)) {
+        assert.equal(total, stated + absent,
+          `${ns}:: row says ${stated} of ${total}, but the differ counts ${absent} absent, `
+          + `so the total should be ${stated + absent}`);
+      }
     }
   }
 });

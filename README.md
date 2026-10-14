@@ -60,11 +60,12 @@ modifies, moves or copies them.
 
 Be clear-eyed about this:
 
-- **Most function bodies.** Nine namespaces are recovered (see below); the other
+- **Most function bodies.** Ten namespaces are recovered (see below); the other
   effects' DSP is still machine code. Names and signatures are free, behaviour needs
   per-function disassembly, and that is the bulk of the remaining work.
 - **`lutblend::parseCube`** (1924 instructions) is identified but unread, along with
-  `echo`'s host integration and 12 effects' bodies. Where a body is unread it is
+  `echo`'s host integration and 12 effects' bodies — BeatSnap is the most recent
+  namespace opened, and four of its eleven functions are still unread. Where a body is unread it is
   **absent rather than stubbed**, and a test asserts it stays absent, so a stub cannot
   quietly make a namespace look complete.
 - **The original build system.** No Makefile, no CMake. The SDK version is known and
@@ -78,7 +79,7 @@ Be clear-eyed about this:
   is untested. See `plugins/*/README.md` for exactly what is and is not claimed.
 
 So this repository contains a **complete architectural specification** of the fleet,
-eight recovered source namespaces, and two effects that build into loadable bundles —
+nine recovered source namespaces, and two effects that build into loadable bundles —
 **not** a finished or verified product.
 
 ## The fleet
@@ -97,7 +98,7 @@ Two findings already worth acting on:
 
 ## Recovered source
 
-Nine recovered namespaces, all transcribed from the disassembly with per-function commentary
+Ten recovered namespaces, all transcribed from the disassembly with per-function commentary
 citing the instructions that establish each behaviour:
 
 | Module | Contents | State |
@@ -110,6 +111,7 @@ citing the instructions that establish each behaviour:
 | `colorpulse::` | The whole analyser: `clampf`, `smoothScalar`, `luma709`, `smoothColor`, `saturationBoost`, `regionBounds`, `averageColor`, `brightestRegionColor`, `dominantColor`, `sampleColor`, plus the `RGB`/`Rect` layouts and the `Region`/`Mode` selectors | **complete — all 10 functions, 1123 instructions**, and five are INSTRUCTION-IDENTICAL. The host integration is unread |
 | `aff::` | The AutoFlickerFix DSP: `clampf`, `dbToGainClamp`, `computeGain`, `centerRegion`, `meanOf`, `medianOf`, `trimmedMean` (both overloads), `medianFilter`, `temporalTarget`, plus the `GainClamp` and `RegionBounds` layouts | **complete — all 10 functions, 719 instructions, 7 of them INSTRUCTION-IDENTICAL**. The host integration (`EffectMain`, `SampleWorldStat`, `DrawStatsBar`) is unread |
 | `spectra::` | FFT, Hann window, STFT, band analysis, falloff envelope, `downmixToMono`, plus `Spectrogram` | **complete — all 13 functions, shared by 4 effects**, and 7 of them INSTRUCTION-IDENTICAL. The host integration is unread |
+| `beatsnap::` | The onset-detection core: `clampf`, `isPowerOfTwo`, `medianOfWindow`, `adaptiveThreshold`, `hannWindow`, `fftRadix2`, `downmixToMono` | **7 of 11** — `computeFlux` (416), `renderValues` (190), `pickOnsets` (136) and `detectOnsets` (47) are outstanding. `medianOfWindow` is **instruction-identical** (58/58), and the five shared-DSP copies are checked by divergence parity against the `spectra::` originals rather than by assuming a copy of a copy is faithful |
 
 Three fleet-wide duplications are recorded rather than silently deduplicated, because
 each was verified rather than assumed:

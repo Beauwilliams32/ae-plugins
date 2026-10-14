@@ -26,6 +26,7 @@ export const BUNDLES = {
   echo: "EchoTrails",
   colorpulse: "ColorPulse",
   autoflickerfix: "AutoFlickerFix",
+  beatsnap: "BeatSnap",
 };
 
 /** Recovered namespace directories, discovered from the tree. */
