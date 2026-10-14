@@ -86,7 +86,7 @@ self-contained engines. LUTBlend's is partially recovered:
 |---|---|---|
 | `spectra::` | FFT, Hann window, STFT, band analysis, falloff envelope | **recovered + verified** (4 effects) |
 | `lutblend::` | `clampf`, `lerpf`, `luma709`, `CubeLUT::valid` + layout | **partially recovered** (`parseCube`, `sampleLUT`, `applyLUTBlend` pending) |
-| `typeriser::` | `parseSrt`, `parseTimestamp`, `karaokeWordAt`, `wordProgress`, `ease` | identified only |
+| `typeriser::` | `clampf`, `karaokeWordAt`, `wordProgress`, `cueIndexAt` + `Cue` layout | **partially recovered** (`parseSrt`, `splitWords`, `parseTimestamp`, `ease` pending) |
 
 One cross-bundle detail worth recording: `spectra::clampf` and `lutblend::clampf`
 were recovered from two different plugins in two different namespaces and turned

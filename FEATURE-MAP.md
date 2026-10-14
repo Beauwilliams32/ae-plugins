@@ -47,7 +47,10 @@ is merely identified.
 | **`lutblend::sampleLUT`** (trilinear 3D + per-channel 1D, domain clamp) | `src/lutblend/lutblend.cpp` | **Recovered + verified** | `test/lutblend.test.mjs` (identity LUT) |
 | `.cube` data ordering: red fastest (index = b·size² + g·size + r) | `src/lutblend/lutblend.cpp` | **Recovered** | identity round-trip |
 | `lutblend::parseCube` / `applyLUTBlend` / `makeIdentity` | `specs/LUTBlend.md` | **Identified only** | none yet |
-| `typeriser::` engine (parseSrt, karaokeWordAt, wordProgress, ease) | `specs/TypeRiser.md` | **Identified only** | none yet |
+| **`typeriser::clampf` / `karaokeWordAt` / `wordProgress` / `cueIndexAt`** | `src/typeriser/typeriser.cpp` | **Recovered + verified** | `test/typeriser.test.mjs` |
+| `typeriser::Cue` layout (48 bytes, start@0x8, end@0x10) | `src/typeriser/typeriser.h` | **Recovered** from `cueIndexAt` | `test/typeriser.test.mjs` |
+| Third `clampf` copy; all three agree | `test/typeriser.test.mjs` | **Verified** across 3 bundles/namespaces | own test |
+| `typeriser::parseSrt` (512 instrs) / `splitWords` / `parseTimestamp` / `ease` | `specs/TypeRiser.md` | **Identified only** | none yet |
 | The other 13 effects' function bodies | `specs/*.md` | **Identified only** — architecture recovered, bodies not | none yet |
 | Buildable plugin bundles (AE SDK at `0x000d001d`) | — | **Not started** | none |
 
