@@ -6,7 +6,7 @@
   "description": "Recovered specification and DSP core for the Williams Media After Effects plugin fleet",
   "scripts": {
     "recover": "node tools/recover.mjs && node tools/render-specs.mjs && node tools/render-pipl.mjs && node tools/decode-flags.mjs",
-    "check": "node --check tools/recover.mjs && node --check tools/render-specs.mjs && node --check tools/dsp-duplication.mjs && node --check tools/render-pipl.mjs && node --check tools/decode-flags.mjs && node --check tools/codegen-diff.mjs && node --check test/spectra.test.mjs && node --check test/lutblend.test.mjs && node --check test/typeriser.test.mjs && node --check test/pipl.test.mjs && node --check test/build.test.mjs && node --check test/lutlib.test.mjs && node --check test/capabilities.test.mjs && node --check test/codegen.test.mjs",
+    "check": "node --check tools/recover.mjs && node --check tools/render-specs.mjs && node --check tools/dsp-duplication.mjs && node --check tools/render-pipl.mjs && node --check tools/decode-flags.mjs && node --check tools/codegen-diff.mjs && node --check test/spectra.test.mjs && node --check test/lutblend.test.mjs && node --check test/typeriser.test.mjs && node --check test/pipl.test.mjs && node --check test/build.test.mjs && node --check test/lutlib.test.mjs && node --check test/capabilities.test.mjs && node --check test/codegen.test.mjs && node --check test/glitch.test.mjs",
     "test": "node --test test/*.test.mjs"
   }
 }
