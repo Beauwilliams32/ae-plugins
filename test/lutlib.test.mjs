@@ -71,7 +71,7 @@ test("the .cube loader implements the recovered grammar", (t) => {
 
     // Guard against a vacuous run.
     const passes = (out.match(/^  PASS/gm) ?? []).length;
-    assert.ok(passes >= 55, `expected >= 55 checks, saw ${passes}`);
+    assert.ok(passes >= 65, `expected >= 55 checks, saw ${passes}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -197,6 +197,66 @@ int main() {
           "LUT_3D_INPUT_RANGE with two values is accepted");
     rejects("LUT_3D_SIZE 2\nLUT_3D_INPUT_RANGE 0 1 2\n", "needs 2 values",
             "LUT_3D_INPUT_RANGE with three values is rejected as 'needs 2 values'");
+
+    // RECOVERED, AND PREVIOUSLY ONLY INFERRED: LUT_*_INPUT_RANGE writes the SAME six
+    // CubeLUT floats that DOMAIN_MIN/DOMAIN_MAX write. So the two OVERWRITE each other
+    // and the LAST directive in the file wins.
+    //
+    // When this loader was first written that was a deliberate guess — the recovery note
+    // listed "how LUT_3D_INPUT_RANGE and LUT_1D_INPUT_RANGE interact with
+    // DOMAIN_MIN/DOMAIN_MAX" as unresolved, and the implementation had to pick an
+    // interpretation. It is now read. In 'parseCube' there is exactly ONE write site for
+    // those six floats — three 'stp' pairs at 0x1d94/0x1d98/0x1d9c writing the local
+    // CubeLUT at x29-0xc8 offsets +0x8..+0x1c — and the broadcast shape it uses
+    // ('stp s1, s1' / 'stp s1, s0' / 'stp s0, s0') is one lo and one hi written to all
+    // three axes. The inference was right, and these assertions are what keep it right.
+    {
+      lutblend::CubeLUT rng;
+      check(parse("LUT_3D_SIZE 2\nLUT_3D_INPUT_RANGE 0.25 0.75\n" + kub2x2x2().substr(13),
+                  &rng, &err),
+            "LUT_3D_INPUT_RANGE is accepted");
+      check(rng.minR == 0.25f && rng.minG == 0.25f && rng.minB == 0.25f,
+            "INPUT_RANGE BROADCASTS its first value to all three minima");
+      check(rng.maxR == 0.75f && rng.maxG == 0.75f && rng.maxB == 0.75f,
+            "and its second value to all three maxima");
+
+      // DOMAIN after RANGE: the domain wins, per axis and not broadcast.
+      lutblend::CubeLUT domWins;
+      check(parse("LUT_3D_SIZE 2\nLUT_3D_INPUT_RANGE 0.25 0.75\n"
+                  "DOMAIN_MIN 0.1 0.2 0.3\nDOMAIN_MAX 0.4 0.5 0.6\n" + kub2x2x2().substr(13),
+                  &domWins, &err),
+            "a DOMAIN_* pair after an INPUT_RANGE is accepted");
+      check(domWins.minR == 0.1f && domWins.minG == 0.2f && domWins.minB == 0.3f,
+            "DOMAIN_MIN then OVERWRITES INPUT_RANGE's minima, one value per axis");
+      check(domWins.maxR == 0.4f && domWins.maxG == 0.5f && domWins.maxB == 0.6f,
+            "and DOMAIN_MAX overwrites its maxima the same way");
+
+      // RANGE after DOMAIN: the range wins, and it wipes the per-axis values.
+      lutblend::CubeLUT rangeWins;
+      check(parse("LUT_3D_SIZE 2\nDOMAIN_MIN 0.1 0.2 0.3\nDOMAIN_MAX 0.4 0.5 0.6\n"
+                  "LUT_3D_INPUT_RANGE 0.25 0.75\n" + kub2x2x2().substr(13),
+                  &rangeWins, &err),
+            "a DOMAIN_* pair followed by an INPUT_RANGE is accepted");
+      check(rangeWins.minR == 0.25f && rangeWins.minG == 0.25f && rangeWins.minB == 0.25f,
+            "INPUT_RANGE after DOMAIN_MIN wins, and flattens the axes");
+      check(rangeWins.maxR == 0.75f && rangeWins.maxG == 0.75f && rangeWins.maxB == 0.75f,
+            "INPUT_RANGE after DOMAIN_MAX wins on the maxima too");
+
+      // Both spellings of the range directive are the same handler in the binary, so
+      // LUT_1D_INPUT_RANGE must behave identically on a 1D LUT.
+      lutblend::CubeLUT rng1d;
+      check(parse("LUT_1D_SIZE 2\nLUT_1D_INPUT_RANGE 0.2 0.8\n0 0 0\n1 1 1\n", &rng1d, &err),
+            "LUT_1D_INPUT_RANGE is accepted on a 1D LUT");
+      check(rng1d.minR == 0.2f && rng1d.minB == 0.2f
+                && rng1d.maxR == 0.8f && rng1d.maxB == 0.8f,
+            "and it broadcasts and overwrites exactly as the 3D spelling does");
+
+      // Negative control for the OVERWRITE claim: if the loader merely ORed the two
+      // sources together, or kept the first, the second case above would show the
+      // range's 0.25/0.75 rather than the domain's per-axis values.
+      check(domWins.minR != 0.25f,
+            "the DOMAIN-after-RANGE case really did overwrite (control)");
+    }
 
     // 1D
     lutblend::CubeLUT one;

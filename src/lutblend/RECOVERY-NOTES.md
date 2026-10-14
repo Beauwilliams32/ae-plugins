@@ -254,21 +254,77 @@ per-line status to 0. A completion flag at `[sp+0x24]` bit 0 gates the push.
 
 ### What still needs reading
 
-Specifically unresolved, to be settled from the disassembly rather than guessed:
-
-* how `LUT_3D_INPUT_RANGE` and `LUT_1D_INPUT_RANGE` interact with
-  `DOMAIN_MIN`/`DOMAIN_MAX` — whether they write the same fields or one overrides;
 * the precise interleaving of the size declaration with the first data row, and
-  what the per-line status code in `w24` means at each of its values;
-* whether a failed parse writes through `out` at all, or returns leaving it
-  untouched as the local-value shape suggests;
-* the four consecutive `strtod` sites at 0x1bdc..0x1d58, which do not obviously
-  match the three-values-per-data-row shape and need identifying.
+  what the per-line status code in `w24` means at each of its values.
 
-Until those are read, implementing from this document alone would mean guessing,
+Until that is read, implementing from this document alone would mean guessing,
 which is exactly what this repository's method forbids. The grammar, the
 tokeniser, the dispatch lengths and the validation rules above are safe to rely
-on; the handler bodies are not.
+on; that one handler body is not.
+
+### RESOLVED since the first pass
+
+Four of the five open items above are now read. Recorded with their evidence,
+because two of them changed what was previously an INFERENCE in shipping code.
+
+**1. `LUT_*_INPUT_RANGE` writes the SAME six floats `DOMAIN_MIN`/`DOMAIN_MAX` write,
+so the two OVERWRITE each other and the LAST directive in the file wins.**
+
+There is exactly ONE write site for the local CubeLUT's domain fields — its base is
+`x29-0xc8`, so minR/minG/minB are at `-0xc0`/`-0xbc`/`-0xb8` and maxR/maxG/maxB at
+`-0xb4`/`-0xb0`/`-0xac`:
+
+```
+0x1d94   stp s1, s1, [x29, #-0xc0]      ; minR = minG = s1
+0x1d98   stp s1, s0, [x29, #-0xb8]      ; minB = s1, maxR = s0
+0x1d9c   stp s0, s0, [x29, #-0xb0]      ; maxG = maxB = s0
+0x1da0   sub x28, x29, #0xc8            ; back to the local CubeLUT
+0x1da4   b   0x21fc                     ; and on to the next line
+```
+
+The shape is a BROADCAST — one lo to all three minima and one hi to all three maxima —
+and there is no other store into those offsets anywhere in the function. An exhaustive
+search for `stp`/`str`/`stur` into `[xN, #-0x[abc]...]` returns the initialiser, this
+site, and nothing else. So a file containing both directives gets whichever comes last.
+
+`plugins/LUTBlend/LutLibrary.cpp` had to CHOOSE an interpretation here before this was
+read, and chose this one. The choice was right; `test/lutlib.test.mjs` now asserts it in
+both orders, with a negative control that makes the loader keep the first value and
+watches the suite fail.
+
+**2. `DOMAIN_MIN` and `DOMAIN_MAX` share ONE handler, selected by a pointer.**
+
+```
+0x0db8   add x9, x28, #0x14      ; x28 = the local CubeLUT, so x9 = &maxR
+0x0dbc   add x8, x28, #0x8       ; x8 = &minR
+0x0dc0   stp x8, x9, [sp, #0x10] ; both candidate bases saved
+...
+0x1c54   csel x19, x9, x8, eq    ; x19 = the predicate ? &minR : &maxR
+0x1cb8   str  s0, [x19]          ; first value  -> x19[0]
+0x1d0c   str  s0, [x19, #0x4]    ; second value -> x19[1]
+```
+
+so the directive name is reduced to a boolean that picks a base address, and the
+three-value body runs once. The predicate comes from a comparison against `0x494e`
+with a `cneg`/`cmp` pair just above, i.e. from a two-way test on the keyword rather
+than a four-way switch.
+
+**3. A failed parse does NOT write through `out`.** The domain writes above all target
+the LOCAL CubeLUT, and the only copy into the caller's `*out` is at the end
+(`ldur q1, [x29, #-0xc8]` / `ldur q2, [x29, #-0xb8]`), after every validation. Already
+asserted: `test/lutlib.test.mjs` checks "a failed parse ... leaves the output UNTOUCHED
+(parseCube browses a local)".
+
+**4. The `strtod` sites are the per-token parses of the domain and range handlers.**
+Nine in total. The region at `0x1c58..0x1da4` accounts for three of them — one per
+token, each followed by the same three-part acceptance test (`endptr == tok`,
+`*endptr != '\0'`, `isfinite`) — and the per-axis stores at `x19[0]` and `x19[1]` are
+tokens 1 and 2, with token 3 arriving in the broadcast at `0x1d94`. The earlier note
+that these "do not obviously match the three-values-per-data-row shape" was right to
+flag them: they are the SAME three-part test applied by a different handler, not data
+rows. `strtod` result register pairing matters here — `mov.16b v8, v0` at `0x1d84`
+saves the SECOND token's value into `s8` before the third `strtod` clobbers `s0`, which
+is why the broadcast reads `fcvt s1, d8` and `fcvt s0, d0`.
 
 ## Cross-cutting findings in this module
 
