@@ -729,4 +729,55 @@ std::vector<std::vector<float>> analyseBands(const float* mono,
 }
 
 
+// ---------------------------------------------------------------------------
+// downmixToMono(const float*, size_t, int)   __ZN7spectra13downmixToMonoEPKfmi, 116 instrs
+//
+//     stp  xzr, xzr, [x8] / str xzr, [x8, #0x10]   ; result starts EMPTY
+//     cbz  x0, <epilogue>                          ; interleaved == nullptr -> empty
+//     cmp  w2, #0x1 / b.lt <epilogue>              ; channels < 1        -> empty
+//     mov  x0, x8 / bl  __ZNSt3__16vectorIf...6resizeEm   ; result.resize(frames)
+//     cbz  x20, <epilogue>                         ; and the loop's own trip guard
+//
+//     ucvtf s0, w19        ; (float)channels, HOISTED out of the outer loop
+//     ...
+//     fdiv  s1, s1, s0     ; sum / (float)channels
+//     str   s1, [x10, x8, lsl #2]
+//
+// IT AVERAGES, IT DOES NOT SUM. A downmix that sums is the more common
+// implementation, and the two differ by a straight level change of `channels` — a
+// factor of 2 on stereo, 6 on 5.1. The dividing constant is materialised once
+// outside the frame loop (`ucvtf s0, w19` before it, not inside), which is what
+// pins the divisor as `channels` rather than a literal.
+//
+// The `frames == 0` test is NOT an explicit guard in the source: it is the outer
+// loop's trip-count check, and it branches to the same epilogue the two real guards
+// use, which is why the three look alike in the disassembly and only two of them are
+// `if` statements.
+//
+// The inner sum is a SEQUENTIAL fadd chain over a vector-loaded window: clang loads
+// sixteen floats with two `ldp q` and then reduces them in lane order
+// (`fadd s1, s1, s2` / `s6` / `s5` / `s4` — lanes 0,1,2,3), with a four-wide then a
+// scalar tail. So the accumulation order is preserved and NOT reassociated; a
+// rewrite into pairwise or SIMD summation would produce a different float for the
+// same input, which is why the naive nested loop is the transcription rather than an
+// optimisation of it.
+// ---------------------------------------------------------------------------
+std::vector<float> downmixToMono(const float* interleaved, size_t frames, int channels) {
+  std::vector<float> out;
+  if (interleaved == nullptr) return out;
+  if (channels < 1) return out;
+
+  out.resize(frames);
+  const int ch = channels;
+  const float scale = static_cast<float>(ch);
+  for (size_t i = 0; i < frames; ++i) {
+    float sum = 0.0f;
+    for (int c = 0; c < ch; ++c) {
+      sum += interleaved[i * static_cast<size_t>(ch) + static_cast<size_t>(c)];
+    }
+    out[i] = sum / scale;
+  }
+  return out;
+}
+
 }  // namespace spectra

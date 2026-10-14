@@ -40,6 +40,8 @@ const ROOT = path.join(import.meta.dirname, "..");
 //
 //   spectra    3 -> 6   two calls were compared against the lazy-binding stub ADDRESS
 //                       rather than the symbol, and one overload was silently collapsed
+//   spectra    6 -> 7   a 64-bit magic constant was converted through a double, so the
+//                       shipped hex and the fresh decimal could never agree
 //   colorpulse 4 -> 5   a three-operand `tbnz` was never resolved, so its target was
 //                       compared as label text against a numeric address
 //   speedramp  1 -> 2   same cause: every branch into a multi-instruction basic block
@@ -55,7 +57,7 @@ const IDENTICAL_FLOOR = {
   glitch: 4,
   lutblend: 3,
   typeriser: 1,
-  spectra: 6,
+  spectra: 7,
   colorpulse: 5,
   speedramp: 2,
   echo: 1,
@@ -314,6 +316,110 @@ test("completeness is asserted in BOTH directions and cannot drift", (t) => {
 
   assert.ok(marked.length >= 3,
     `expected at least three complete namespaces, found ${marked.length}`);
+});
+
+test("the differ's decimal-to-hex conversion is exact for 64-bit immediates", () => {
+  // A division-by-12 magic number does not fit in a double: `#-6148914691236517206` is
+  // past 2^53, so `Number()` rounded it to ...55555400 before `toString(16)` ran and the
+  // result could NEVER equal the shipped side's exact `#-0x5555555555555556`. Every
+  // function holding a 64-bit magic constant therefore differed by construction, at two
+  // positions per constant. `spectra::analyseBands` was reported as a 4-position
+  // difference for exactly this reason and is an exact match once the conversion is
+  // exact — which is how the bug was found, not by reading the code.
+  const src = readFileSync(path.join(ROOT, "tools", "codegen-diff.mjs"), "utf8");
+  const { normalize } = new Function(
+    `${extractFunction(src, "normalize")}; return { normalize };`)();
+
+  assert.equal(normalize("mov x9, #-6148914691236517206"), "mov x9, #-0x5555555555555556");
+  assert.equal(normalize("mov x8, #6148914691236517206"), "mov x8, #0x5555555555555556");
+  // And the same constant as otool prints it must land on the same string, or the two
+  // sides still could not be compared.
+  assert.equal(normalize("mov x9, #-0x5555555555555556"), normalize("mov x9, #-6148914691236517206"));
+
+  // Negative control: the OLD conversion is reproduced here and must DISAGREE, so this
+  // test fails if anyone reverts to Number().
+  const viaNumber = (d) => {
+    const n = Number(d);
+    return n < 0 ? `#-0x${(-n).toString(16)}` : `#0x${n.toString(16)}`;
+  };
+  assert.notEqual(viaNumber("-6148914691236517206"), "#-0x5555555555555556",
+    "the Number() path really did lose precision, or this control proves nothing");
+
+  // Small immediates must be unaffected: a shift amount still normalises.
+  assert.equal(normalize("lsl #16"), "lsl #0x10");
+  assert.equal(normalize("mov w8, #-1"), "mov w8, #-0x1");
+});
+
+test("a run of labels at one position is indexed in full", async () => {
+  // Clang emits label RUNS — `LBB16_8:` immediately followed by `Ltmp38:` with no
+  // instruction between them — and the entry carried a single `label`, so only the last
+  // of the run survived and a branch to the FIRST could never resolve. That is a
+  // guaranteed false positive for any function whose branch lands on such a block;
+  // `spectra::analyseBands` reported two unresolvable targets while both labels were
+  // sitting in the file.
+  const src = readFileSync(path.join(ROOT, "tools", "codegen-diff.mjs"), "utf8");
+  const body = src.slice(src.indexOf("const BRANCH_TO"), src.indexOf("function parseNested"));
+  const { fromAsm, resolveBranchTargets } = await import(
+    `data:text/javascript,${encodeURIComponent(`${body}\nexport { fromAsm, resolveBranchTargets };`)}`
+  );
+
+  const asm = [
+    "_f:",
+    "\t.cfi_startproc",
+    "\tcmp\tx0, #0",
+    "\tb.eq\tLBB0_2",
+    "LBB0_2:",
+    "Ltmp7:",
+    "\tadd\tx0, x0, #1",
+    "\tret",
+  ].join("\n");
+
+  const entries = fromAsm(asm, "_f");
+  const resolved = resolveBranchTargets(entries);
+  assert.equal(resolved[1], "b.eq ->instr#2",
+    "a branch to the FIRST label of a run must resolve to the instruction after the run");
+
+  // Negative control: indexing only the surviving single label cannot find LBB0_2, which
+  // is precisely the old behaviour this test exists to prevent.
+  const onlyLast = new Map();
+  for (const e of entries) if (e.label && !onlyLast.has(e.label)) onlyLast.set(e.label, 1);
+  assert.equal(onlyLast.has("LBB0_2"), false,
+    "the single-label path really did drop the first label of the run");
+
+  // And the run's labels all point at the same position.
+  assert.deepEqual(entries[2].labels, ["LBB0_2", "Ltmp7"]);
+});
+
+test("a DIFFER reports how large the difference is", (t) => {
+  // "DIFFER" covers both "one constant is wrong" and "this is not the same function", and
+  // the summary line read identically either way. A transcriber needs the scale of the
+  // difference to know whether to keep going, and whether the remaining gap is
+  // instruction selection rather than a mistake.
+  //
+  // The note is a DIAGNOSTIC and deliberately does not change the tally: a permutation
+  // proves nothing about behaviour, since reordering across a dependency is exactly how a
+  // float reduction gets reassociated.
+  if (!bundlesInstalled()) { t.skip("plugin bundles are not installed"); return; }
+
+  const r = runDiff("spectra");
+  assert.match(r.raw, /DIFFER\s+spectra::downmixToMono\s+shipped=116 mine=116/,
+    `downmixToMono should differ in exactly one place:\n${r.raw}`);
+  assert.match(r.raw, /\(2 of 116 positions differ; the same instructions, REORDERED\)/,
+    `the scale of the difference must be reported:\n${r.raw}`);
+
+  // A different instruction count must NOT be described as a reordering, or the note
+  // would be worse than useless.
+  assert.match(r.raw, /DIFFER\s+spectra::analyse\s+shipped=341 mine=328/);
+  assert.match(r.raw, /\(different instruction counts\)/);
+
+  // The matcher itself, with a negative control: a genuine difference is not a
+  // permutation, and equal multisets are not claimed to be equal streams.
+  const src = readFileSync(path.join(ROOT, "tools", "codegen-diff.mjs"), "utf8");
+  const { sameMultiset } = new Function(
+    `${extractFunction(src, "sameMultiset")}; return { sameMultiset };`)();
+  assert.equal(sameMultiset(["a", "b"], ["b", "a"]), true);
+  assert.equal(sameMultiset(["a", "b"], ["a", "c"]), false, "a real difference is not a permutation");
+  assert.equal(sameMultiset(["a", "b"], ["a", "b", "c"]), false, "nor is a length change");
 });
 
 test("the differ still fails a deliberately wrong transcription", (t) => {

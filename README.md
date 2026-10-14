@@ -109,7 +109,7 @@ citing the instructions that establish each behaviour:
 | `echo::` | `clampf`, `blendPixel`, `compositeOver`, `buildLadder`, `sampleBilinear`, `transformBilinear`, plus the corrected `ImageF` layout and `BlendMode` | **complete — all 6 functions**. Recovering `transformBilinear` also CORRECTED `ImageF`: `data` had been modelled as a raw `float*` on the strength of a read that a `std::vector`'s begin pointer produces identically. The host integration is unread |
 | `colorpulse::` | `clampf`, `smoothScalar`, `luma709`, `smoothColor`, `saturationBoost`, plus the `RGB` layout | **5 of 10, ALL FIVE INSTRUCTION-IDENTICAL**. The colour analysers (`averageColor`, `sampleColor`, `brightestRegionColor`, `dominantColor`) and `regionBounds` are unread |
 | `aff::` | The AutoFlickerFix DSP: `clampf`, `dbToGainClamp`, `computeGain`, `centerRegion`, `meanOf`, `medianOf`, `trimmedMean` (both overloads), `medianFilter`, `temporalTarget`, plus the `GainClamp` and `RegionBounds` layouts | **complete — all 10 functions, 719 instructions, 7 of them INSTRUCTION-IDENTICAL**. The host integration (`EffectMain`, `SampleWorldStat`, `DrawStatsBar`) is unread |
-| `spectra::` | FFT, Hann window, STFT, band analysis, falloff envelope | **recovered, shared by 4 effects** |
+| `spectra::` | FFT, Hann window, STFT, band analysis, falloff envelope, `downmixToMono`, plus `Spectrogram` | **complete — all 13 functions, shared by 4 effects**, and 7 of them INSTRUCTION-IDENTICAL. The host integration is unread |
 
 Three fleet-wide duplications are recorded rather than silently deduplicated, because
 each was verified rather than assumed:

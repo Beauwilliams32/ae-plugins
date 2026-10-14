@@ -54,7 +54,13 @@ function resolveBranchTargets(entries) {
   // even when both sides jumped to the same place. Keeping the first occurrence makes
   // the two sides mean the same thing.
   const labelIndex = new Map();
-  entries.forEach((e, i) => { if (e.label && !labelIndex.has(e.label)) labelIndex.set(e.label, i); });
+  entries.forEach((e, i) => {
+    // EVERY label at this position, not just the one the entry happens to carry: clang
+    // emits runs of them (`LBB16_8:` then `Ltmp38:`), and indexing only one dropped the
+    // other out of the lookup entirely.
+    const here = e.labels ?? (e.label ? [e.label] : []);
+    for (const L of here) if (!labelIndex.has(L)) labelIndex.set(L, i);
+  });
   // Address -> index, for the shipped side.
   const addrIndex = new Map();
   entries.forEach((e, i) => { if (e.addr !== null) addrIndex.set(e.addr, i); });
@@ -137,6 +143,12 @@ function fromAsm(text, symbolFragment) {
   const out = [];
   let on = false;
   let label = null;
+  // Labels seen since the last instruction. A RUN of labels is normal clang output —
+  // `LBB16_8:` is immediately followed by `Ltmp38:` with no instruction between them —
+  // and with a single `label` slot only the LAST of the run survived, so a branch to the
+  // first one could never resolve. That made `spectra::analyseBands` report two
+  // unresolvable targets when both labels were sitting right there in the file.
+  let pending = [];
   for (const line of text.split("\n")) {
     if (isLabel(line)) {
       // `isLabel` matches FUNCTION symbols only (Mach-O underscore prefix), so a hit
@@ -150,12 +162,17 @@ function fromAsm(text, symbolFragment) {
     // Local labels (LBB0_1:) are branch TARGETS, not boundaries. Recording them lets
     // resolveBranchTargets turn a label into an instruction index.
     const localLabel = line.match(/^([A-Za-z_$][A-Za-z0-9_$.]*):/);
-    if (localLabel) { label = localLabel[1]; continue; }
+    if (localLabel) { pending.push(localLabel[1]); label = localLabel[1]; continue; }
     if (!line.startsWith("\t")) continue;
     const body = line.slice(1).split(";")[0];   // drop "; =0x.." annotations
     const norm = normalize(body);
     if (!norm || norm.startsWith(".")) continue;
-    out.push({ addr: null, label, text: norm });
+    // `labels` carries every label at this position; `label` stays for the callers that
+    // want one. A label means "the next instruction", which is exactly the index a branch
+    // to it should resolve to — so this is equivalent to the old last-one-wins behaviour
+    // for the labels it did capture, and complete for the ones it dropped.
+    out.push({ addr: null, label, labels: pending.length ? pending : null, text: norm });
+    pending = [];
   }
   return out;
 }
@@ -168,14 +185,23 @@ function fromAsm(text, symbolFragment) {
  * ("lsl #16") where the shipped binary disassembles to hex ("lsl #0x10"). Neither
  * is a semantic difference, so both are normalised away rather than reported as a
  * mismatch.
+ *
+ * THE CONVERSION IS BigInt, NOT Number, and that is load-bearing for 64-bit constants.
+ * A division-by-12 magic number is `#-6148914691236517206`, which is larger than
+ * 2^53, so `Number()` rounds it to ...55555400 before `toString(16)` ever runs and the
+ * result NEVER equals the shipped side's exact `#-0x5555555555555556`. Every function
+ * containing a 64-bit magic constant therefore differed by construction, at two
+ * positions per constant. `spectra::analyseBands` was reported as a 4-position
+ * difference for exactly this reason and is an exact match once the conversion is
+ * exact.
  */
 function normalize(instr) {
   return instr
     .replace(/\s+/g, " ")
     .trim()
     .replace(/#(-?\d+)\b/g, (_, d) => {
-      const n = Number(d);
-      return n < 0 ? `#-0x${(-n).toString(16)}` : `#0x${n.toString(16)}`;
+      const n = BigInt(d);
+      return n < 0n ? `#-0x${(-n).toString(16)}` : `#0x${n.toString(16)}`;
     });
 }
 
@@ -230,6 +256,24 @@ function parseNested(mangled) {
  * hand-written signature, so it cannot drift from what the binary actually declares. The
  * leading `E` closes the nested name and is dropped.
  */
+/**
+ * Whether two instruction streams hold the same instructions in a different order.
+ *
+ * Sorted comparison, so it is O(n log n) per function and only runs on a DIFFER. Used
+ * purely for the diagnostic line: it never turns a difference into a match.
+ *
+ * It is worth being precise about what this does NOT mean. Two streams with equal
+ * multisets can still compute different things — swapping two instructions that have a
+ * data dependency between them changes the result, and for floating point it changes it
+ * in the last bits at least. So the note tells a reader where to look, and nothing more.
+ */
+function sameMultiset(a, b) {
+  if (a.length !== b.length) return false;
+  const sa = [...a].sort();
+  const sb = [...b].sort();
+  return sa.every((x, i) => x === sb[i]);
+}
+
 function distinguish(mangled, name, nameCounts) {
   if ((nameCounts.get(name) ?? 0) < 2) return "";
   const marker = `${name.length}${name}`;
@@ -354,6 +398,26 @@ function main() {
           console.log(`            shipped: ${a[i] ?? ""}`);
           console.log(`            mine   : ${b[i] ?? ""}`);
         }
+        // A DIFFER is a big tent: it covers "one constant is wrong" and "this is not the
+        // same function", and the summary line reads the same either way. A transcriber
+        // needs to tell those apart to know whether to keep going. So report the scale of
+        // the difference — how many positions differ, and whether the two streams are the
+        // same instructions in a different ORDER.
+        //
+        // The multiset note is a DIAGNOSTIC, not a verdict, and deliberately does not
+        // affect the tally: a permutation proves nothing about behaviour, because
+        // reordering across a dependency is exactly how a float reduction gets
+        // reassociated and starts returning different numbers. It says only "stop looking
+        // for a wrong instruction and start looking at scheduling".
+        const note = [];
+        if (a.length === b.length) {
+          const differing = a.reduce((acc, x, i) => acc + (x === b[i] ? 0 : 1), 0);
+          note.push(`${differing} of ${a.length} positions differ`);
+          if (sameMultiset(a, b)) note.push("the same instructions, REORDERED");
+        } else {
+          note.push("different instruction counts");
+        }
+        console.log(`            (${note.join("; ")})`);
         ++differed;
       }
     }

@@ -532,6 +532,65 @@ int main() {
     }
   }
 
+  std::printf("downmixToMono\n");
+  {
+    // The two guards, and the difference between them: a null pointer and a channel
+    // count below 1 both return EMPTY, and they are checked in that order — the null
+    // test first, so a null pointer with a sane channel count does not run the pointer
+    // arithmetic before bailing.
+    check(spectra::downmixToMono(nullptr, 8, 2).empty(),
+          "a null input returns an empty vector");
+    check(spectra::downmixToMono(nullptr, 8, -3).empty(),
+          "and so does a null input with a nonsense channel count");
+    {
+      const float in[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+      check(spectra::downmixToMono(in, 4, 0).empty(), "channels == 0 returns empty");
+      check(spectra::downmixToMono(in, 4, -1).empty(), "a negative channel count returns empty");
+      check(spectra::downmixToMono(in, 0, 2).empty(), "frames == 0 returns empty");
+
+      // IT AVERAGES. Stereo {1,3} -> 2, not 4. A summing downmix would give 4 here and
+      // differ from the shipped effect by a straight 6 dB of level on every frame.
+      const auto stereo = spectra::downmixToMono(in, 4, 2);
+      check(stereo.size() == 4, "stereo in gives four mono frames");
+      checkNear(stereo[0], 1.5f, 0.0f, "the first stereo pair averages to 1.5 (1+2)/2");
+      checkNear(stereo[3], 7.5f, 0.0f, "and the last to 7.5 (7+8)/2");
+
+      // A single channel is a pass-through at the same level, which is the case that
+      // distinguishes "divide by channels" from "divide by 2".
+      const auto mono = spectra::downmixToMono(in, 8, 1);
+      check(mono.size() == 8, "one channel in gives eight mono frames");
+      bool passthrough = true;
+      for (size_t i = 0; i < mono.size(); ++i) {
+        if (mono[i] != in[i]) passthrough = false;
+      }
+      check(passthrough, "one channel is a pass-through, not a halving");
+
+      // Six channels divide by SIX, not by 2 and not by 3. This is the assertion that
+      // pins the divisor to the channel count.
+      const float six[6] = {6, 6, 6, 6, 6, 6};
+      const auto surround = spectra::downmixToMono(six, 1, 6);
+      checkNear(surround[0], 6.0f, 1e-6f, "six channels of 6 average to 6 (divide by 6)");
+
+      // The sum is a SEQUENTIAL fadd chain, so the accumulation order is preserved and
+      // not reassociated. Summing 0.1f six times in order is not the same float as any
+      // pairwise or SIMD regrouping, so comparing against an in-order accumulation is a
+      // real test of the order rather than of the arithmetic.
+      float ordered = 0.0f;
+      const float tenths[6] = {0.1f, 0.1f, 0.1f, 0.1f, 0.1f, 0.1f};
+      for (float v : tenths) ordered += v;
+      const auto tenthsOut = spectra::downmixToMono(tenths, 1, 6);
+      check(tenthsOut[0] == ordered / 6.0f,
+            "the six-way sum is accumulated in ORDER, bit for bit");
+
+      // Interleaving is frame-major: frame i occupies samples [i*channels, +channels).
+      const float ramp[6] = {0, 1, 2, 3, 4, 5};
+      const auto pairs = spectra::downmixToMono(ramp, 3, 2);
+      checkNear(pairs[0], 0.5f, 0.0f, "frame 0 is the first pair, not the first three");
+      checkNear(pairs[1], 2.5f, 0.0f, "frame 1 is the second pair");
+      checkNear(pairs[2], 4.5f, 0.0f, "frame 2 is the third pair");
+    }
+  }
+
   std::printf("\n%s\n", failures == 0 ? "ALL RECOVERED MATHS VERIFIED" : "TRANSCRIPTION ERRORS PRESENT");
   return failures == 0 ? 0 : 1;
 }

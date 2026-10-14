@@ -4,6 +4,10 @@
 // SpectraKeys.plugin (MD5 79960266bd76621d60213efd98b4ca60), not from source:
 // the original C++ was destroyed on 2026-10-13 with no remote and no backup.
 //
+// NAMESPACE-COMPLETE: every `spectra::` symbol in the bundle is transcribed, so
+// tools/codegen-diff.mjs reports zero unrecovered symbols for this directory.
+// test/codegen.test.mjs asserts that marker and that measurement agree.
+//
 // SIGNATURE FIDELITY: declarations marked [exact] were recovered verbatim from
 // symbol mangling and are not guesses. The enclosing types were NOT recovered
 // as definitions — only their names appear in symbols — so the struct/class
