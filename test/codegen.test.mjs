@@ -269,6 +269,53 @@ test("the differ keeps overloads apart instead of collapsing them by name", () =
     `and the pointer overload must be distinguishable from it:\n${r.raw}`);
 });
 
+test("completeness is asserted in BOTH directions and cannot drift", (t) => {
+  // A namespace can be complete in two senses that are easy to confuse, so both are
+  // checked against the same source of truth — the differ's `absent` tally, which counts
+  // MANGLED symbols and therefore counts overloads separately.
+  //
+  //   * a header marked NAMESPACE-COMPLETE must have zero unrecovered symbols;
+  //   * a namespace with zero unrecovered symbols must be marked.
+  //
+  // The second direction is the one that matters. Asserting only the first lets a
+  // namespace be finished in fact while its header still tells a reader that functions
+  // are unread — which is exactly the state `echo::` was in for one commit, and the kind
+  // of stale claim this repository has already shipped twice. The marker is a single
+  // literal line so it cannot be satisfied by a phrasing accident: prose was tried first,
+  // and `colorpulse::` says "recovered in full" about a SUBSET of its functions, so no
+  // pattern over the existing sentences could tell complete from partial.
+  if (!bundlesInstalled()) { t.skip("plugin bundles are not installed"); return; }
+
+  const MARK = "NAMESPACE-COMPLETE";
+  const measured = [];
+  const marked = [];
+
+  for (const dir of Object.keys(BUNDLES)) {
+    let header;
+    try { header = readFileSync(path.join(ROOT, "src", dir, `${dir}.h`), "utf8"); }
+    catch { continue; }                       // no recovered source for this bundle
+    const hasMark = header.includes(MARK);
+    const r = runDiff(dir);
+    if (hasMark) marked.push(dir);
+    if (r.absent === 0) measured.push(dir);
+    if (hasMark) {
+      assert.equal(r.absent, 0,
+        `src/${dir}/ is marked ${MARK} but the differ still reports ${r.absent} `
+        + `unrecovered symbol(s):\n${r.raw}`);
+    }
+  }
+
+  assert.deepEqual(marked.slice().sort(), measured.slice().sort(),
+    `the ${MARK} markers and the measurement disagree.\n`
+    + `  marked:   ${marked.join(", ") || "(none)"}\n`
+    + `  measured: ${measured.join(", ") || "(none)"}\n`
+    + "A namespace with no unrecovered symbols must carry the marker, and a marked one "
+    + "must have no unrecovered symbols.");
+
+  assert.ok(marked.length >= 3,
+    `expected at least three complete namespaces, found ${marked.length}`);
+});
+
 test("the differ still fails a deliberately wrong transcription", (t) => {
   // THE NEGATIVE CONTROL FOR THE THREE FIXES ABOVE.
   //

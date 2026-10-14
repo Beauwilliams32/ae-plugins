@@ -10,6 +10,10 @@
 // Recovered from the demangled symbol table and disassembly of AutoFlickerFix.plugin.
 // The original C++ was destroyed on 2026-10-13 with no remote and no backup.
 //
+// NAMESPACE-COMPLETE: every `aff::` symbol in the bundle is transcribed, so
+// tools/codegen-diff.mjs reports zero unrecovered symbols for this directory.
+// test/codegen.test.mjs asserts that marker and that measurement agree.
+//
 // SCOPE. All TEN `aff::` domain functions are recovered in full (719 instructions).
 // What is NOT recovered is the host integration: `EffectMain` (681 instructions,
 // present as a symbol) and the two anonymous-namespace helpers that touch the AE world

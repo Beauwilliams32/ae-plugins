@@ -9,6 +9,10 @@
 //
 // Signatures are [exact]; types and layouts marked [recovered] were pinned by the
 // code that reads them.
+//
+// NAMESPACE-COMPLETE: every `typeriser::` symbol in the bundle is transcribed, so
+// tools/codegen-diff.mjs reports zero unrecovered symbols for this directory.
+// test/codegen.test.mjs asserts that marker and that measurement agree.
 
 #pragma once
 #include <cstddef>

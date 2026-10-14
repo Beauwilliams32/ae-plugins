@@ -63,10 +63,10 @@ Be clear-eyed about this:
 - **Most function bodies.** Eight namespaces are recovered (see below); the other
   effects' DSP is still machine code. Names and signatures are free, behaviour needs
   per-function disassembly, and that is the bulk of the remaining work.
-- **`lutblend::parseCube`** (1924 instructions) and `echo::buildLadder` /
-  `sampleBilinear` / `transformBilinear` are identified but unread. Where a body is
-  unread it is **absent rather than stubbed**, and a test asserts it stays absent, so
-  a stub cannot quietly make a namespace look complete.
+- **`lutblend::parseCube`** (1924 instructions) is identified but unread, along with
+  `echo`'s host integration and 12 effects' bodies. Where a body is unread it is
+  **absent rather than stubbed**, and a test asserts it stays absent, so a stub cannot
+  quietly make a namespace look complete.
 - **The original build system.** No Makefile, no CMake. The SDK version is known and
   verified (`0x000d001d` — AE SDK 25.6); the original flags are not.
 - **The original DSP test suite.** Gone.
@@ -106,7 +106,7 @@ citing the instructions that establish each behaviour:
 | `glitch::` | `clampf`, `clampi`, `hashKey`, `patternFrame` | **complete for the scalar layer, and INSTRUCTION-IDENTICAL** (4/4). The render engine `glitch::apply<T>` is unrecovered |
 | `speedramp::` | `easeValue`, `easeIntegral`, `speedAt`, `mapTime`, `computeBlend`, plus `RampParams` and `FrameBlend` | **complete — all 5 functions, 261 instructions** |
 | `lutblend::` | `clampf`, `lerpf`, `luma709`, `CubeLUT::valid`, `sampleLUT`, `makeIdentity`, `applyLUTBlend`, plus the `CubeLUT` layout | **7 of 8** (`parseCube` pending — 1924 instructions, the largest function in the fleet) |
-| `echo::` | `clampf`, `blendPixel`, `compositeOver`, plus `ImageF` and `BlendMode` | **3 of 6** (`buildLadder`, `sampleBilinear`, `transformBilinear` unread) |
+| `echo::` | `clampf`, `blendPixel`, `compositeOver`, `buildLadder`, `sampleBilinear`, `transformBilinear`, plus the corrected `ImageF` layout and `BlendMode` | **complete — all 6 functions**. Recovering `transformBilinear` also CORRECTED `ImageF`: `data` had been modelled as a raw `float*` on the strength of a read that a `std::vector`'s begin pointer produces identically. The host integration is unread |
 | `colorpulse::` | `clampf`, `smoothScalar`, `luma709`, `smoothColor`, `saturationBoost`, plus the `RGB` layout | **5 of 10, ALL FIVE INSTRUCTION-IDENTICAL**. The colour analysers (`averageColor`, `sampleColor`, `brightestRegionColor`, `dominantColor`) and `regionBounds` are unread |
 | `aff::` | The AutoFlickerFix DSP: `clampf`, `dbToGainClamp`, `computeGain`, `centerRegion`, `meanOf`, `medianOf`, `trimmedMean` (both overloads), `medianFilter`, `temporalTarget`, plus the `GainClamp` and `RegionBounds` layouts | **complete — all 10 functions, 719 instructions, 7 of them INSTRUCTION-IDENTICAL**. The host integration (`EffectMain`, `SampleWorldStat`, `DrawStatsBar`) is unread |
 | `spectra::` | FFT, Hann window, STFT, band analysis, falloff envelope | **recovered, shared by 4 effects** |

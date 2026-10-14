@@ -5,6 +5,11 @@
 // given output time should sample. Five small scalar functions, 261 instructions in
 // total, recovered in full.
 //
+// NAMESPACE-COMPLETE: every `speedramp::` symbol in the bundle is transcribed, so
+// tools/codegen-diff.mjs reports zero unrecovered symbols for this directory.
+// test/codegen.test.mjs asserts that marker and that measurement agree.
+//
+//
 // Recovered from the demangled symbol table and disassembly of SpeedRampCurve.plugin.
 // The original C++ was destroyed on 2026-10-13 with no remote and no backup.
 
