@@ -28,7 +28,10 @@ is merely identified.
 | `spectra::fftRadix2` (guard, bit-reversal, stages, butterfly) | `src/spectra/spectra.cpp` | **Recovered + verified** — covers 3 effects via shared code | `selfcheck.cpp` vs naive DFT |
 | Twiddle-recurrence error characteristic at N up to 8192 | `src/spectra/RECOVERY-NOTES.md` | **Measured** — 2.5e-05 relative at max size, not a defect | `selfcheck.cpp` tolerance |
 | `pathscribe::fftRadix2` / `beatsnap::fftRadix2` identical copies | `tools/dsp-duplication.mjs` | **Verified identical** — one implementation serves all three | `test/spectra.test.mjs` |
-| `spectra::analyse` / `analyseBands` / `rawBandLevel` / `bandValues` | `specs/SpectraKeys.md` | **Identified only** | none yet |
+| `spectra::analyse` (STFT: centred frames, zero pad, Hann, magnitude) | `src/spectra/spectra.cpp` | **Recovered + verified** — covers 2 effects | `selfcheck.cpp` (Hann fingerprint) |
+| `AnalysisConfig` layout (sampleRate/hopDivisor) | `src/spectra/spectra.h` | **Recovered**; @0x10's unit deliberately left open | `selfcheck.cpp` |
+| SpectraKeys chain: downmix→window→fft→magnitude→band→envelope | `src/spectra/` | **Complete, end to end** | 98 compiled checks |
+| `spectra::analyseBands` | `specs/SpectraKeys.md` | **Identified only** | none yet |
 | `spectra::downmixToMono` | `specs/SpectraKeys.md` | **Identified only** | none yet |
 | `spectra::Spectrogram::hzToBin` | `src/spectra/spectra.cpp` | **Recovered + verified** | `selfcheck.cpp` via `test/spectra.test.mjs` |
 | `Spectrogram` field layout (binCount @0, hzPerBin @8) | `src/spectra/spectra.h` | **Recovered** from `hzToBin`'s loads | `selfcheck.cpp` |

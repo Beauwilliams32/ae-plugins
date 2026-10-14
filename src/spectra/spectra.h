@@ -53,15 +53,27 @@ struct BandSpec {
   bool binarise;       // [recovered] offset 0x2c  (true -> every level becomes 0 or 1)
 };
 
-// [inferred] FFT analysis settings. The parameter strings expose "FFT Size",
-// "Display Mode", "Floor (dB)", "Ceiling (dB)" and "Falloff Time (s)".
+// [RECOVERED LAYOUT] analyse() reads exactly three fields and its arithmetic
+// pins all of them:
+//
+//   ldr  d0, [x2]        ; double @0      -> divided by fftSize to make hzPerBin
+//   ldr  w26, [x2, #0x8] ; int    @8      -> fftSize (power-of-two checked inline)
+//   ldr  d1, [x2, #0x10] ; double @0x10   -> divided into @0 to make the hop rate
+//
+// @0 is a SAMPLE RATE: hzPerBin = @0 / fftSize goes straight into the Spectrogram,
+// so @0 must be Hz.
+//
+// @0x10 is a hop DIVISOR, and deliberately not named after a unit. analyse
+// computes samplesPerHop = @0 / @0x10 and then frameCount = ceil(frames /
+// samplesPerHop). A hop RATE in Hz fits that (samplesPerHop = sampleRate /
+// hopRate), but so does a fixed overlap factor such as fftSize/2. analyse alone
+// cannot distinguish them, so the field is named for how it is used and the
+// meaning is left open. Naming it "hopSeconds" was WRONG — dividing by seconds
+// gives 1/s^2, which is why a test passing 0.008 produced a frame count of 1.
 struct AnalysisConfig {
-  int fftSize;      // must be a power of two — isPowerOfTwo() guards it
-  int sampleRate;
-  float floorDb;
-  float ceilingDb;
-  float falloffSeconds;
-  int displayMode;
+  double sampleRate;  // [recovered] offset 0, in Hz
+  int fftSize;        // [recovered] offset 8, must be a power of two and >= 2
+  double hopDivisor;  // [recovered] offset 0x10; samplesPerHop = sampleRate / this
 };
 
 // [inferred] A short-time magnitude spectrogram: one magnitude row per frame.

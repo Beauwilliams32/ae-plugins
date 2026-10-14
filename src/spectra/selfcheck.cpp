@@ -34,6 +34,9 @@ void checkNear(float got, float want, float tol, const char* what) {
 }  // namespace
 
 int main() {
+  // Unbuffered: if a check crashes, the redirected output must still show how
+  // far it got. Block buffering hid the crash site once already.
+  std::setvbuf(stdout, nullptr, _IONBF, 0);
   std::printf("clampf\n");
   checkNear(spectra::clampf(5.0f, 0.0f, 10.0f), 5.0f, 0.0f, "mid value passes through");
   checkNear(spectra::clampf(-3.0f, 0.0f, 10.0f), 0.0f, 0.0f, "below lo clamps to lo");
@@ -378,6 +381,84 @@ int main() {
       spectra::Spectrogram none;
       none.binCount = 4; none.frameCount = 0; none.hzPerBin = 100.0;
       check(spectra::bandValues(none, mk(), 1.0).empty(), "frameCount 0 returns empty");
+    }
+  }
+
+
+  std::printf("analyse (STFT: centred frames, zero padding, magnitude)\n");
+  {
+    spectra::AnalysisConfig cfg{};
+    cfg.sampleRate = 8000.0;   // 8 kHz keeps the arithmetic easy to read
+    cfg.fftSize = 64;
+    cfg.hopDivisor = 125.0;    // samplesPerHop = 8000/125 = 64
+
+    // 512 samples at 8 kHz with 64 samples per hop gives exactly 8 frames.
+    const size_t N = 512;
+    std::vector<float> mono(N, 0.0f);
+
+    // Pure tone at exactly bin 4: frequency = bin * sampleRate / fftSize.
+    const double binHz = 4.0 * 8000.0 / 64.0;   // 500 Hz
+    for (size_t t = 0; t < N; ++t)
+      mono[t] = static_cast<float>(std::sin(2.0 * M_PI * binHz * static_cast<double>(t) / 8000.0));
+
+    const spectra::Spectrogram sp = spectra::analyse(mono.data(), N, cfg);
+
+    check(sp.binCount == 32, "binCount is fftSize/2 (real-packed spectrum)");
+    check(sp.frameCount == 8, "frameCount is ceil(frames / samplesPerHop)");
+    checkNear(static_cast<float>(sp.hzPerBin), 8000.0f / 64.0f, 1e-6f, "hzPerBin = sampleRate / fftSize");
+    check(sp.frames.size() == 8, "one spectrum row per frame");
+    if (sp.frames.size() < 8) { std::printf("  (skipping dependent checks: too few frames)\n"); }
+    check(sp.frames[4].size() == 32, "each row has binCount entries");
+
+    // A bin-4 tone must dominate bin 4 in a middle frame.
+    const std::vector<float>& mid = sp.frames.at(4);
+    size_t peakBin = 0;
+    for (size_t k = 1; k < mid.size(); ++k) if (mid[k] > mid[peakBin]) peakBin = k;
+    check(peakBin == 4, "a 500 Hz tone peaks in the bin it belongs to");
+
+    // Amplitude scale, and the window's signature. For a bin-centred unit sine the
+    // Hann window gives A*N/4 at the peak bin, and the 4/fftSize scale divides
+    // that back to exactly A. Hann also puts first sidelobes at half the peak and
+    // nulls beyond, so 0.5 / 1.0 / 0.5 / 0.0 is a fingerprint of a correct
+    // windowed DFT — a wrong window, scale or bin mapping breaks the pattern.
+    checkNear(mid[4], 1.0f, 1e-3f, "a bin-centred unit sine normalises to exactly 1.0");
+    checkNear(mid[3], 0.5f, 1e-3f, "Hann first sidelobe sits at half the peak");
+    checkNear(mid[5], 0.5f, 1e-3f, "and symmetrically on the other side");
+    checkNear(mid[6], 0.0f, 1e-4f, "and the next bin out is a null");
+
+    // Zero padding: the first and last frames are centred on positions that run
+    // off both ends of the signal, so they must still exist rather than be skipped.
+    bool firstRowFinite = true, lastRowFinite = true;
+    for (float v : sp.frames.front()) if (!std::isfinite(v)) firstRowFinite = false;
+    for (float v : sp.frames.back()) if (!std::isfinite(v)) lastRowFinite = false;
+    check(firstRowFinite && lastRowFinite, "edge frames are zero-padded, not dropped or NaN");
+
+    // A signal shorter than one window still yields at least one frame.
+    {
+      std::vector<float> tiny(8, 1.0f);
+      const spectra::Spectrogram s2 = spectra::analyse(tiny.data(), tiny.size(), cfg);
+      check(s2.frameCount >= 1, "a signal shorter than the window still yields a frame");
+    }
+
+    // Silence is silent, and finite.
+    {
+      std::vector<float> silence(512, 0.0f);
+      const spectra::Spectrogram s3 = spectra::analyse(silence.data(), silence.size(), cfg);
+      bool allZero = true;
+      for (const auto& row : s3.frames) for (float v : row) if (v != 0.0f) allZero = false;
+      check(allZero, "silence produces exactly zero magnitudes (no NaN from the 1e-9 guard path)");
+    }
+
+    // The guards mirror the compiled ones.
+    check(spectra::analyse(nullptr, 512, cfg).frames.empty(), "null input returns empty");
+    check(spectra::analyse(mono.data(), 0, cfg).frames.empty(), "zero frames returns empty");
+    {
+      spectra::AnalysisConfig bad = cfg; bad.fftSize = 48;   // not a power of two
+      check(spectra::analyse(mono.data(), N, bad).frames.empty(), "non-power-of-two fftSize returns empty");
+      spectra::AnalysisConfig bad2 = cfg; bad2.sampleRate = 0.0;
+      check(spectra::analyse(mono.data(), N, bad2).frames.empty(), "zero sampleRate returns empty");
+      spectra::AnalysisConfig bad3 = cfg; bad3.hopDivisor = 0.0;
+      check(spectra::analyse(mono.data(), N, bad3).frames.empty(), "zero hop returns empty");
     }
   }
 

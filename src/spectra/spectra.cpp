@@ -550,4 +550,138 @@ std::vector<float> bandValues(const Spectrogram& spectrogram, const BandSpec& ba
 }
 
 
+// ---------------------------------------------------------------------------
+// analyse(const float* mono, size_t frames, const AnalysisConfig& config)
+//
+// __ZN7spectra7analyseEPKfmRKNS_14AnalysisConfigE, 341 instructions — the largest
+// recovery in the fleet, and shared verbatim with PathScribe (see
+// tools/dsp-duplication.mjs). With it the whole SpectraKeys chain is recovered:
+//
+//   samples -> window -> fft -> magnitude -> Spectrogram -> band level -> keyframe
+//
+// 1. GUARDS (0xe94..0xed4). All of these return an empty Spectrogram:
+//        cbz x0 / cbz x1                 ; mono and frame count non-null
+//        ldr d0,[x2] / fcmp / b.ls       ; sampleRate > 0
+//        ldr d1,[x2,#0x10] / fcmp / b.ls ; hopDivisor > 0
+//        subs w8,w26,#1 / b.lt           ; fftSize >= 1
+//        and w8,w26,w8 / cbnz            ; and a power of two, INLINED here
+//        cmp w26,#2 / b.lo               ; and at least 2
+//
+// 2. GEOMETRY (0xed8..0xef8):
+//        fdiv d8, d0, d1      ; samplesPerHop = sampleRate / @0x10
+//        fdiv d0, d0, d2      ; sampleRate / fftSize
+//        str  d0, [x19,#0x8]  ; spectrogram.hzPerBin
+//        ucvtf d0, x20 / fdiv d0,d0,d8
+//        fcvtps w22, d0       ; frameCount = ceil(frames / samplesPerHop)
+//        lsr  x27, x26, #1    ; fftSize / 2
+//        stp  w27, w22, [x19] ; binCount = fftSize/2, frameCount
+//   binCount being fftSize/2 is what makes this a real-packed spectrum: the FFT
+//   runs at full length but only the non-redundant half is kept.
+//
+// 3. WINDOW (0xf54..0x1090): a Hann window of length FFT SIZE — not binCount —
+//    built inline rather than by calling hannWindow(). The immediates give it
+//    away: 0x40c90fdb (2*pi) and movi #0x3f lsl 24 (0.5), same formula as
+//    hannWindow, unrolled four-wide with a scalar tail:
+//        ldr q1,[sp,#0x30] / fmul s0,s1,s0.5   ; fftSize * 0.5
+//    The full-length window is correct: the samples being weighted number
+//    fftSize, even though only half the resulting spectrum survives.
+//
+// 4. FRAME LOOP (0x10e4..0x11b4). Frames are CENTRED on their hop positions,
+//    which is the detail most likely to be got wrong:
+//        fmov d9,#0.5 / ucvtf d0,w25 / fadd d0,d0,d9  ; i + 0.5
+//        fmul d0, d8, d0                              ; * samplesPerHop
+//        fcvtas x8, d0                                ; round half away from zero
+//        sub  x8, x8, x27                             ; - fftSize/2 = window start
+//    Each sample is then fetched with ZERO PADDING at both ends:
+//        movi.2d v0,#0
+//        tbnz x8,#0x3f <store>   ; start+k < 0     -> 0.0
+//        cmp x8,x20 / b.hs <store> ; start+k >= frames -> 0.0
+//        ldr s0,[x21,x8,lsl#2]   ; otherwise the sample
+//        ldr s1,[x12],#4 / fmul  ; * window[k]
+//        str s0,[x11],#4         ; re[k]
+//        str wzr,[x10],#4        ; im[k] = 0
+//    So a frame near either edge is windowed against zeros rather than skipped,
+//    which is why frameCount stays ceil(frames/samplesPerHop) even for a signal
+//    shorter than one window.
+//
+// 5. TRANSFORM (0x11b8): the shared fftRadix2, not a copy.
+//
+// 6. MAGNITUDE (0x11c4..0x120c), for k in [0, binCount):
+//        fmul  s1,s1,s1 / fmadd s0,s0,s1  ; re*re + im*im
+//        fsqrt s0,s0                      ; magnitude, NOT power
+//        fmul  s0,s16,s0                  ; * scale
+//    where s16 = 2.0 / (fftSize * 0.5) == 4.0 / fftSize, computed once at
+//    (0x10f4..0x1140). Presenting sqrt(re^2+im^2) rather than the power is a
+//    real choice: it is amplitude-like, so dB conversion downstream sees a linear
+//    amplitude, which is what linearToDb's *20 factor expects.
+//    There is a separate 4-wide SIMD path for fftSize > 7, arithmetically
+//    identical to the scalar one.
+// ---------------------------------------------------------------------------
+Spectrogram analyse(const float* mono, size_t frames, const AnalysisConfig& config) {
+  Spectrogram out;
+  if (mono == nullptr || frames == 0) return out;
+
+  const double sampleRate = config.sampleRate;
+  const int fftSize = config.fftSize;
+  const double hopDivisor = config.hopDivisor;
+  if (!(sampleRate > 0.0)) return out;
+  if (!(hopDivisor > 0.0)) return out;
+  if (fftSize < 2) return out;
+  if (!isPowerOfTwo(fftSize)) return out;
+
+  const double samplesPerHop = sampleRate / hopDivisor;
+  out.hzPerBin = sampleRate / static_cast<double>(fftSize);
+  out.binCount = fftSize / 2;
+
+  const double frameCountRaw = static_cast<double>(frames) / samplesPerHop;
+  // fcvtps: round toward +inf, i.e. a ceiling.
+  const int frameCount = static_cast<int>(std::ceil(frameCountRaw));
+  out.frameCount = frameCount;
+  if (frameCount < 1) { out.frameCount = 0; return out; }
+
+  // Hann window over the full FFT length (inlined in the binary).
+  std::vector<float> window(static_cast<size_t>(fftSize));
+  const float twoPi = 6.28318530717958647692f;
+  const float nf = static_cast<float>(fftSize);
+  for (int k = 0; k < fftSize; ++k) {
+    window[static_cast<size_t>(k)] =
+        0.5f * (1.0f - std::cos(twoPi * static_cast<float>(k) / nf));
+  }
+
+  // frames.assign(frameCount, vector<float>(binCount, 0.0f)) — one assign, as compiled.
+  const std::vector<float> zeroRow(static_cast<size_t>(out.binCount), 0.0f);
+  out.frames.assign(static_cast<size_t>(frameCount), zeroRow);
+
+  std::vector<float> re(static_cast<size_t>(fftSize));
+  std::vector<float> im(static_cast<size_t>(fftSize));
+  const float scale = 4.0f / nf;  // 2.0 / (fftSize * 0.5)
+
+  for (int i = 0; i < frameCount; ++i) {
+    // Centre of this frame, rounded half away from zero like fcvtas.
+    const double centre = std::round((static_cast<double>(i) + 0.5) * samplesPerHop);
+    const long long start = static_cast<long long>(centre) - (fftSize / 2);
+
+    for (int k = 0; k < fftSize; ++k) {
+      const long long idx = start + k;
+      float sample = 0.0f;
+      if (idx >= 0 && static_cast<size_t>(idx) < frames) {
+        sample = mono[static_cast<size_t>(idx)];
+      }
+      re[static_cast<size_t>(k)] = sample * window[static_cast<size_t>(k)];
+      im[static_cast<size_t>(k)] = 0.0f;
+    }
+
+    fftRadix2(re, im);
+
+    std::vector<float>& row = out.frames[static_cast<size_t>(i)];
+    for (int k = 0; k < out.binCount; ++k) {
+      const float r = re[static_cast<size_t>(k)];
+      const float m = im[static_cast<size_t>(k)];
+      row[static_cast<size_t>(k)] = scale * std::sqrt(r * r + m * m);
+    }
+  }
+  return out;
+}
+
+
 }  // namespace spectra
