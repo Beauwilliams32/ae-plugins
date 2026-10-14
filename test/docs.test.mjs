@@ -133,9 +133,22 @@ test("the namespace list in the documentation matches src/", () => {
   }
 
   // And the stated count, wherever it appears.
-  for (const m of text.matchAll(/(\w+)\s+namespaces?/g)) {
+  // "N namespaces" and the two shapes this README actually uses: "N recovered
+  // namespaces" and "N source namespaces". The narrower pattern missed the second
+  // shape entirely, which is how a "ten recovered namespaces" claim against nine
+  // directories passed — the word the check looked at was "recovered".
+  for (const m of text.matchAll(/(\w+)\s+(?:(?:recovered|source)\s+)?namespaces?/g)) {
     const word = m[1].toLowerCase();
-    const nums = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8 };
+    // The map used to stop at "eight", which is exactly how far the README's own
+    // count word had got: adding the ninth recovered namespace left a "nine" claim
+    // unchecked, and an earlier edition had already drifted to saying "nine" while
+    // src/ held eight. Any number word the README might plausibly use is checked, so
+    // a count claim cannot escape by being a word this map does not know.
+    const nums = {
+      one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
+      nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14,
+      fifteen: 15, sixteen: 16,
+    };
     if (nums[word] !== undefined) {
       assert.equal(nums[word], actual.length,
         `README says "${m[0]}" but src/ holds ${actual.length} namespaces: `

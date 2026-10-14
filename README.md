@@ -60,7 +60,7 @@ modifies, moves or copies them.
 
 Be clear-eyed about this:
 
-- **Most function bodies.** Ten namespaces are recovered (see below); the other
+- **Most function bodies.** Nine namespaces are recovered (see below); the other
   effects' DSP is still machine code. Names and signatures are free, behaviour needs
   per-function disassembly, and that is the bulk of the remaining work.
 - **`lutblend::parseCube`** (1924 instructions) is identified but unread, along with
@@ -98,7 +98,7 @@ Two findings already worth acting on:
 
 ## Recovered source
 
-Ten recovered namespaces, all transcribed from the disassembly with per-function commentary
+Nine recovered namespaces, all transcribed from the disassembly with per-function commentary
 citing the instructions that establish each behaviour:
 
 | Module | Contents | State |
