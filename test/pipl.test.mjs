@@ -72,7 +72,7 @@ function have(cmd) {
   catch { return false; }
 }
 
-test("the rebuilt SpectraKeys PiPL is byte-identical to the shipped one", (t) => {
+test("every rebuilt PiPL is byte-identical to the shipped one", (t) => {
   const sdk = findSdk();
   if (!sdk) {
     t.skip("AE SDK not found — set AE_SDK_DIR to <SDK>/Examples to run this proof");
@@ -82,47 +82,65 @@ test("the rebuilt SpectraKeys PiPL is byte-identical to the shipped one", (t) =>
     t.skip("Rez not available — install the Xcode command line tools");
     return;
   }
-  const shipped = findBundleRsrc("SpectraKeys", "SpectraKeys.rsrc");
-  if (!shipped) {
-    t.skip("SpectraKeys.plugin is not installed on this machine");
-    return;
-  }
+
+  // Drive the fleet from the specs so a new effect is covered automatically.
+  const plugins = readdirSync(path.join(ROOT, "specs"))
+    .filter((f) => f.endsWith(".json") && f !== "index.json")
+    .map((f) => JSON.parse(readFileSync(path.join(ROOT, "specs", f), "utf8")))
+    .sort((a, b) => a.plugin.localeCompare(b.plugin));
+  assert.ok(plugins.length > 0, "no specs found");
 
   const dir = mkdtempSync(path.join(tmpdir(), "pipl-"));
-  const out = path.join(dir, "SpectraKeys.rsrc");
+  let verified = 0;
+  let installed = 0;
   try {
-    execFileSync("Rez", [
-      "-useDF",
-      "-o", out,
-      "-I", path.join(sdk, "Headers"),
-      "-I", path.join(sdk, "Resources"),
-      "-d", "AE_OS_MAC",
-      "-d", "AE_PROC_ARM64",
-      path.join(ROOT, "packaging", "SpectraKeysPiPL.r"),
-    ], { stdio: "pipe" });
+    for (const { plugin, pipl } of plugins) {
+      const shipped = findBundleRsrc(plugin, `${plugin}.rsrc`);
+      if (shipped) installed++;
 
-    const built = readFileSync(out);
-    const real = readFileSync(shipped);
+      // The .r is generated from the spec, so building it exercises the spec.
+      const out = path.join(dir, `${plugin}.rsrc`);
+      execFileSync("Rez", [
+        "-useDF",
+        "-o", out,
+        "-I", path.join(sdk, "Headers"),
+        "-I", path.join(sdk, "Resources"),
+        "-d", "AE_OS_MAC",
+        "-d", "AE_PROC_ARM64",
+        path.join(ROOT, "packaging", `${plugin}PiPL.r`),
+      ], { stdio: "pipe" });
 
-    // Same overall size, and identical everywhere before the resource map.
-    assert.equal(built.length, real.length, "resource file size differs");
-    assert.ok(built.subarray(0, DATA_END).equals(real.subarray(0, DATA_END)),
-      "the PiPL payload differs from the shipped bundle");
+      const built = readFileSync(out);
 
-    // Prove the PiPL actually carries the claims, so a vacuously identical pair
-    // of empty resources could never pass this test.
-    const text = built.subarray(0, DATA_END).toString("latin1");
-    assert.match(text, /eFKT/, "kind atom missing");
-    assert.match(text, /SpectraKeys/, "name atom missing");
-    assert.match(text, /Williams Media/, "category atom missing");
-    assert.match(text, /WMH SpectraKeys/, "match-name atom missing");
-    assert.match(text, /EffectMain/, "code entry point missing");
-    assert.match(text, /ePVR/, "PiPL version atom missing");
-    assert.match(text, /eSVR/, "spec version atom missing");
-    assert.match(text, /eVER/, "effect version atom missing");
-    assert.match(text, /eGLO/, "global out-flags atom missing");
-    assert.match(text, /eGL2/, "global out-flags 2 atom missing");
-    assert.match(text, /eMNA/, "match-name atom missing");
+      // Prove the PiPL actually carries the claims, so a pair of vacuously
+      // identical empty resources could never pass this test.
+      const text = built.subarray(0, DATA_END).toString("latin1");
+      assert.match(text, /eFKT/, `${plugin}: kind atom missing`);
+      assert.match(text, new RegExp(pipl.name), `${plugin}: name atom missing`);
+      assert.match(text, /Williams Media/, `${plugin}: category atom missing`);
+      assert.match(text, new RegExp(pipl.eMNA), `${plugin}: match name missing`);
+      assert.match(text, /EffectMain/, `${plugin}: code entry point missing`);
+      assert.match(text, /ePVR/, `${plugin}: PiPL version atom missing`);
+      assert.match(text, /eSVR/, `${plugin}: spec version atom missing`);
+      assert.match(text, /eVER/, `${plugin}: effect version atom missing`);
+      assert.match(text, /eGLO/, `${plugin}: global out-flags atom missing`);
+      assert.match(text, /eGL2/, `${plugin}: global out-flags 2 atom missing`);
+      assert.match(text, /eMNA/, `${plugin}: match-name atom missing`);
+
+      if (!shipped) continue;
+
+      const real = readFileSync(shipped);
+      assert.equal(built.length, real.length, `${plugin}: resource file size differs`);
+      assert.ok(built.subarray(0, DATA_END).equals(real.subarray(0, DATA_END)),
+        `${plugin}: the PiPL payload differs from the shipped bundle`);
+      verified++;
+    }
+
+    // Every effect must be covered; a missing bundle would quietly shrink this
+    // test to nothing.
+    assert.equal(installed, plugins.length,
+      `only ${installed} of ${plugins.length} bundles are installed, so the comparison is incomplete`);
+    assert.equal(verified, plugins.length, "not every effect was byte-compared");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
