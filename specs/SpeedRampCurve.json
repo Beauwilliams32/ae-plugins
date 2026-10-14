@@ -1,0 +1,89 @@
+{
+  "plugin": "SpeedRampCurve",
+  "bundle": "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/SpeedRampCurve.plugin",
+  "recoveredAt": "2026-10-14T06:32:55.814Z",
+  "binary": {
+    "bytes": 101008,
+    "sha256": "c8f45660dbc5ce4ffd02784778578cebffd0124fd54342f61d02b40e556a79d4",
+    "md5": "a818f461901c38242483b42a873297b0",
+    "archs": [
+      "x86_64",
+      "arm64"
+    ],
+    "stripped": false
+  },
+  "identity": {
+    "bundleIdentifier": "com.williamsmedia.aftereffects.SpeedRampCurve",
+    "bundleName": "SpeedRampCurve",
+    "shortVersion": "1.0.0",
+    "minimumSystem": "11.0"
+  },
+  "pipl": {
+    "kind": "eFKT",
+    "name": "SpeedRampCurve",
+    "catg": "Williams Media",
+    "mi64": "EffectMain",
+    "ma64": "EffectMain",
+    "ePVR": "0x00020000",
+    "eSVR": "0x000d001d",
+    "eVER": "0x00080001",
+    "eINF": "0x0000",
+    "eGLO": "0x02000026",
+    "eGL2": "0x08000000",
+    "eMNA": "WM_SpeedRampCurve",
+    "aeFL": "0x00000000",
+    "_chunks": 13
+  },
+  "sourceUnits": [],
+  "symbols": {
+    "total": 18,
+    "byScope": {
+      "other": [
+        "BlendFunc16(void*, int, int, PF_Pixel16*, PF_Pixel16*)",
+        "BlendFunc8(void*, int, int, PF_Pixel*, PF_Pixel*)",
+        "EffectMain",
+        "__dyld_private"
+      ],
+      "adobe-sdk": [
+        "AEGP_SuiteHandler::AEGP_SuiteHandler(SPBasicSuite const*)",
+        "AEGP_SuiteHandler::Iterate16Suite2() const",
+        "AEGP_SuiteHandler::Iterate8Suite2() const",
+        "AEGP_SuiteHandler::MissingSuiteError() const",
+        "AEGP_SuiteHandler::ReleaseAllSuites()",
+        "AEGP_SuiteHandler::ReleaseSuite(char const*, int)",
+        "AEGP_SuiteHandler::~AEGP_SuiteHandler()"
+      ],
+      "domain": [
+        "speedramp::computeBlend(double, double)",
+        "speedramp::easeIntegral(speedramp::Easing, double)",
+        "speedramp::easeValue(speedramp::Easing, double)",
+        "speedramp::mapTime(speedramp::RampParams const&, double)",
+        "speedramp::speedAt(speedramp::RampParams const&, double)"
+      ]
+    }
+  },
+  "strings": {
+    "authored": 48,
+    "parameterCandidates": [
+      "End (s)",
+      "Frame BlI",
+      "Frame Blend",
+      "Hcx H",
+      "Mix adjacent source frames",
+      "Ramp End (s)",
+      "Ramp EndI",
+      "Ramp StaH",
+      "Ramp Start (s)",
+      "Speed After (%)",
+      "Speed Before (%)",
+      "Time Offset (s)"
+    ],
+    "messageStrings": [
+      "Eased speed ramps without time-remap keyframe wrestling.",
+      "Set Ramp Start / Ramp End, dial in the speed before and after, and pick an easing. The layer retimes smoothly between the two speeds instead of you hand-placing time-remap keyframes."
+    ],
+    "modeCandidates": [
+      "Easing"
+    ]
+  }
+}

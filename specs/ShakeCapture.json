@@ -1,0 +1,105 @@
+{
+  "plugin": "ShakeCapture",
+  "bundle": "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/ShakeCapture.plugin",
+  "recoveredAt": "2026-10-14T06:32:55.767Z",
+  "binary": {
+    "bytes": 137280,
+    "sha256": "c404ccb310ddf44d83efb8692cef3d2c16a22b6d3dcc5f70d73e5cc341905857",
+    "md5": "23f0cb80f4a637a951b41e41c6cbc2cb",
+    "archs": [
+      "x86_64",
+      "arm64"
+    ],
+    "stripped": false
+  },
+  "identity": {
+    "bundleIdentifier": "com.williamsmedia.aftereffects.ShakeCapture",
+    "bundleName": "ShakeCapture",
+    "shortVersion": "1.0.0",
+    "minimumSystem": "11.0"
+  },
+  "pipl": {
+    "kind": "eFKT",
+    "name": "ShakeCapture",
+    "catg": "Williams Media",
+    "mi64": "EffectMain",
+    "ma64": "EffectMain",
+    "ePVR": "0x00020000",
+    "eSVR": "0x000d001d",
+    "eVER": "0x00080001",
+    "eINF": "0x0000",
+    "eGLO": "0x02000020",
+    "eGL2": "0x08001400",
+    "eMNA": "WM_ShakeCapture",
+    "aeFL": "0x00000000",
+    "_chunks": 13
+  },
+  "sourceUnits": [],
+  "symbols": {
+    "total": 33,
+    "byScope": {
+      "other": [
+        "EffectMain",
+        "__dyld_private",
+        "void std::__1::__nth_element[abi:nqe220106]<std::__1::_ClassicAlgPolicy, std::__1::__less<void, void>&, std::__1::__wrap_iter<float*>>(std::__1::__wrap_iter<float*>, std::__1::__wrap_iter<float*>, std::__1::__wrap_iter<float*>, std::__1::__less<void, void>&)"
+      ],
+      "adobe-sdk": [
+        "(anonymous namespace)::ReportError(AEGP_SuiteHandler&, PF_OutData*, char const*)",
+        "AEGP_SuiteHandler::AEGP_SuiteHandler(SPBasicSuite const*)",
+        "AEGP_SuiteHandler::EffectSuite4() const",
+        "AEGP_SuiteHandler::KeyframeSuite4() const",
+        "AEGP_SuiteHandler::MissingSuiteError() const",
+        "AEGP_SuiteHandler::PFInterfaceSuite1() const",
+        "AEGP_SuiteHandler::ReleaseAllSuites()",
+        "AEGP_SuiteHandler::ReleaseSuite(char const*, int)",
+        "AEGP_SuiteHandler::StreamSuite5() const",
+        "AEGP_SuiteHandler::UtilitySuite6() const",
+        "AEGP_SuiteHandler::WorldSuite3() const",
+        "AEGP_SuiteHandler::~AEGP_SuiteHandler()",
+        "SC_CaptureAndBake(PF_InData*, PF_OutData*, PF_ParamDef**)",
+        "SC_GetAegpPluginID(AEGP_SuiteHandler&, int*)",
+        "SC_GetAegpPluginID(AEGP_SuiteHandler&, int*)::s_plugin_id",
+        "SC_GetAegpPluginID(AEGP_SuiteHandler&, int*)::s_registered"
+      ],
+      "domain": [
+        "shake::ShakeProfile::~ShakeProfile()",
+        "shake::Vec2& std::__1::vector<shake::Vec2, std::__1::allocator<shake::Vec2>>::emplace_back<shake::Vec2 const&>(shake::Vec2 const&)::'lambda0'()::operator()() const",
+        "shake::accumulate(std::__1::vector<shake::Vec2, std::__1::allocator<shake::Vec2>> const&)",
+        "shake::clampf(float, float, float)",
+        "shake::extractJitter(shake::ShakeProfile const&, int)",
+        "shake::highPass(std::__1::vector<float, std::__1::allocator<float>> const&, int)",
+        "shake::median(std::__1::vector<float, std::__1::allocator<float>>)",
+        "shake::movingAverage(std::__1::vector<float, std::__1::allocator<float>> const&, int)",
+        "shake::normalizeUnitAmplitude(shake::ShakeProfile&)",
+        "shake::resampleProfile(std::__1::vector<float, std::__1::allocator<float>> const&, double, int, shake::LoopMode)",
+        "shake::sampleLooped(std::__1::vector<float, std::__1::allocator<float>> const&, double, shake::LoopMode)",
+        "shake::trackTranslation(float const*, float const*, int, int, int, int)"
+      ]
+    }
+  },
+  "strings": {
+    "authored": 65,
+    "parameterCandidates": [
+      "&ffff.",
+      "Amplitude (px)",
+      "Capture & Bake",
+      "Frequency Scale",
+      "Shake X",
+      "Shake Y",
+      "ShakeCapture: Capture & Bake",
+      "Smoothing Window (frames)",
+      "Source LH",
+      "Source Layer"
+    ],
+    "messageStrings": [
+      "Capture the shake profile of real footage and re-apply it anywhere.",
+      "Pick a Source Layer (defaults to the layer this effect sits on), press Capture & Bake, then pick-whip Shake X / Shake Y to anything.",
+      "no trackable motion found in the source layer.",
+      "source layer is too short to capture (need 2+ frames)."
+    ],
+    "modeCandidates": [
+      "Keyframes",
+      "Loop"
+    ]
+  }
+}

@@ -1,0 +1,120 @@
+{
+  "plugin": "PathScribe",
+  "bundle": "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/PathScribe.plugin",
+  "recoveredAt": "2026-10-14T06:32:55.745Z",
+  "binary": {
+    "bytes": 156144,
+    "sha256": "362b553fd200f87cec471bf776d5e4e52e792a9c257f7e8e3b6985d8dbd67bde",
+    "md5": "3b3dd32b5dcd5b71e0e4486cc5ac1f88",
+    "archs": [
+      "x86_64",
+      "arm64"
+    ],
+    "stripped": false
+  },
+  "identity": {
+    "bundleIdentifier": "com.williamsmedia.aftereffects.PathScribe",
+    "bundleName": "PathScribe",
+    "shortVersion": "1.0.0",
+    "minimumSystem": "11.0"
+  },
+  "pipl": {
+    "kind": "eFKT",
+    "name": "PathScribe",
+    "catg": "Williams Media",
+    "mi64": "EffectMain",
+    "ma64": "EffectMain",
+    "ePVR": "0x00020000",
+    "eSVR": "0x000d001d",
+    "eVER": "0x00080001",
+    "eINF": "0x0000",
+    "eGLO": "0x02000004",
+    "eGL2": "0x08000000",
+    "eMNA": "WM_PathScribe",
+    "aeFL": "0x00000000",
+    "_chunks": 13
+  },
+  "sourceUnits": [
+    "PathScribe_Audio.cpp"
+  ],
+  "symbols": {
+    "total": 42,
+    "byScope": {
+      "other": [
+        "(anonymous namespace)::AudioCacheEntry::operator=((anonymous namespace)::AudioCacheEntry&&)",
+        "(anonymous namespace)::blendPixel16(PF_Pixel16*, PF_Pixel const&, double)",
+        "(anonymous namespace)::g_audioCache",
+        "(anonymous namespace)::g_audioCacheMutex",
+        "(anonymous namespace)::g_plugin_id (.0)",
+        "EffectMain",
+        "__dyld_private",
+        "void std::__1::__tree_balance_after_insert[abi:nqe220106]<std::__1::__tree_node_base<void*>*>(std::__1::__tree_node_base<void*>*, std::__1::__tree_node_base<void*>*)",
+        "void std::__1::__tree_remove[abi:nqe220106]<std::__1::__tree_node_base<void*>*>(std::__1::__tree_node_base<void*>*, std::__1::__tree_node_base<void*>*)",
+        "void std::__1::vector<float, std::__1::allocator<float>>::__assign_with_size[abi:nqe220106]<std::__1::_ClassicAlgPolicy, float*, float*>(float*, float*, long)"
+      ],
+      "adobe-sdk": [
+        "AEGP_SuiteHandler::AEGP_SuiteHandler(SPBasicSuite const*)",
+        "AEGP_SuiteHandler::LayerSuite8() const",
+        "AEGP_SuiteHandler::MissingSuiteError() const",
+        "AEGP_SuiteHandler::ReleaseAllSuites()",
+        "AEGP_SuiteHandler::ReleaseSuite(char const*, int)",
+        "AEGP_SuiteHandler::SoundDataSuite1() const",
+        "AEGP_SuiteHandler::~AEGP_SuiteHandler()",
+        "PS_FetchLayerAudio(PF_InData*, PF_ParamDef*, std::__1::vector<float, std::__1::allocator<float>>*, double*)",
+        "PS_GetAegpPluginID(AEGP_SuiteHandler&, int*)",
+        "PS_RegisterAegpPluginID(AEGP_SuiteHandler&)",
+        "PS_RenderViz(PF_InData*, PF_OutData*, PF_ParamDef**, PF_LayerDef*)"
+      ],
+      "domain": [
+        "pathscribe::Spectrogram::~Spectrogram()",
+        "pathscribe::analyse(float const*, unsigned long, pathscribe::AnalysisConfig const&)",
+        "pathscribe::barLevels(std::__1::vector<float, std::__1::allocator<float>> const&, double, int, double, double)",
+        "pathscribe::binEdgeHz(int, int, double, double)",
+        "pathscribe::clampf(float, float, float)",
+        "pathscribe::dbToLinear(float)",
+        "pathscribe::downmixToMono(float const*, unsigned long, int)",
+        "pathscribe::fftRadix2(std::__1::vector<float, std::__1::allocator<float>>&, std::__1::vector<float, std::__1::allocator<float>>&)",
+        "pathscribe::hannCoherentGain()",
+        "pathscribe::hannWindow(int)",
+        "pathscribe::isPowerOfTwo(int)",
+        "pathscribe::linearToDb(float)",
+        "pathscribe::rasterizeBars(std::__1::vector<float, std::__1::allocator<float>> const&, pathscribe::VizConfig const&, std::__1::vector<float, std::__1::allocator<float>>&, std::__1::vector<float, std::__1::allocator<float>>&)",
+        "pathscribe::rasterizeRibbon(std::__1::vector<float, std::__1::allocator<float>> const&, pathscribe::VizConfig const&, std::__1::vector<float, std::__1::allocator<float>>&, std::__1::vector<float, std::__1::allocator<float>>&)",
+        "pathscribe::smoothStep(float, float, float, float, float)",
+        "pathscribe::smoothedLevelsAtFrame(std::__1::vector<std::__1::vector<float, std::__1::allocator<float>>, std::__1::allocator<std::__1::vector<float, std::__1::allocator<float>>>> const&, int, float, float, float)",
+        "pathscribe::spanCoverage(float, float, float)",
+        "pathscribe::waveformColumns(float const*, unsigned long, long, long, int)"
+      ]
+    }
+  },
+  "strings": {
+    "authored": 71,
+    "parameterCandidates": [
+      "Amplitude (%)",
+      "Attack (I",
+      "Attack (s)",
+      "Audio LaH",
+      "Audio Layer",
+      "Background Opacity (%)",
+      "Bar CounI",
+      "Bar Count",
+      "Baseline Position (%)",
+      "Color A (Low Amplitude)",
+      "Color B (High Amplitude)",
+      "Freq Range High (Hz)",
+      "Freq Range Low (Hz)",
+      "Release (s)",
+      "Release I",
+      "Thickness (px)"
+    ],
+    "messageStrings": [
+      "Draw an audio layer's spectrum or waveform as an animated EQ graphic.",
+      "Pick an audio layer, choose Bars / Ribbon / Mirrored Bars, and dial in frequency range, smoothing, and colour."
+    ],
+    "modeCandidates": [
+      "Analysis",
+      "Look",
+      "Mode"
+    ]
+  }
+}

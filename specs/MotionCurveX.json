@@ -1,0 +1,117 @@
+{
+  "plugin": "MotionCurveX",
+  "bundle": "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/MotionCurveX.plugin",
+  "recoveredAt": "2026-10-14T06:32:55.698Z",
+  "binary": {
+    "bytes": 138592,
+    "sha256": "c196153253a41fcf146db208eb8933746886609404bb3c7ee241bc49a60dab1c",
+    "md5": "e4a7920db48fc07a105516d58cafed76",
+    "archs": [
+      "x86_64",
+      "arm64"
+    ],
+    "stripped": false
+  },
+  "identity": {
+    "bundleIdentifier": "com.williamsmedia.aftereffects.MotionCurveX",
+    "bundleName": "MotionCurveX",
+    "shortVersion": "1.0.0",
+    "minimumSystem": "11.0"
+  },
+  "pipl": {
+    "kind": "eFKT",
+    "name": "MotionCurveX",
+    "catg": "Williams Media",
+    "mi64": "EffectMain",
+    "ma64": "EffectMain",
+    "ePVR": "0x00020000",
+    "eSVR": "0x000d001d",
+    "eVER": "0x00080001",
+    "eINF": "0x0000",
+    "eGLO": "0x02000000",
+    "eGL2": "0x08001400",
+    "eMNA": "WM_MotionCurveX",
+    "aeFL": "0x00000000",
+    "_chunks": 13
+  },
+  "sourceUnits": [],
+  "symbols": {
+    "total": 41,
+    "byScope": {
+      "other": [
+        "(anonymous namespace)::LumaFromWorld8(PF_Pixel const*, unsigned int, int, int, bool)",
+        "EffectMain",
+        "__dyld_private",
+        "float& std::__1::vector<float, std::__1::allocator<float>>::emplace_back<float const&>(float const&)::'lambda0'()::operator()() const",
+        "void std::__1::__if_likely_else[abi:nqe220106]<motioncurve::Image& std::__1::vector<motioncurve::Image, std::__1::allocator<motioncurve::Image>>::emplace_back<motioncurve::Image const&>(motioncurve::Image const&)::'lambda'(), motioncurve::Image& std::__1::vector<motioncurve::Image, std::__1::allocator<motioncurve::Image>>::emplace_back<motioncurve::Image const&>(motioncurve::Image const&)::'lambda0'()>(bool, motioncurve::Image& std::__1::vector<motioncurve::Image, std::__1::allocator<motioncurve::Image>>::emplace_back<motioncurve::Image const&>(motioncurve::Image const&)::'lambda'(), motioncurve::Image& std::__1::vector<motioncurve::Image, std::__1::allocator<motioncurve::Image>>::emplace_back<motioncurve::Image const&>(motioncurve::Image const&)::'lambda0'())",
+        "void std::__1::__if_likely_else[abi:nqe220106]<motioncurve::Image& std::__1::vector<motioncurve::Image, std::__1::allocator<motioncurve::Image>>::emplace_back<motioncurve::Image const&>(motioncurve::Image const&)::'lambda'(), motioncurve::Image& std::__1::vector<motioncurve::Image, std::__1::allocator<motioncurve::Image>>::emplace_back<motioncurve::Image const&>(motioncurve::Image const&)::'lambda0'()>(bool, motioncurve::Image& std::__1::vector<motioncurve::Image, std::__1::allocator<motioncurve::Image>>::emplace_back<motioncurve::Image const&>(motioncurve::Image const&)::'lambda'(), motioncurve::Image& std::__1::vector<motioncurve::Image, std::__1::allocator<motioncurve::Image>>::emplace_back<motioncurve::Image const&>(motioncurve::Image const&)::'lambda0'()) (.cold.1)",
+        "void std::__1::__nth_element[abi:nqe220106]<std::__1::_ClassicAlgPolicy, std::__1::__less<void, void>&, std::__1::__wrap_iter<float*>>(std::__1::__wrap_iter<float*>, std::__1::__wrap_iter<float*>, std::__1::__wrap_iter<float*>, std::__1::__less<void, void>&)"
+      ],
+      "adobe-sdk": [
+        "AEGP_SuiteHandler::AEGP_SuiteHandler(SPBasicSuite const*)",
+        "AEGP_SuiteHandler::ANSICallbacksSuite1() const",
+        "AEGP_SuiteHandler::CompSuite12() const",
+        "AEGP_SuiteHandler::EffectSuite4() const",
+        "AEGP_SuiteHandler::KeyframeSuite4() const",
+        "AEGP_SuiteHandler::LayerRenderOptionsSuite2() const",
+        "AEGP_SuiteHandler::MissingSuiteError() const",
+        "AEGP_SuiteHandler::PFInterfaceSuite1() const",
+        "AEGP_SuiteHandler::ReleaseAllSuites()",
+        "AEGP_SuiteHandler::ReleaseSuite(char const*, int)",
+        "AEGP_SuiteHandler::RenderSuite5() const",
+        "AEGP_SuiteHandler::StreamSuite5() const",
+        "AEGP_SuiteHandler::UtilitySuite6() const",
+        "AEGP_SuiteHandler::WorldSuite3() const",
+        "AEGP_SuiteHandler::~AEGP_SuiteHandler()",
+        "MCX_BakeMotion(PF_InData*, PF_OutData*, PF_ParamDef**)",
+        "MCX_GetAegpPluginID(AEGP_SuiteHandler&, int*)",
+        "MCX_GetAegpPluginID(AEGP_SuiteHandler&, int*)::s_plugin_id",
+        "MCX_GetAegpPluginID(AEGP_SuiteHandler&, int*)::s_registered"
+      ],
+      "domain": [
+        "motioncurve::(anonymous namespace)::medianOfWindow(std::__1::vector<float, std::__1::allocator<float>> const&, int, int)",
+        "motioncurve::Image* std::__1::vector<motioncurve::Image, std::__1::allocator<motioncurve::Image>>::__emplace_back_slow_path<motioncurve::Image const&>(motioncurve::Image const&)",
+        "motioncurve::Image* std::__1::vector<motioncurve::Image, std::__1::allocator<motioncurve::Image>>::__emplace_back_slow_path<motioncurve::Image>(motioncurve::Image&&)",
+        "motioncurve::accumulate(std::__1::vector<motioncurve::Vec2, std::__1::allocator<motioncurve::Vec2>> const&)",
+        "motioncurve::buildPyramid(motioncurve::Image const&, int)",
+        "motioncurve::clampf(float, float, float)",
+        "motioncurve::cropCenter(motioncurve::Image const&, float)",
+        "motioncurve::downsample2x(motioncurve::Image const&)",
+        "motioncurve::estimateTranslation(motioncurve::Image const&, motioncurve::Image const&, float)",
+        "motioncurve::quadraticPeakOffset(float, float, float)",
+        "motioncurve::sadAt(motioncurve::Image const&, motioncurve::Image const&, int, int)",
+        "motioncurve::smoothMovingAverage(std::__1::vector<motioncurve::Vec2, std::__1::allocator<motioncurve::Vec2>> const&, int)",
+        "motioncurve::temporalMedianFilter(std::__1::vector<motioncurve::Vec2, std::__1::allocator<motioncurve::Vec2>> const&, int)"
+      ]
+    }
+  },
+  "strings": {
+    "authored": 69,
+    "parameterCandidates": [
+      "Analysis Region",
+      "Bake Motion",
+      "Max Displacement (px)",
+      "Motion X",
+      "Motion XI",
+      "Motion Y",
+      "Motion YI",
+      "Smoothing (frames)",
+      "Source LH",
+      "Source Layer"
+    ],
+    "messageStrings": [
+      "MotionCurveX: choose a Source Layer to track, then Bake Motion again.",
+      "MotionCurveX: could not read frames from the Source Layer. Pick a different layer and bake again.",
+      "MotionCurveX: the work area is too short to track motion. Widen it and bake again.",
+      "Pick a Source Layer, set Max Displacement and Smoothing, then Bake Motion. Pick-whip Motion X / Motion Y on any other layer.",
+      "Track a layer's motion and bake it into pick-whippable keyframes."
+    ],
+    "modeCandidates": [
+      "Keyframes",
+      "Output",
+      "Scale",
+      "Tazu",
+      "Tezu"
+    ]
+  }
+}

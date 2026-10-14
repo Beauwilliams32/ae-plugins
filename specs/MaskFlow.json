@@ -1,0 +1,91 @@
+{
+  "plugin": "MaskFlow",
+  "bundle": "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/MaskFlow.plugin",
+  "recoveredAt": "2026-10-14T06:32:55.674Z",
+  "binary": {
+    "bytes": 136208,
+    "sha256": "70e083a3bc21d28903cb11a19006b0ef677a22d71206bbaef873ee3776a58982",
+    "md5": "f5efa9410a061960941ebaa1243b4763",
+    "archs": [
+      "x86_64",
+      "arm64"
+    ],
+    "stripped": false
+  },
+  "identity": {
+    "bundleIdentifier": "com.williamsmedia.aftereffects.MaskFlow",
+    "bundleName": "MaskFlow",
+    "shortVersion": "1.0.0",
+    "minimumSystem": "11.0"
+  },
+  "pipl": {
+    "kind": "eFKT",
+    "name": "MaskFlow",
+    "catg": "Williams Media",
+    "mi64": "EffectMain",
+    "ma64": "EffectMain",
+    "ePVR": "0x00020000",
+    "eSVR": "0x000d001d",
+    "eVER": "0x00080001",
+    "eINF": "0x0000",
+    "eGLO": "0x02000000",
+    "eGL2": "0x08000000",
+    "eMNA": "WM_MaskFlow",
+    "aeFL": "0x00000000",
+    "_chunks": 13
+  },
+  "sourceUnits": [],
+  "symbols": {
+    "total": 22,
+    "byScope": {
+      "other": [
+        "EffectMain",
+        "__dyld_private",
+        "void std::__1::__pop_heap[abi:nqe220106]<std::__1::_ClassicAlgPolicy, std::__1::greater<std::__1::pair<float, unsigned long>>, std::__1::__wrap_iter<std::__1::pair<float, unsigned long>*>>(std::__1::__wrap_iter<std::__1::pair<float, unsigned long>*>, std::__1::__wrap_iter<std::__1::pair<float, unsigned long>*>, std::__1::greater<std::__1::pair<float, unsigned long>>&, std::__1::iterator_traits<std::__1::__wrap_iter<std::__1::pair<float, unsigned long>*>>::difference_type)"
+      ],
+      "adobe-sdk": [
+        "AEGP_SuiteHandler::AEGP_SuiteHandler(SPBasicSuite const*)",
+        "AEGP_SuiteHandler::MissingSuiteError() const",
+        "AEGP_SuiteHandler::ReleaseAllSuites()",
+        "AEGP_SuiteHandler::ReleaseSuite(char const*, int)",
+        "AEGP_SuiteHandler::~AEGP_SuiteHandler()"
+      ],
+      "domain": [
+        "maskflow::buildMatte(maskflow::ArrivalField const&, float, float, bool)",
+        "maskflow::clampf(float, float, float)",
+        "maskflow::computeArrivalField(maskflow::Image const&, float, float, float, bool)",
+        "maskflow::computeArrivalField(maskflow::Image const&, float, float, float, bool)::dx8",
+        "maskflow::computeArrivalField(maskflow::Image const&, float, float, float, bool)::dy8",
+        "maskflow::computeDownsampleDims(int, int, int)",
+        "maskflow::computeMatteFullRes(maskflow::Image const&, maskflow::Params const&)",
+        "maskflow::downsampleBoxFilter(maskflow::Image const&, int, int)",
+        "maskflow::edgeCostScaleFromTolerance(float)",
+        "maskflow::kInfinity",
+        "maskflow::smoothstep(float, float, float)",
+        "maskflow::upsampleBilinear(std::__1::vector<float, std::__1::allocator<float>> const&, int, int, int, int)"
+      ]
+    }
+  },
+  "strings": {
+    "authored": 65,
+    "parameterCandidates": [
+      "Edge SofI",
+      "Edge Softness",
+      "Growth (%)",
+      "Growth (I",
+      "Hold EdgI",
+      "Hold Edges",
+      "Seed PoiH",
+      "Seed Point",
+      "Tolerance (%)"
+    ],
+    "messageStrings": [
+      "Content-aware animated reveal: grows a matte from a seed point along real color edges.",
+      "Drag the Seed Point onto your footage, then animate Growth from 0 to 100 to reveal outward along real color edges instead of a plain geometric wipe."
+    ],
+    "modeCandidates": [
+      "Invert",
+      "Output"
+    ]
+  }
+}

@@ -1,0 +1,121 @@
+{
+  "plugin": "BeatSnap",
+  "bundle": "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/BeatSnap.plugin",
+  "recoveredAt": "2026-10-14T06:32:55.515Z",
+  "binary": {
+    "bytes": 155120,
+    "sha256": "6da4c7296d48522a313149740f2152b495af3cc1fdf1f46233fa1963774ee83f",
+    "md5": "fa6edf74ef5b387fe479185d1406252a",
+    "archs": [
+      "x86_64",
+      "arm64"
+    ],
+    "stripped": false
+  },
+  "identity": {
+    "bundleIdentifier": "com.williamsmedia.aftereffects.BeatSnap",
+    "bundleName": "BeatSnap",
+    "shortVersion": "1.0.0",
+    "minimumSystem": "11.0"
+  },
+  "pipl": {
+    "kind": "eFKT",
+    "name": "BeatSnap",
+    "catg": "Williams Media",
+    "mi64": "EffectMain",
+    "ma64": "EffectMain",
+    "ePVR": "0x00020000",
+    "eSVR": "0x000d001d",
+    "eVER": "0x00080001",
+    "eINF": "0x0000",
+    "eGLO": "0x02000020",
+    "eGL2": "0x08001408",
+    "eMNA": "WM_BeatSnap",
+    "aeFL": "0x00000000",
+    "_chunks": 13
+  },
+  "sourceUnits": [],
+  "symbols": {
+    "total": 39,
+    "byScope": {
+      "other": [
+        "(anonymous namespace)::AsciiToUtf16(char const*)",
+        "EffectMain",
+        "__dyld_private",
+        "double& std::__1::vector<double, std::__1::allocator<double>>::emplace_back<double const&>(double const&)::'lambda0'()::operator()() const",
+        "double& std::__1::vector<double, std::__1::allocator<double>>::emplace_back<double>(double&&)::'lambda0'()::operator()() const",
+        "unsigned short& std::__1::vector<unsigned short, std::__1::allocator<unsigned short>>::emplace_back<unsigned short>(unsigned short&&)::'lambda0'()::operator()() const",
+        "void std::__1::__tree_balance_after_insert[abi:nqe220106]<std::__1::__tree_node_base<void*>*>(std::__1::__tree_node_base<void*>*, std::__1::__tree_node_base<void*>*)"
+      ],
+      "adobe-sdk": [
+        "(anonymous namespace)::RunDetection(PF_InData*, PF_OutData*, PF_ParamDef**, std::__1::vector<double, std::__1::allocator<double>>*, bool*, double*)",
+        "AEGP_SuiteHandler::AEGP_SuiteHandler(SPBasicSuite const*)",
+        "AEGP_SuiteHandler::EffectSuite4() const",
+        "AEGP_SuiteHandler::KeyframeSuite4() const",
+        "AEGP_SuiteHandler::LayerSuite8() const",
+        "AEGP_SuiteHandler::MarkerSuite3() const",
+        "AEGP_SuiteHandler::MissingSuiteError() const",
+        "AEGP_SuiteHandler::ReleaseAllSuites()",
+        "AEGP_SuiteHandler::ReleaseSuite(char const*, int)",
+        "AEGP_SuiteHandler::SoundDataSuite1() const",
+        "AEGP_SuiteHandler::StreamSuite5() const",
+        "AEGP_SuiteHandler::UtilitySuite6() const",
+        "AEGP_SuiteHandler::~AEGP_SuiteHandler()",
+        "BS_AddMarkers(PF_InData*, PF_OutData*, PF_ParamDef**)",
+        "BS_BakeKeyframes(PF_InData*, PF_OutData*, PF_ParamDef**)",
+        "BS_FetchLayerAudio(PF_InData*, PF_ParamDef*, std::__1::vector<float, std::__1::allocator<float>>*, double*, double*)",
+        "BS_GetAegpPluginID(AEGP_SuiteHandler&, int*)",
+        "BS_GetAegpPluginID(AEGP_SuiteHandler&, int*)::s_plugin_id",
+        "BS_GetAegpPluginID(AEGP_SuiteHandler&, int*)::s_registered"
+      ],
+      "domain": [
+        "beatsnap::adaptiveThreshold(std::__1::vector<float, std::__1::allocator<float>> const&, int, float)",
+        "beatsnap::clampf(float, float, float)",
+        "beatsnap::computeFlux(float const*, unsigned long, beatsnap::OnsetConfig const&)",
+        "beatsnap::detectOnsets(float const*, unsigned long, beatsnap::OnsetConfig const&)",
+        "beatsnap::downmixToMono(float const*, unsigned long, int)",
+        "beatsnap::fftRadix2(std::__1::vector<float, std::__1::allocator<float>>&, std::__1::vector<float, std::__1::allocator<float>>&)",
+        "beatsnap::hannWindow(int)",
+        "beatsnap::isPowerOfTwo(int)",
+        "beatsnap::medianOfWindow(std::__1::vector<float, std::__1::allocator<float>> const&, int, int)",
+        "beatsnap::pickOnsets(beatsnap::FluxTrack const&, std::__1::vector<float, std::__1::allocator<float>> const&, float)",
+        "beatsnap::renderValues(std::__1::vector<double, std::__1::allocator<double>> const&, int, beatsnap::RenderConfig const&)"
+      ]
+    }
+  },
+  "strings": {
+    "authored": 70,
+    "parameterCandidates": [
+      "Add Markers at Hits",
+      "Attack (I",
+      "Attack (ms)",
+      "Audio LaH",
+      "Audio Layer",
+      "Bake Keyframes",
+      "Band High Freq (Hz)",
+      "Band Low Freq (Hz)",
+      "Min Gap (ms)",
+      "Min Gap I",
+      "Output MI",
+      "Output Max",
+      "Output Min",
+      "Output Mode",
+      "Release (ms)",
+      "Release I",
+      "Sensitivity (%)"
+    ],
+    "messageStrings": [
+      "BeatSnap: %d hit marker(s) were not placed because another marker already sits on that frame. Those markers were left as they were.",
+      "BeatSnap: no audio found. Pick a layer that has audio in the Audio Layer menu, then try again.",
+      "BeatSnap: no hits detected with the current Band/Sensitivity/Min Gap settings. Try raising Sensitivity or narrowing the band.",
+      "Detect audio transients and bake them into keyframes or markers.",
+      "Select an audio layer, dial in the band and sensitivity, then Bake Keyframes (writes the Output slider) or Add Markers at Hits (drops comp markers). Pick-whip Output to anything."
+    ],
+    "modeCandidates": [
+      "Detection",
+      "Keyframes",
+      "Markers",
+      "Output"
+    ]
+  }
+}

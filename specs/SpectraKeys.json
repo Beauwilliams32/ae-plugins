@@ -1,0 +1,141 @@
+{
+  "plugin": "SpectraKeys",
+  "bundle": "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/SpectraKeys.plugin",
+  "recoveredAt": "2026-10-14T06:32:55.791Z",
+  "binary": {
+    "bytes": 172992,
+    "sha256": "b3aaa007c21671501abcf7314710d255ee0b3c23a8f67f8fb8a28a0fba1d3743",
+    "md5": "c383fbee000c80924dca4ea790bb8323",
+    "archs": [
+      "x86_64",
+      "arm64"
+    ],
+    "stripped": false
+  },
+  "identity": {
+    "bundleIdentifier": "com.williamsmedia.aftereffects.SpectraKeys",
+    "bundleName": "SpectraKeys",
+    "shortVersion": "1.0.0",
+    "minimumSystem": "11.0"
+  },
+  "pipl": {
+    "kind": "eFKT",
+    "name": "SpectraKeys",
+    "catg": "Williams Media",
+    "mi64": "EffectMain",
+    "ma64": "EffectMain",
+    "ePVR": "0x00020000",
+    "eSVR": "0x000d001d",
+    "eVER": "0x00080001",
+    "eINF": "0x0000",
+    "eGLO": "0x06008064",
+    "eGL2": "0x08000008",
+    "eMNA": "WMH SpectraKeys",
+    "aeFL": "0x00000000",
+    "_chunks": 13
+  },
+  "sourceUnits": [
+    "SpectraKeys_UI.cpp"
+  ],
+  "symbols": {
+    "total": 51,
+    "byScope": {
+      "other": [
+        "(anonymous namespace)::OverlayCache::~OverlayCache()",
+        "(anonymous namespace)::g_drag (.0)",
+        "(anonymous namespace)::g_drag (.1)",
+        "(anonymous namespace)::g_overlay",
+        "(anonymous namespace)::g_overlay_mutex",
+        "(anonymous namespace)::g_plugin_id (.0)",
+        "EffectMain",
+        "__dyld_private",
+        "void std::__1::vector<float, std::__1::allocator<float>>::__assign_with_size[abi:nqe220106]<std::__1::_ClassicAlgPolicy, float*, float*>(float*, float*, long)"
+      ],
+      "adobe-sdk": [
+        "AEGP_SuiteHandler::AEGP_SuiteHandler(SPBasicSuite const*)",
+        "AEGP_SuiteHandler::ANSICallbacksSuite1() const",
+        "AEGP_SuiteHandler::EffectSuite4() const",
+        "AEGP_SuiteHandler::LayerSuite8() const",
+        "AEGP_SuiteHandler::MissingSuiteError() const",
+        "AEGP_SuiteHandler::PFInterfaceSuite1() const",
+        "AEGP_SuiteHandler::PathSuiteCurrent() const",
+        "AEGP_SuiteHandler::ReleaseAllSuites()",
+        "AEGP_SuiteHandler::ReleaseSuite(char const*, int)",
+        "AEGP_SuiteHandler::SoundDataSuite1() const",
+        "AEGP_SuiteHandler::SupplierSuiteCurrent() const",
+        "AEGP_SuiteHandler::SurfaceSuiteCurrent() const",
+        "AEGP_SuiteHandler::~AEGP_SuiteHandler()",
+        "AddBandParams(PF_InData*, int, char const*, double, double, unsigned char)",
+        "SK_BakeKeyframes(PF_InData*, PF_OutData*, PF_ParamDef**)",
+        "SK_DrawOverlay(PF_InData*, PF_OutData*, PF_ParamDef**, PF_EventExtra*)",
+        "SK_DrawSpectrumIntoFrame(PF_InData*, PF_OutData*, PF_ParamDef**, PF_LayerDef*)",
+        "SK_FetchLayerAudio(PF_InData*, PF_ParamDef*, double, std::__1::vector<float, std::__1::allocator<float>>*, double*)",
+        "SK_GetAegpPluginID(AEGP_SuiteHandler&, int*)",
+        "SK_HandleClick(PF_InData*, PF_OutData*, PF_ParamDef**, PF_EventExtra*)",
+        "SK_HandleDrag(PF_InData*, PF_OutData*, PF_ParamDef**, PF_EventExtra*)",
+        "SK_ReadBandSpec(PF_ParamDef**, int, spectra::BandSpec*)",
+        "SK_RegisterAegpPluginID(AEGP_SuiteHandler&)"
+      ],
+      "plugin-api": [
+        "SK_FftSizeFromParam(int)",
+        "SK_PublishOverlaySpectrum(std::__1::vector<float, std::__1::allocator<float>> const&, double)"
+      ],
+      "domain": [
+        "spectra::Spectrogram::hzToBin(float) const",
+        "spectra::Spectrogram::~Spectrogram()",
+        "spectra::analyse(float const*, unsigned long, spectra::AnalysisConfig const&)",
+        "spectra::analyseBands(float const*, unsigned long, spectra::AnalysisConfig const&, std::__1::vector<spectra::BandSpec, std::__1::allocator<spectra::BandSpec>> const&)",
+        "spectra::bandValues(spectra::Spectrogram const&, spectra::BandSpec const&, double)",
+        "spectra::clampf(float, float, float)",
+        "spectra::dbToLinear(float)",
+        "spectra::downmixToMono(float const*, unsigned long, int)",
+        "spectra::fftRadix2(std::__1::vector<float, std::__1::allocator<float>>&, std::__1::vector<float, std::__1::allocator<float>>&)",
+        "spectra::hannCoherentGain()",
+        "spectra::hannWindow(int)",
+        "spectra::isPowerOfTwo(int)",
+        "spectra::linearToDb(float)",
+        "spectra::rawBandLevel(std::__1::vector<float, std::__1::allocator<float>> const&, spectra::Spectrogram const&, spectra::BandSpec const&)"
+      ]
+    }
+  },
+  "strings": {
+    "authored": 89,
+    "parameterCandidates": [
+      "Audio LaH",
+      "Audio Layer",
+      "Bake Keyframes",
+      "Band %s",
+      "Band %s Enabled",
+      "Ceiling (dB)",
+      "Ceiling I",
+      "Display I",
+      "Display Mode",
+      "Display Opacity",
+      "Falloff Time (s)",
+      "Floor (dB)",
+      "Floor (dI",
+      "Gain (dB)",
+      "Gain (dBI",
+      "Output MM",
+      "Output Max",
+      "Output Min",
+      "Selection Color",
+      "Show SpeI",
+      "Show Spectrum",
+      "Spectrum Color",
+      "Threshold (dB)"
+    ],
+    "messageStrings": [
+      "Select an audio layer, drag a box over the part of the spectrum you want, then Bake Keyframes. Pick-whip the Output values to anything.",
+      "SpectraKeys: no audio found. Pick a layer that has audio in the Audio Layer menu, then bake again.",
+      "Turn regions of an audio spectrum into keyframable values."
+    ],
+    "modeCandidates": [
+      "Analysis",
+      "Display",
+      "Falloff",
+      "Keyframes",
+      "Sampling"
+    ]
+  }
+}

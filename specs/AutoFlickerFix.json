@@ -1,0 +1,89 @@
+{
+  "plugin": "AutoFlickerFix",
+  "bundle": "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/AutoFlickerFix.plugin",
+  "recoveredAt": "2026-10-14T06:32:55.462Z",
+  "binary": {
+    "bytes": 135904,
+    "sha256": "cdd175f03b7fcf26fca4fe20d992e74088ae5a23f9b3bbe699630eb9a535c023",
+    "md5": "79960266bd76621d60213efd98b4ca60",
+    "archs": [
+      "x86_64",
+      "arm64"
+    ],
+    "stripped": false
+  },
+  "identity": {
+    "bundleIdentifier": "com.williamsmedia.aftereffects.AutoFlickerFix",
+    "bundleName": "AutoFlickerFix",
+    "shortVersion": "1.0.0",
+    "minimumSystem": "11.0"
+  },
+  "pipl": {
+    "kind": "eFKT",
+    "name": "AutoFlickerFix",
+    "catg": "Williams Media",
+    "mi64": "EffectMain",
+    "ma64": "EffectMain",
+    "ePVR": "0x00020000",
+    "eSVR": "0x000d001d",
+    "eVER": "0x00080001",
+    "eINF": "0x0000",
+    "eGLO": "0x02000040",
+    "eGL2": "0x08000000",
+    "eMNA": "WM_AutoFlickerFix",
+    "aeFL": "0x00000000",
+    "_chunks": 13
+  },
+  "sourceUnits": [],
+  "symbols": {
+    "total": 22,
+    "byScope": {
+      "other": [
+        "EffectMain",
+        "__dyld_private",
+        "float& std::__1::vector<float, std::__1::allocator<float>>::emplace_back<float const&>(float const&)::'lambda0'()::operator()() const"
+      ],
+      "adobe-sdk": [
+        "(anonymous namespace)::DrawStatsBar(PF_LayerDef*, float, aff::GainClamp const&)",
+        "(anonymous namespace)::SampleWorldStat(PF_LayerDef const*, aff::RegionBounds const&, bool)",
+        "AEGP_SuiteHandler::AEGP_SuiteHandler(SPBasicSuite const*)",
+        "AEGP_SuiteHandler::MissingSuiteError() const",
+        "AEGP_SuiteHandler::ReleaseAllSuites()",
+        "AEGP_SuiteHandler::ReleaseSuite(char const*, int)",
+        "AEGP_SuiteHandler::~AEGP_SuiteHandler()"
+      ],
+      "domain": [
+        "aff::centerRegion(int, int, float)",
+        "aff::clampf(float, float, float)",
+        "aff::computeGain(float, float, float, aff::GainClamp const&)",
+        "aff::dbToGainClamp(float)",
+        "aff::meanOf(std::__1::vector<float, std::__1::allocator<float>> const&)",
+        "aff::medianFilter(std::__1::vector<float, std::__1::allocator<float>> const&, int)",
+        "aff::medianOf(std::__1::vector<float, std::__1::allocator<float>>)",
+        "aff::temporalTarget(std::__1::vector<float, std::__1::allocator<float>> const&, int)",
+        "aff::trimmedMean(float const*, unsigned long, float)",
+        "aff::trimmedMean(std::__1::vector<float, std::__1::allocator<float>> const&, float)"
+      ]
+    }
+  },
+  "strings": {
+    "authored": 65,
+    "parameterCandidates": [
+      "Analyze H",
+      "Analyze Region",
+      "Lco H",
+      "Max Correction (dB)",
+      "Show StaH",
+      "Show Stats",
+      "Strength (%)",
+      "Window Size (frames)"
+    ],
+    "messageStrings": [
+      "Raise Window Size to sample more neighbour frames, and Strength to push the correction harder. Max Correction is a hard dB ceiling Strength cannot exceed.",
+      "Removes exposure and color flicker by normalizing each frame toward a temporally smoothed target."
+    ],
+    "modeCandidates": [
+      "Mode"
+    ]
+  }
+}

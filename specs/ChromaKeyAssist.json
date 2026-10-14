@@ -1,0 +1,97 @@
+{
+  "plugin": "ChromaKeyAssist",
+  "bundle": "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/ChromaKeyAssist.plugin",
+  "recoveredAt": "2026-10-14T06:32:55.541Z",
+  "binary": {
+    "bytes": 137872,
+    "sha256": "38cf581cbb0c0d52e8452b704a348e21b37bcf23e60e297e3707f2617e76585b",
+    "md5": "abc0c88639a8f557c51442154bd52543",
+    "archs": [
+      "x86_64",
+      "arm64"
+    ],
+    "stripped": false
+  },
+  "identity": {
+    "bundleIdentifier": "com.williamsmedia.aftereffects.ChromaKeyAssist",
+    "bundleName": "ChromaKeyAssist",
+    "shortVersion": "1.0.0",
+    "minimumSystem": "11.0"
+  },
+  "pipl": {
+    "kind": "eFKT",
+    "name": "ChromaKeyAssist",
+    "catg": "Williams Media",
+    "mi64": "EffectMain",
+    "ma64": "EffectMain",
+    "ePVR": "0x00020000",
+    "eSVR": "0x000d001d",
+    "eVER": "0x00080001",
+    "eINF": "0x0000",
+    "eGLO": "0x02000000",
+    "eGL2": "0x08000000",
+    "eMNA": "WM_ChromaKeyAssist",
+    "aeFL": "0x00000000",
+    "_chunks": 13
+  },
+  "sourceUnits": [
+    "ChromaKeyAssist.cpp"
+  ],
+  "symbols": {
+    "total": 31,
+    "byScope": {
+      "other": [
+        "(anonymous namespace)::g_readoutMutex",
+        "(anonymous namespace)::g_readouts",
+        "EffectMain",
+        "__dyld_private",
+        "void chromakey::renderView<unsigned char>(chromakey::View<unsigned char const> const&, chromakey::View<unsigned char>&, float, chromakey::Params const&, chromakey::ViewMode, float, float const*, float const*)",
+        "void chromakey::renderView<unsigned short>(chromakey::View<unsigned short const> const&, chromakey::View<unsigned short>&, float, chromakey::Params const&, chromakey::ViewMode, float, float const*, float const*)",
+        "void std::__1::__tree_balance_after_insert[abi:nqe220106]<std::__1::__tree_node_base<void*>*>(std::__1::__tree_node_base<void*>*, std::__1::__tree_node_base<void*>*)",
+        "void std::__1::__tree_remove[abi:nqe220106]<std::__1::__tree_node_base<void*>*>(std::__1::__tree_node_base<void*>*, std::__1::__tree_node_base<void*>*)"
+      ],
+      "adobe-sdk": [
+        "(anonymous namespace)::StoreReadout(PF_InData*, chromakey::Stats const&)",
+        "AEGP_SuiteHandler::AEGP_SuiteHandler(SPBasicSuite const*)",
+        "AEGP_SuiteHandler::MissingSuiteError() const",
+        "AEGP_SuiteHandler::ReleaseAllSuites()",
+        "AEGP_SuiteHandler::ReleaseSuite(char const*, int)",
+        "AEGP_SuiteHandler::~AEGP_SuiteHandler()"
+      ],
+      "domain": [
+        "chromakey::(anonymous namespace)::colorRamp(float, float&, float&, float&)::stops",
+        "chromakey::Stats chromakey::analyzeFrame<unsigned char>(chromakey::View<unsigned char const> const&, float, chromakey::Params const&, float*, float*)",
+        "chromakey::Stats chromakey::analyzeFrame<unsigned short>(chromakey::View<unsigned short const> const&, float, chromakey::Params const&, float*, float*)",
+        "chromakey::angularDiff(float, float)",
+        "chromakey::chromaDistance(chromakey::YCbCr const&, chromakey::YCbCr const&)",
+        "chromakey::clampf(float, float, float)",
+        "chromakey::gradientMagnitude(float const*, int, int, long, int, int)",
+        "chromakey::hueAngle(float, float)",
+        "chromakey::percentile(float const*, unsigned long, float)",
+        "chromakey::percentileUnsorted(std::__1::vector<float, std::__1::allocator<float>>, float)",
+        "chromakey::rgbToYCbCr(chromakey::RGB const&)",
+        "chromakey::sensitivityToThreshold(float)",
+        "chromakey::spillScore(chromakey::YCbCr const&, chromakey::YCbCr const&, float)",
+        "chromakey::uniformityScore(float const*, unsigned long)"
+      ]
+    }
+  },
+  "strings": {
+    "authored": 60,
+    "parameterCandidates": [
+      "&ffffff.",
+      "Heatmap Opacity (%)",
+      "Key ColoH",
+      "Key Color",
+      "Sensitivity (%)",
+      "Suggested Clip Black (%)",
+      "Suggested Clip White (%)"
+    ],
+    "messageStrings": [
+      "Diagnostic overlay that scores greenscreen quality before you key. Shows where the key will struggle and suggests Clip Black/White starting points. Assists Keylight, doesn't replace it."
+    ],
+    "modeCandidates": [
+      "View"
+    ]
+  }
+}

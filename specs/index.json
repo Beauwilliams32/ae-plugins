@@ -1,0 +1,178 @@
+[
+  {
+    "plugin": "AutoFlickerFix",
+    "name": "AutoFlickerFix",
+    "menuName": "WM_AutoFlickerFix",
+    "category": "Williams Media",
+    "symbols": 22,
+    "sourceUnits": 0,
+    "paramCandidates": 8,
+    "messages": 2,
+    "archs": "x86_64+arm64"
+  },
+  {
+    "plugin": "BeatGridRuler",
+    "name": "BeatGridRuler",
+    "menuName": "WM_BeatGridRuler",
+    "category": "Williams Media",
+    "symbols": 38,
+    "sourceUnits": 0,
+    "paramCandidates": 10,
+    "messages": 5,
+    "archs": "x86_64+arm64"
+  },
+  {
+    "plugin": "BeatSnap",
+    "name": "BeatSnap",
+    "menuName": "WM_BeatSnap",
+    "category": "Williams Media",
+    "symbols": 39,
+    "sourceUnits": 0,
+    "paramCandidates": 17,
+    "messages": 5,
+    "archs": "x86_64+arm64"
+  },
+  {
+    "plugin": "ChromaKeyAssist",
+    "name": "ChromaKeyAssist",
+    "menuName": "WM_ChromaKeyAssist",
+    "category": "Williams Media",
+    "symbols": 31,
+    "sourceUnits": 1,
+    "paramCandidates": 7,
+    "messages": 1,
+    "archs": "x86_64+arm64"
+  },
+  {
+    "plugin": "ColorPulse",
+    "name": "ColorPulse",
+    "menuName": "WM_ColorPulse",
+    "category": "Williams Media",
+    "symbols": 34,
+    "sourceUnits": 0,
+    "paramCandidates": 12,
+    "messages": 3,
+    "archs": "x86_64+arm64"
+  },
+  {
+    "plugin": "EchoTrails",
+    "name": "EchoTrails",
+    "menuName": "WM_EchoTrails",
+    "category": "Williams Media",
+    "symbols": 16,
+    "sourceUnits": 0,
+    "paramCandidates": 9,
+    "messages": 2,
+    "archs": "x86_64+arm64"
+  },
+  {
+    "plugin": "GlitchKit",
+    "name": "GlitchKit",
+    "menuName": "WM_GlitchKit",
+    "category": "Williams Media",
+    "symbols": 15,
+    "sourceUnits": 0,
+    "paramCandidates": 10,
+    "messages": 2,
+    "archs": "x86_64+arm64"
+  },
+  {
+    "plugin": "LUTBlend",
+    "name": "LUTBlend",
+    "menuName": "WM_LUTBlend",
+    "category": "Williams Media",
+    "symbols": 76,
+    "sourceUnits": 1,
+    "paramCandidates": 6,
+    "messages": 2,
+    "archs": "x86_64+arm64"
+  },
+  {
+    "plugin": "MaskFlow",
+    "name": "MaskFlow",
+    "menuName": "WM_MaskFlow",
+    "category": "Williams Media",
+    "symbols": 22,
+    "sourceUnits": 0,
+    "paramCandidates": 9,
+    "messages": 2,
+    "archs": "x86_64+arm64"
+  },
+  {
+    "plugin": "MotionCurveX",
+    "name": "MotionCurveX",
+    "menuName": "WM_MotionCurveX",
+    "category": "Williams Media",
+    "symbols": 41,
+    "sourceUnits": 0,
+    "paramCandidates": 10,
+    "messages": 5,
+    "archs": "x86_64+arm64"
+  },
+  {
+    "plugin": "NoiseField",
+    "name": "NoiseField",
+    "menuName": "WM_NoiseField",
+    "category": "Williams Media",
+    "symbols": 20,
+    "sourceUnits": 0,
+    "paramCandidates": 5,
+    "messages": 1,
+    "archs": "x86_64+arm64"
+  },
+  {
+    "plugin": "PathScribe",
+    "name": "PathScribe",
+    "menuName": "WM_PathScribe",
+    "category": "Williams Media",
+    "symbols": 42,
+    "sourceUnits": 1,
+    "paramCandidates": 16,
+    "messages": 2,
+    "archs": "x86_64+arm64"
+  },
+  {
+    "plugin": "ShakeCapture",
+    "name": "ShakeCapture",
+    "menuName": "WM_ShakeCapture",
+    "category": "Williams Media",
+    "symbols": 33,
+    "sourceUnits": 0,
+    "paramCandidates": 10,
+    "messages": 4,
+    "archs": "x86_64+arm64"
+  },
+  {
+    "plugin": "SpectraKeys",
+    "name": "SpectraKeys",
+    "menuName": "WMH SpectraKeys",
+    "category": "Williams Media",
+    "symbols": 51,
+    "sourceUnits": 1,
+    "paramCandidates": 23,
+    "messages": 3,
+    "archs": "x86_64+arm64"
+  },
+  {
+    "plugin": "SpeedRampCurve",
+    "name": "SpeedRampCurve",
+    "menuName": "WM_SpeedRampCurve",
+    "category": "Williams Media",
+    "symbols": 18,
+    "sourceUnits": 0,
+    "paramCandidates": 12,
+    "messages": 2,
+    "archs": "x86_64+arm64"
+  },
+  {
+    "plugin": "TypeRiser",
+    "name": "TypeRiser",
+    "menuName": "WM_TypeRiser",
+    "category": "Williams Media",
+    "symbols": 77,
+    "sourceUnits": 1,
+    "paramCandidates": 11,
+    "messages": 2,
+    "archs": "x86_64+arm64"
+  }
+]

@@ -1,0 +1,7 @@
+# Build output for the reconstructed plugins (not the recovered specs).
+build/
+dist/
+*.zxz
+*.zxp
+.node_modules/
+node_modules/

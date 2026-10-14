@@ -1,0 +1,85 @@
+{
+  "plugin": "EchoTrails",
+  "bundle": "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/EchoTrails.plugin",
+  "recoveredAt": "2026-10-14T06:32:55.596Z",
+  "binary": {
+    "bytes": 101872,
+    "sha256": "d8e34a500f228737ee10f5e56b28a908d0b32e2cf90ac471a500bd6312f24f5e",
+    "md5": "0ed0c11d403fad93d6ca4f8b183eef05",
+    "archs": [
+      "x86_64",
+      "arm64"
+    ],
+    "stripped": false
+  },
+  "identity": {
+    "bundleIdentifier": "com.williamsmedia.aftereffects.EchoTrails",
+    "bundleName": "EchoTrails",
+    "shortVersion": "1.0.0",
+    "minimumSystem": "11.0"
+  },
+  "pipl": {
+    "kind": "eFKT",
+    "name": "EchoTrails",
+    "catg": "Williams Media",
+    "mi64": "EffectMain",
+    "ma64": "EffectMain",
+    "ePVR": "0x00020000",
+    "eSVR": "0x000d001d",
+    "eVER": "0x00080001",
+    "eINF": "0x0000",
+    "eGLO": "0x02000006",
+    "eGL2": "0x08000000",
+    "eMNA": "WM_EchoTrails",
+    "aeFL": "0x00000000",
+    "_chunks": 13
+  },
+  "sourceUnits": [],
+  "symbols": {
+    "total": 16,
+    "byScope": {
+      "other": [
+        "EffectMain",
+        "__dyld_private"
+      ],
+      "adobe-sdk": [
+        "AEGP_SuiteHandler::AEGP_SuiteHandler(SPBasicSuite const*)",
+        "AEGP_SuiteHandler::MissingSuiteError() const",
+        "AEGP_SuiteHandler::ReleaseAllSuites()",
+        "AEGP_SuiteHandler::ReleaseSuite(char const*, int)",
+        "AEGP_SuiteHandler::~AEGP_SuiteHandler()",
+        "WorldToImageSized(PF_LayerDef const*, bool, int, int, echo::ImageF&)"
+      ],
+      "domain": [
+        "echo::blendPixel(float*, float const*, echo::BlendMode, float)",
+        "echo::buildLadder(int, float, float, float)",
+        "echo::clampf(float, float, float)",
+        "echo::compositeOver(echo::ImageF&, echo::ImageF const&, echo::BlendMode, float)",
+        "echo::sampleBilinear(echo::ImageF const&, float, float, float*)",
+        "echo::transformBilinear(echo::ImageF const&, echo::ImageF&, float, float)"
+      ]
+    }
+  },
+  "strings": {
+    "authored": 53,
+    "parameterCandidates": [
+      "Blend MoH",
+      "Blend Mode",
+      "Opacity Decay (%)",
+      "Rotation Step (deg)",
+      "Scale StH",
+      "Scale Step (%)",
+      "Start BeH",
+      "Start Behind",
+      "Time Step (frames)"
+    ],
+    "messageStrings": [
+      "Set Copies and Time Step, then art-direct the trail with the decay, scale and rotation ladder. Add / Screen for light trails.",
+      "Time-offset echo copies with per-copy decay, scale, rotation and blend mode."
+    ],
+    "modeCandidates": [
+      "Copi",
+      "Copies"
+    ]
+  }
+}

@@ -1,0 +1,108 @@
+{
+  "plugin": "ColorPulse",
+  "bundle": "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/ColorPulse.plugin",
+  "recoveredAt": "2026-10-14T06:32:55.569Z",
+  "binary": {
+    "bytes": 137168,
+    "sha256": "fc32fd4b1228038d7aec025872c9822a61ed218dd86676dab68a37691c2dc6e1",
+    "md5": "d0208c39af9150ba02a89fd87993f708",
+    "archs": [
+      "x86_64",
+      "arm64"
+    ],
+    "stripped": false
+  },
+  "identity": {
+    "bundleIdentifier": "com.williamsmedia.aftereffects.ColorPulse",
+    "bundleName": "ColorPulse",
+    "shortVersion": "1.0.0",
+    "minimumSystem": "11.0"
+  },
+  "pipl": {
+    "kind": "eFKT",
+    "name": "ColorPulse",
+    "catg": "Williams Media",
+    "mi64": "EffectMain",
+    "ma64": "EffectMain",
+    "ePVR": "0x00020000",
+    "eSVR": "0x000d001d",
+    "eVER": "0x00080001",
+    "eINF": "0x0000",
+    "eGLO": "0x02000004",
+    "eGL2": "0x08000000",
+    "eMNA": "WM_ColorPulse",
+    "aeFL": "0x00000000",
+    "_chunks": 13
+  },
+  "sourceUnits": [],
+  "symbols": {
+    "total": 34,
+    "byScope": {
+      "other": [
+        "(anonymous namespace)::GridFromWorld8(PF_Pixel const*, unsigned int, int, int, colorpulse::Region, std::__1::vector<colorpulse::RGB, std::__1::allocator<colorpulse::RGB>>*, int*, int*)",
+        "EffectMain",
+        "__dyld_private",
+        "float& std::__1::vector<float, std::__1::allocator<float>>::emplace_back<float>(float&&)::'lambda0'()::operator()() const"
+      ],
+      "adobe-sdk": [
+        "AEGP_SuiteHandler::AEGP_SuiteHandler(SPBasicSuite const*)",
+        "AEGP_SuiteHandler::EffectSuite4() const",
+        "AEGP_SuiteHandler::LayerRenderOptionsSuite2() const",
+        "AEGP_SuiteHandler::MissingSuiteError() const",
+        "AEGP_SuiteHandler::PFInterfaceSuite1() const",
+        "AEGP_SuiteHandler::ReleaseAllSuites()",
+        "AEGP_SuiteHandler::ReleaseSuite(char const*, int)",
+        "AEGP_SuiteHandler::RenderSuite5() const",
+        "AEGP_SuiteHandler::UtilitySuite6() const",
+        "AEGP_SuiteHandler::WorldSuite3() const",
+        "AEGP_SuiteHandler::~AEGP_SuiteHandler()",
+        "CP_BakeKeyframes(PF_InData*, PF_OutData*, PF_ParamDef**)",
+        "CP_BakeKeyframes(PF_InData*, PF_OutData*, PF_ParamDef**)::$_0::operator()(int, bool) const",
+        "CP_GetAegpPluginID(AEGP_SuiteHandler&, int*)",
+        "CP_GetAegpPluginID(AEGP_SuiteHandler&, int*)::s_plugin_id",
+        "CP_GetAegpPluginID(AEGP_SuiteHandler&, int*)::s_registered",
+        "CP_ResolveSourceLayer(PF_InData*, _AEGP_Layer***)"
+      ],
+      "domain": [
+        "colorpulse::RGB& std::__1::vector<colorpulse::RGB, std::__1::allocator<colorpulse::RGB>>::emplace_back<colorpulse::RGB const&>(colorpulse::RGB const&)::'lambda0'()::operator()() const",
+        "colorpulse::averageColor(colorpulse::RGB const*, unsigned long)",
+        "colorpulse::brightestRegionColor(colorpulse::RGB const*, int, int, int)",
+        "colorpulse::clampf(float, float, float)",
+        "colorpulse::dominantColor(colorpulse::RGB const*, unsigned long, int)",
+        "colorpulse::luma709(colorpulse::RGB const&)",
+        "colorpulse::regionBounds(colorpulse::Region, int, int)",
+        "colorpulse::sampleColor(colorpulse::RGB const*, int, int, colorpulse::Mode)",
+        "colorpulse::saturationBoost(colorpulse::RGB const&, float)",
+        "colorpulse::smoothColor(colorpulse::RGB const&, colorpulse::RGB const&, float)",
+        "colorpulse::smoothScalar(float, float, float)"
+      ]
+    }
+  },
+  "strings": {
+    "authored": 76,
+    "parameterCandidates": [
+      "Bake Keyframes",
+      "Brightness (%)",
+      "Sample RI",
+      "Sample Region",
+      "Sampled Color",
+      "Sampled I",
+      "Saturation Boost (%)",
+      "Show PreI",
+      "Show Preview",
+      "Smoothing (%)",
+      "Source LH",
+      "Source Layer"
+    ],
+    "messageStrings": [
+      " trim it before baking (20000 frame limit).",
+      "Pick a Source Layer, choose Mode + Sample Region, then Bake Keyframes to write the color and brightness onto every frame of the work area. Pick-whip Sampled Color / Brightness to anything.",
+      "Sample a layer's color and expose it as keyframable color + brightness."
+    ],
+    "modeCandidates": [
+      "Keyframes",
+      "Mode",
+      "Preview"
+    ]
+  }
+}

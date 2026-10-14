@@ -1,0 +1,90 @@
+{
+  "plugin": "NoiseField",
+  "bundle": "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/NoiseField.plugin",
+  "recoveredAt": "2026-10-14T06:32:55.721Z",
+  "binary": {
+    "bytes": 134400,
+    "sha256": "5a862f2ff602b6e34e6d25cd70cb0c71e09b2b7441734e0d83e3a17c967da1b3",
+    "md5": "4ead9b560b34c4daebb844165f4b92a9",
+    "archs": [
+      "x86_64",
+      "arm64"
+    ],
+    "stripped": false
+  },
+  "identity": {
+    "bundleIdentifier": "com.williamsmedia.aftereffects.NoiseField",
+    "bundleName": "NoiseField",
+    "shortVersion": "1.0.0",
+    "minimumSystem": "11.0"
+  },
+  "pipl": {
+    "kind": "eFKT",
+    "name": "NoiseField",
+    "catg": "Williams Media",
+    "mi64": "EffectMain",
+    "ma64": "EffectMain",
+    "ePVR": "0x00020000",
+    "eSVR": "0x000d001d",
+    "eVER": "0x00080001",
+    "eINF": "0x0000",
+    "eGLO": "0x02000000",
+    "eGL2": "0x08000000",
+    "eMNA": "WM_NoiseField",
+    "aeFL": "0x00000000",
+    "_chunks": 13
+  },
+  "sourceUnits": [],
+  "symbols": {
+    "total": 20,
+    "byScope": {
+      "other": [
+        "EffectMain",
+        "__dyld_private",
+        "void noisefield::apply<unsigned char>(noisefield::View<unsigned char const> const&, noisefield::View<unsigned char>&, noisefield::Params const&, float)",
+        "void noisefield::apply<unsigned short>(noisefield::View<unsigned short const> const&, noisefield::View<unsigned short>&, noisefield::Params const&, float)"
+      ],
+      "domain": [
+        "noisefield::(anonymous namespace)::curlField(noisefield::PermTable const&, float, float, float, noisefield::Params const&)",
+        "noisefield::(anonymous namespace)::kGrad3",
+        "noisefield::PermTable::build(unsigned int)",
+        "noisefield::clampf(float, float, float)",
+        "noisefield::clampi(int, int, int)",
+        "noisefield::fbm3(noisefield::PermTable const&, float, float, float, int, float, float)",
+        "noisefield::fbmAmplitudeSum(int, float)",
+        "noisefield::fieldAt(noisefield::PermTable const&, float, float, noisefield::Params const&)",
+        "noisefield::noise3(noisefield::PermTable const&, float, float, float)"
+      ],
+      "adobe-sdk": [
+        "AEGP_SuiteHandler::AEGP_SuiteHandler(SPBasicSuite const*)",
+        "AEGP_SuiteHandler::MissingSuiteError() const",
+        "AEGP_SuiteHandler::ReleaseAllSuites()",
+        "AEGP_SuiteHandler::ReleaseSuite(char const*, int)",
+        "AEGP_SuiteHandler::~AEGP_SuiteHandler()"
+      ]
+    }
+  },
+  "strings": {
+    "authored": 65,
+    "parameterCandidates": [
+      " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~",
+      "Edge BehI",
+      "Edge Behavior",
+      "Field TyH",
+      "Field Type"
+    ],
+    "messageStrings": [
+      "Procedural displacement by curl noise / flow fields. Organic motion, seeded and deterministic."
+    ],
+    "modeCandidates": [
+      "Amount",
+      "Displacement",
+      "Evolution",
+      "Gain",
+      "Lacunarity",
+      "Octaves",
+      "Scale",
+      "Seed"
+    ]
+  }
+}

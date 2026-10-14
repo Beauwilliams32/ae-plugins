@@ -1,0 +1,87 @@
+{
+  "plugin": "GlitchKit",
+  "bundle": "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/GlitchKit.plugin",
+  "recoveredAt": "2026-10-14T06:32:55.623Z",
+  "binary": {
+    "bytes": 133824,
+    "sha256": "f008768dc711c1d5244d8d7c7ddcfbad09b17af2e450ecde90193b0aa1fc0456",
+    "md5": "12c20e28d6f01ab79e9be1863e332875",
+    "archs": [
+      "x86_64",
+      "arm64"
+    ],
+    "stripped": false
+  },
+  "identity": {
+    "bundleIdentifier": "com.williamsmedia.aftereffects.GlitchKit",
+    "bundleName": "GlitchKit",
+    "shortVersion": "1.0.0",
+    "minimumSystem": "11.0"
+  },
+  "pipl": {
+    "kind": "eFKT",
+    "name": "GlitchKit",
+    "catg": "Williams Media",
+    "mi64": "EffectMain",
+    "ma64": "EffectMain",
+    "ePVR": "0x00020000",
+    "eSVR": "0x000d001d",
+    "eVER": "0x00080001",
+    "eINF": "0x0000",
+    "eGLO": "0x02000004",
+    "eGL2": "0x08000000",
+    "eMNA": "WM_GlitchKit",
+    "aeFL": "0x00000000",
+    "_chunks": 13
+  },
+  "sourceUnits": [],
+  "symbols": {
+    "total": 15,
+    "byScope": {
+      "other": [
+        "EffectMain",
+        "__dyld_private",
+        "void glitch::apply<unsigned char>(glitch::View<unsigned char const> const&, glitch::View<unsigned char>&, glitch::Params const&, unsigned int, float)",
+        "void glitch::apply<unsigned short>(glitch::View<unsigned short const> const&, glitch::View<unsigned short>&, glitch::Params const&, unsigned int, float)"
+      ],
+      "adobe-sdk": [
+        "AEGP_SuiteHandler::AEGP_SuiteHandler(SPBasicSuite const*)",
+        "AEGP_SuiteHandler::MissingSuiteError() const",
+        "AEGP_SuiteHandler::ReleaseAllSuites()",
+        "AEGP_SuiteHandler::ReleaseSuite(char const*, int)",
+        "AEGP_SuiteHandler::~AEGP_SuiteHandler()"
+      ],
+      "domain": [
+        "glitch::clampf(float, float, float)",
+        "glitch::clampi(int, int, int)",
+        "glitch::hashKey(unsigned int, unsigned int, unsigned int)",
+        "glitch::patternFrame(unsigned int, float)"
+      ]
+    }
+  },
+  "strings": {
+    "authored": 69,
+    "parameterCandidates": [
+      "&ffff.",
+      "Amount (%)",
+      "Amount (I",
+      "Block SiI",
+      "Block Size",
+      "Channel Shift (px)",
+      "Drive by Luma",
+      "Drive byI",
+      "Mix (%)",
+      "Scanline Height"
+    ],
+    "messageStrings": [
+      "Five deterministic, seeded glitch modes. Same seed, same frame, same image.",
+      "Renders are deterministic: keyframe Amount freely, scrub anywhere, and every frame comes back pixel-identical."
+    ],
+    "modeCandidates": [
+      "Mode",
+      "Seed",
+      "Spee",
+      "Speed"
+    ]
+  }
+}
