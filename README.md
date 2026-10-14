@@ -60,7 +60,7 @@ modifies, moves or copies them.
 
 Be clear-eyed about this:
 
-- **Most function bodies.** Thirteen namespaces are recovered (see below); the other
+- **Most function bodies.** Fourteen namespaces are recovered (see below); the other
   effects' DSP is still machine code. Names and signatures are free, behaviour needs
   per-function disassembly, and that is the bulk of the remaining work.
 - **`lutblend::parseCube`** (1924 instructions) is identified but unread, along with
@@ -79,7 +79,7 @@ Be clear-eyed about this:
   is untested. See `plugins/*/README.md` for exactly what is and is not claimed.
 
 So this repository contains a **complete architectural specification** of the fleet,
-thirteen recovered source namespaces, and two effects that build into loadable bundles —
+fourteen recovered source namespaces, and two effects that build into loadable bundles —
 **not** a finished or verified product.
 
 ## The fleet
@@ -98,7 +98,7 @@ Two findings already worth acting on:
 
 ## Recovered source
 
-Thirteen recovered namespaces, all transcribed from the disassembly with per-function commentary
+Fourteen recovered namespaces, all transcribed from the disassembly with per-function commentary
 citing the instructions that establish each behaviour:
 
 | Module | Contents | State |
@@ -116,13 +116,14 @@ citing the instructions that establish each behaviour:
 | `noisefield::` | The noise core: `clampf`, `clampi`, `fbmAmplitudeSum`, `PermTable::build`, `noise3`, `fbm3`, and `kGrad3` — the twelve edge gradients of Perlin's improved noise, read out of the bundle's `__TEXT,__const` | **6 of 10** — three instruction-identical (`clampf`, `clampi`, `fbmAmplitudeSum`); `noise3` (183) and `fbm3` (51) compile to the bundle's instruction COUNT with a different register schedule, and are verified instead against an independently written textbook oracle — 4000 points agreeing to 7.8e-07. `PermTable::build` is Fisher-Yates over xorshift32 into a permutation written TWICE, which is what keeps `p[AA + 1]` in range. `fieldAt` (226), `curlField` (163) and the two `apply<T>` loops (408/412) are outstanding |
 | `pathscribe::` | The analysis pipeline, shared with SpectraKeys: `clampf`, `isPowerOfTwo`, `linearToDb`, `dbToLinear`, `hannWindow`, `hannCoherentGain`, `fftRadix2`, `downmixToMono`, `analyse`, `Spectrogram`, plus its own `spanCoverage`, `binEdgeHz`, `smoothStep` | **13 of 18** — eight INSTRUCTION-IDENTICAL. Ten of the eighteen are SpectraKeys' code, so one recovery covers four effects; the copy is checked by divergence parity rather than by matching, since four of the ten legitimately differ. `barLevels` (112), `smoothedLevelsAtFrame` (179), `waveformColumns` (80) and the two rasterisers (173/147) are outstanding |
 | `beatgrid::` | The beat maths: `clampf`, `isPowerOfTwo`, `downmixToMono` (shared), `subdivisionFactor`, `phaseSawtooth`, `phaseInLayerTime`, `OnsetEnvelope::frameTimeSeconds` | **7 of 12** namespace symbols — twelve, not the fourteen entries `specs/BeatGridRuler.json` lists, because two of those are `std::vector` member instantiations that take beatgrid types and the differ counts them under `std`, where they are not this effect's code. The four own functions all compile to the bundle's instruction counts, two functions are instruction-identical, and the subdivision factors (0.5, 0.25, 0.125 and **4.0** — the odd one out) were read out of the literal pool rather than guessed. `computeOnsetEnvelope` (436), `estimateTempoBpm` (578), `estimatePhaseSeconds` (138), `generateBeatGrid` (94) and `analyzeBeatGrid` (57) are outstanding, and `WriteMarkerGrid` (811) stays out of `src/` because it takes Adobe SDK types |
+| `maskflow::` | The geometry helpers: `clampf` (shared, and the fifth carrier), `edgeCostScaleFromTolerance`, `computeDownsampleDims`, `smoothstep` | **4 of 9** — three came out INSTRUCTION-IDENTICAL on the first transcription. `smoothstep` extrapolates below its lower edge (a clamp that clamps nothing — almost certainly a typo for 0 in the original, and at x = -1 it returns 5) and returns negative infinity when its edges are equal. `downsampleBoxFilter` (126), `upsampleBilinear` (168), `buildMatte` (169), `computeMatteFullRes` (151) and `computeArrivalField` (290) need `Image` first and are outstanding |
 
 Three fleet-wide duplications are recorded rather than silently deduplicated, because
 each was verified rather than assumed:
 
-* `clampf` is the fleet's most duplicated idiom: **15 of the 16 bundles** carry one, in
-  eight different bundles, and the nine that are recovered here are instruction for
-  instruction identical. (Measured by listing `src/*/` for a `clampf` definition, which is
+* `clampf` is the fleet's most duplicated idiom: **15 of the 16 bundles** carry one, and the
+  ten that are recovered here are instruction for instruction identical. `tools/dsp-duplication.mjs`
+  verifies FIVE carriers against each other — 27 copies of nine functions, no drift. (Measured by listing `src/*/` for a `clampf` definition, which is
   what the test below discovers too; chromakey's copy was the ninth.) `test/clampf.test.mjs` compares all of them against each other,
   including on INVERTED ranges, which is the only input where a `min(max(v,lo),hi)`
   rewrite would diverge. The test discovers the copies from the tree, so a newly

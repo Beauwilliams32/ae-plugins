@@ -29,6 +29,7 @@ export const BUNDLES = {
   beatsnap: "BeatSnap",
   pathscribe: "PathScribe",
   beatgrid: "BeatGridRuler",
+  maskflow: "MaskFlow",
 };
 
 /** Recovered namespace directories, discovered from the tree. */

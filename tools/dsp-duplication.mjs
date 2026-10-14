@@ -34,12 +34,19 @@ import path from "node:path";
 
 const PLUGINS_DIR = "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media";
 
-// effect -> its namespace, for the four that carry the shared audio DSP.
+// effect -> its namespace, for every bundle that carries shared DSP.
+//
+// This list is hardcoded rather than discovered from `src/`, because the point is to
+// compare BUNDLES: a namespace with no recovered source still has a copy in its binary,
+// and one that is missing here is a copy going unchecked. MaskFlow was missing until it
+// had a namespace to map through, which meant its `clampf` — a fifth copy — was outside
+// the comparison for the whole life of this tool.
 const CARRIERS = [
   ["SpectraKeys", "spectra"],
   ["PathScribe", "pathscribe"],
   ["BeatSnap", "beatsnap"],
   ["BeatGridRuler", "beatgrid"],
+  ["MaskFlow", "maskflow"],
 ];
 
 const NS_ALT = CARRIERS.map(([, ns]) => ns).join("|");
