@@ -99,6 +99,33 @@ digits, so the two disagree on the *fraction* by more than the algorithm's error
 sweep now stays inside ±8 and compares with the same `float`-rounded inputs the
 implementation receives, which brought the worst error to 7.8e-07.
 
+## `fieldAt` — read far enough to map `Params`, and no further
+
+`fieldAt` is 226 instructions with a mode dispatch and a five-step advection along a
+curl field, so it is a round of work on its own. Its PROLOGUE is unambiguous though,
+and what it establishes is the `Params` layout the rest of the effect is written
+against, so it is recorded here rather than recovered twice later:
+
+| Offset | Type | Evidence |
+|---|---|---|
+| `+0x00` | `int` | `ldr w8, [x1]`, then `cmp w8, #2` / `cmp w8, #3` — the mode selector, and the branches are what give the values |
+| `+0x04` | `float` | `ldr s2, [x1, #0x4]` then `fmaxnm s2, s2, 0.001f` and `fdiv` — a SCALE, floored at 0.001f (0x3a83126f) so it can never divide by zero, with the sample divided by it |
+| `+0x0c` | `float` | `ldr s13, [x1, #0xc]`, passed as the third coordinate to `curlField` and as the z of the noise |
+| `+0x10` | `int` | `ldr w8, [x1, #0x10]`, compared against 1 |
+| `+0x14`, `+0x18` | `float` ×2 | `ldp s3, s12, [x1, #0x14]`, loaded as a pair |
+
+Two things about the mode dispatch that are worth having before the body is read:
+mode **2** runs the curl field and advects the sample point **five times** with a step
+of **0.35f** (0x3eb33333), accumulating the displacement and then subtracting the
+starting point; mode **3** takes the same curl path by a different branch. So mode 2 is
+a displacement/flow mode built on repeated field integration rather than a single
+sample — which is the effect's actual character, and the reason `curlField` (163) is
+worth recovering next rather than `fieldAt` alone.
+
+**These offsets are identified, not recovered.** Nothing above is transcribed as code,
+no struct is declared for them, and the fields between `+0x04` and `+0x0c` are
+deliberately absent from the table because this function never reads them.
+
 ## What is next
 
 `fieldAt` (226) and `curlField` (163) are the effect's own layers over this core, then
