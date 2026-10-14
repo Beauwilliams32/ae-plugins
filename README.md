@@ -60,7 +60,7 @@ modifies, moves or copies them.
 
 Be clear-eyed about this:
 
-- **Most function bodies.** Six namespaces are recovered (see below); the other
+- **Most function bodies.** Seven namespaces are recovered (see below); the other
   effects' DSP is still machine code. Names and signatures are free, behaviour needs
   per-function disassembly, and that is the bulk of the remaining work.
 - **`lutblend::parseCube`** (1924 instructions) and `echo::buildLadder` /
@@ -97,7 +97,7 @@ Two findings already worth acting on:
 
 ## Recovered source
 
-Six namespaces, all transcribed from the disassembly with per-function commentary
+Seven recovered namespaces, all transcribed from the disassembly with per-function commentary
 citing the instructions that establish each behaviour:
 
 | Module | Contents | State |
@@ -107,13 +107,14 @@ citing the instructions that establish each behaviour:
 | `speedramp::` | `easeValue`, `easeIntegral`, `speedAt`, `mapTime`, `computeBlend`, plus `RampParams` and `FrameBlend` | **complete — all 5 functions, 261 instructions** |
 | `lutblend::` | `clampf`, `lerpf`, `luma709`, `CubeLUT::valid`, `sampleLUT`, `makeIdentity`, `applyLUTBlend`, plus the `CubeLUT` layout | **7 of 8** (`parseCube` pending — 1924 instructions, the largest function in the fleet) |
 | `echo::` | `clampf`, `blendPixel`, `compositeOver`, plus `ImageF` and `BlendMode` | **3 of 6** (`buildLadder`, `sampleBilinear`, `transformBilinear` unread) |
+| `colorpulse::` | `clampf`, `smoothScalar`, `luma709`, `smoothColor`, `saturationBoost`, plus the `RGB` layout | **5 of 10** — four are INSTRUCTION-IDENTICAL. The colour analysers (`averageColor`, `sampleColor`, `brightestRegionColor`, `dominantColor`) and `regionBounds` are unread |
 | `spectra::` | FFT, Hann window, STFT, band analysis, falloff envelope | **recovered, shared by 4 effects** |
 
 Three fleet-wide duplications are recorded rather than silently deduplicated, because
 each was verified rather than assumed:
 
 * `clampf` is the fleet's most duplicated idiom: **15 of the 16 bundles** carry one, in
-  six different namespaces, and the five that are recovered here are instruction for
+  seven different namespaces, and the six that are recovered here are instruction for
   instruction identical. `test/clampf.test.mjs` compares all five against each other,
   including on INVERTED ranges, which is the only input where a `min(max(v,lo),hi)`
   rewrite would diverge.

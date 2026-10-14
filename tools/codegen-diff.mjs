@@ -35,6 +35,7 @@ const BUNDLES = {
   chromakey: "ChromaKeyAssist",
   speedramp: "SpeedRampCurve",
   echo: "EchoTrails",
+  colorpulse: "ColorPulse",
 };
 
 function bundlePath(plugin) {
