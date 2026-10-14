@@ -461,6 +461,159 @@ int main() {
   }
 
 
+  std::printf("typeriser::wordStyle\n");
+  {
+    using typeriser::Anim;
+    using typeriser::Easing;
+    const float D = 40.0f;  // an arbitrary offsetDistance
+
+    // Helper: run at progress p with no stagger, animDuration 1000.
+    auto at = [&](Anim a, Easing ez, float p) {
+      return typeriser::wordStyle(a, ez, 0, 1000,
+                                  static_cast<long long>(p * 1000.0f),
+                                  0, 1, 0.f, 1000.f, D);
+    };
+
+    // ---- Anim 0 is the identity, and so is anything outside 1..4.
+    auto none = at(Anim::None, Easing::EaseOutQuad, 0.25f);
+    check(none.alpha == 1.f && none.scale == 1.f && none.offset == 0.f &&
+          none.highlight == 0,
+          "Anim::None is the identity regardless of easing");
+    auto bogus = at(static_cast<Anim>(99), Easing::EaseOutBack, 0.25f);
+    check(bogus.alpha == 1.f && bogus.scale == 1.f,
+          "an out-of-range Anim is also the identity");
+
+    // ---- Pop (1): scale 0.3 -> 1.0 while alpha ramps at 2x.
+    auto pop0 = at(Anim::Pop, Easing::LinearA, 0.f);
+    check(pop0.alpha == 0.f && pop0.scale == 0.3f, "Pop starts at alpha 0, scale 0.3");
+    auto pop5 = at(Anim::Pop, Easing::LinearA, 0.5f);
+    check(pop5.alpha == 1.f && std::fabs(pop5.scale - 0.65f) < 1e-6f,
+          "Pop at half progress: alpha already 1 (2x), scale 0.65");
+    auto pop1 = at(Anim::Pop, Easing::LinearA, 1.f);
+    check(pop1.alpha == 1.f && std::fabs(pop1.scale - 1.f) < 1e-6f,
+          "Pop ends at alpha 1, scale 1.0");
+
+    // ---- Fade (2): alpha only.
+    auto fade5 = at(Anim::Fade, Easing::LinearA, 0.5f);
+    check(fade5.alpha == 0.5f && fade5.scale == 1.f && fade5.offset == 0.f,
+          "Fade moves alpha only");
+
+    // ---- Rise (3): alpha at 1.5x, offset decaying to 0.
+    auto rise0 = at(Anim::Rise, Easing::LinearA, 0.f);
+    check(rise0.alpha == 0.f && std::fabs(rise0.offset - D) < 1e-5f,
+          "Rise starts fully offset and transparent");
+    auto rise5 = at(Anim::Rise, Easing::LinearA, 0.5f);
+    check(std::fabs(rise5.alpha - 0.75f) < 1e-6f,
+          "Rise alpha ramps at 1.5x");
+    auto rise1 = at(Anim::Rise, Easing::LinearA, 1.f);
+    check(rise1.alpha == 1.f && std::fabs(rise1.offset) < 1e-5f,
+          "Rise lands at full alpha and zero offset");
+    auto riseLate = at(Anim::Rise, Easing::LinearA, 0.9f);
+    check(riseLate.alpha == 1.f, "Rise alpha saturates at 1.0 well before the end");
+
+    // ---- Karaoke (4): no easing; the word under the playhead is found by time.
+    auto kara = typeriser::wordStyle(Anim::Karaoke, Easing::EaseOutQuad,
+                                     0, 1000, 500, 2, 4, 0.f, 1000.f, D);
+    check(kara.alpha == 1.f && kara.scale == 1.08f && kara.highlight == 1,
+          "the karaoke word under the playhead is scaled up and flagged");
+    check(kara.offset == D, "karaoke passes offsetDistance through unchanged");
+
+    auto karaOther = typeriser::wordStyle(Anim::Karaoke, Easing::EaseOutQuad,
+                                          0, 1000, 500, 1, 4, 0.f, 1000.f, D);
+    check(karaOther.scale == 1.f && karaOther.highlight == 0,
+          "a karaoke word NOT under the playhead is left alone");
+
+    // now = 500 over 1000 ms with 4 words -> idx = 500*4/1000 = 2.
+    check(kara.highlight == 1 && karaOther.highlight == 0,
+          "the karaoke index is derived from elapsed time, not word order");
+
+    auto karaStart = typeriser::wordStyle(Anim::Karaoke, Easing::LinearA,
+                                          0, 1000, 0, 0, 4, 0.f, 1000.f, D);
+    check(karaStart.highlight == 1, "at t=start the FIRST word is active");
+
+    auto karaEnd = typeriser::wordStyle(Anim::Karaoke, Easing::LinearA,
+                                        0, 1000, 1000, 3, 4, 0.f, 1000.f, D);
+    check(karaEnd.highlight == 0 && karaEnd.scale == 1.f,
+          "at t=end no word is active (the guard is a strict now < end)");
+
+    auto karaPast = typeriser::wordStyle(Anim::Karaoke, Easing::LinearA,
+                                         0, 1000, 5000, 0, 4, 0.f, 1000.f, D);
+    check(karaPast.highlight == 0, "past the cue, no word is active");
+
+    // The index clamps to wordCount - 1 rather than running past the last word.
+    auto kara999 = typeriser::wordStyle(Anim::Karaoke, Easing::LinearA,
+                                        0, 1000, 999, 3, 4, 0.f, 1000.f, D);
+    check(kara999.highlight == 1, "the karaoke index clamps to the last word");
+
+    // wordCount 0 must not divide by zero or index anything.
+    auto karaZero = typeriser::wordStyle(Anim::Karaoke, Easing::LinearA,
+                                         0, 1000, 500, 0, 0, 0.f, 1000.f, D);
+    check(karaZero.highlight == 0, "wordCount 0 activates nothing and does not trap");
+
+    // ---- Degenerate animDuration.
+    auto degPos = typeriser::wordStyle(Anim::Fade, Easing::LinearA,
+                                       0, 1000, 500, 0, 1, 0.f, 0.f, D);
+    check(degPos.alpha == 1.f, "animDuration 0 with time elapsed -> fully on");
+    auto degNeg = typeriser::wordStyle(Anim::Fade, Easing::LinearA,
+                                       0, 1000, -500, 0, 1, 0.f, 0.f, D);
+    check(degNeg.alpha == 0.f, "animDuration 0 before the word starts -> fully off");
+
+    // ---- Progress clamps low, so a word before its own stagger time is off.
+    auto early = typeriser::wordStyle(Anim::Pop, Easing::LinearA,
+                                      0, 1000, 100, 3, 6, 500.f, 1000.f, D);
+    check(early.alpha == 0.f && early.scale == 0.3f,
+          "a word before its stagger offset has not started");
+
+    // ---- Stagger shifts the word's own start.
+    auto stag = typeriser::wordStyle(Anim::Fade, Easing::LinearA,
+                                     0, 10000, 1100, 2, 6, 500.f, 1000.f, D);
+    // starts at 2*500 = 1000, so progress = (1100-1000)/1000 = 0.1
+    check(std::fabs(stag.alpha - 0.1f) < 1e-6f, "wordStagger shifts the per-word start");
+
+    // ---- The easing curves here duplicate ease()'s maths. Comparing them is a
+    // cross-check of two independently recovered implementations: ease() came
+    // out of its own switch, and these curves are written out inline in
+    // wordStyle. Agreement means both transcriptions are right.
+    //
+    // The comparison has to account for ONE real difference: wordStyle clamps
+    // its ALPHA fields to <= 1.0 (0x1e90..0x1ea0 is `fcmp`/`fcsel :gt`/`fcsel
+    // :mi` on the Anim 2 path, and every other Anim path clamps the same way),
+    // while ease() returns the raw curve. That only matters for EaseOutBack,
+    // which overshoots past 1.0 on its way back down.
+    const Easing curves[] = {Easing::LinearA, Easing::EaseOutQuad, Easing::EaseOutCubic,
+                             Easing::EaseOutBack, Easing::EaseInOutCubic};
+    bool curves_agree = true;
+    for (Easing ez : curves) {
+      for (int k = 0; k <= 20; ++k) {
+        const float p = static_cast<float>(k) / 20.0f;
+        const float raw = typeriser::ease(ez, p);
+        const float want = raw > 1.0f ? 1.0f : raw;   // the alpha clamp
+        const float got = typeriser::wordStyle(Anim::Fade, ez, 0, 1000,
+                                               static_cast<long long>(p * 1000.0f),
+                                               0, 1, 0.f, 1000.f, D).alpha;
+        if (std::fabs(got - want) > 1e-4f) curves_agree = false;
+      }
+    }
+    check(curves_agree,
+          "wordStyle's inline curves match ease(), modulo its alpha clamp");
+
+    // ---- EaseOutBack overshoots to 1.0993 at t=0.6. That overshoot is INVISIBLE
+    // in alpha (clamped), so its only visible effect is through Pop's SCALE,
+    // which is not clamped. This is the one place the overshoot survives.
+    check(std::fabs(typeriser::ease(Easing::EaseOutBack, 0.6f) - 1.09935164f) < 1e-5f,
+          "EaseOutBack overshoots past 1.0");
+    auto backFade = at(Anim::Fade, Easing::EaseOutBack, 0.6f);
+    check(backFade.alpha == 1.f, "the overshoot is clamped out of alpha");
+    auto backPop = at(Anim::Pop, Easing::EaseOutBack, 0.6f);
+    check(backPop.scale > 1.f,
+          "but Pop's scale carries the overshoot, so the pop really overshoots");
+
+    // ---- WordStyle layout: 16 bytes, three floats then an int.
+    check(sizeof(typeriser::WordStyle) == 16,
+          "WordStyle is the 16 bytes the caller reads out of x0:x1");
+  }
+
+
   std::printf("typeriser::splitWords\n");
   {
     auto eq = [](const std::vector<std::string>& got, std::initializer_list<const char*> want) {

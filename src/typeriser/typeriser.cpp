@@ -1,8 +1,8 @@
 // typeriser.cpp — recovered implementations for the TypeRiser karaoke timing core.
 //
 // Only RECOVERED functions appear here. The TypeRiser bundle exports 12 authored
-// functions in this namespace and 11 are below; wordStyle (164 instructions) is
-// identified but not transcribed, and is absent rather than stubbed.
+// functions in this namespace, and ALL 12 are below. TypeRiser is the first
+// effect in the fleet recovered end to end.
 //
 // The SRT path is complete end to end: parseSrt -> parseTimingLine ->
 // parseTimestamp -> trim, with splitWords and cueIndexAt alongside it.
@@ -851,6 +851,168 @@ std::vector<int> wrapWords(const std::vector<float>& wordWidths,
     lines[i] = line;
   }
   return lines;
+}
+
+// ---------------------------------------------------------------------------
+// wordStyle(Anim, Easing, long long, long long, long long, int, int, float,
+//           float, float) -> WordStyle
+//
+// __ZN9typeriser9wordStyleENS_4AnimENS_6EasingExxxiifff, 164 instructions,
+// recovered in full. The last function in the TypeRiser namespace.
+//
+// ARGUMENT REGISTERS map straight onto the signature, which is how the parameter
+// roles below were identified:
+//     w0 anim   w1 easing   x2 start   x3 end   x4 now
+//     w5 wordIndex   w6 wordCount
+//     s0 wordStagger   s1 animDuration   s2 offsetDistance
+//
+// PROGRESS (0x1d1c..0x1d7c). Worked in DOUBLE, then narrowed:
+//     scvtf d3, x2 / scvtf d4, w5 / fcvt d0, s0
+//     fmadd d0, d4, d0, d3          ; wordIndex * wordStagger + start
+//     scvtf d3, x4 / fsub d0, d3, d0 ; now - that
+//     fcmp  s1, #0.0 / b.ls <degenerate>
+//     fcvt  d1, s1 / fdiv d0, d0, d1 / fcvt s0, d0   ; / animDuration
+//   then two clamps (0x1d4c..0x1d5c and 0x1d74..0x1d7c) which together are
+//   `clamp(progress, 0, 1)`. The degenerate branch (animDuration <= 0) skips the
+//   division and yields 1.0 when the span is >= 0, else 0.0.
+//
+// EASING (0x1d80..0x1e3c). A switch on w1 that does NOT call ease() — it repeats
+// the same five curves inline, which is a real duplication in the original:
+//     case 2: fnmul/fmsub        -> 1 - (1-t)^2      EaseOutQuad
+//     case 3: fnmul + fmadd      -> 1 - (1-t)^3      EaseOutCubic
+//     case 4: fmadd x2           -> 1 + 1.70158*(t-1)^2 + 2.70158*(t-1)^3
+//     case 5: t < 0.5 ? 4t^3 : 1 - 0.5*powf(2 - 2t, 3)
+//     default: t unchanged
+//   Case 5's upper half really does go through powf(0x1ee0), and for t >= 0.5 the
+//   code spills and restores v2 across the call — which is how we know the third
+//   float argument survives into field 2 of the result untouched.
+//
+// ANIMATION (0x1dc4..0x1f48). `cmp w0, #0x3` appears after every easing case, so
+// Anim is switched on SECOND, and Anim 4 is special-cased before everything.
+//
+//   Anim 4 (0x1cc4..0x1d18): no easing at all. It derives a WORD INDEX from
+//     elapsed time instead:
+//         idx = -1
+//         if (now < end && now - start >= 0 && wordCount - 1 >= 0)
+//             idx = min((now - start) * wordCount / (end - start), wordCount - 1)
+//     and then tests `idx == wordIndex` ONCE, feeding the same comparison to both
+//     a scale (1.08 vs 1.0) and the boolean field. The divide cannot trap: the
+//     guard `now < end` together with `now >= start` forces end - start > 0.
+//
+//   Anim 3 -> clamps 1.5*e and sets field 2 to offsetDistance * (1 - e).
+//   Anim 2 -> clamps e, field 1 stays 1.0.
+//   Anim 1 -> field 1 becomes 0.7*e + 0.3 and field 0 clamps 2*e: the word
+//     scales up from 0.3 while fading in at double rate.
+//   Anything else -> {1, 1, 0, 0}: the identity.
+//
+// One caveat worth recording rather than papering over. Anim 3 is the ONLY path
+// that does not write x1, so field 3 is never assigned there. It reads as 0 in
+// practice because the caller loads w1 with `ldp w1, w0, [sp, #0x48]`, and a
+// 32-bit load into w1 zeroes the upper half of x1 — so the flag is clear on
+// entry and stays clear. That is correct-by-accident, not correct-by-design, and
+// this transcription makes the intent explicit with a 0.
+// ---------------------------------------------------------------------------
+WordStyle wordStyle(Anim anim, Easing easing,
+                    long long start, long long end, long long now,
+                    int wordIndex, int wordCount,
+                    float wordStagger, float animDuration, float offsetDistance) {
+  WordStyle style;
+
+  // ---- Anim 4: karaoke. No easing; the active word is found by elapsed time.
+  if (anim == Anim::Karaoke) {
+    long long idx = -1;
+    if (now < end && now - start >= 0 && wordCount - 1 >= 0) {
+      idx = ((now - start) * wordCount) / (end - start);
+      if (idx > wordCount - 1) idx = wordCount - 1;
+    }
+
+    const bool hit = (static_cast<int>(idx) == wordIndex);
+    style.alpha = 1.0f;
+    style.scale = hit ? 1.08f : 1.0f;
+    style.offset = offsetDistance;
+    style.highlight = hit ? 1 : 0;  // see the caveat above; this path does set it
+    return style;
+  }
+
+  // ---- Progress, in double, then clamped to 0..1.
+  const double span =
+      static_cast<double>(now) -
+      (static_cast<double>(wordIndex) * static_cast<double>(wordStagger) +
+       static_cast<double>(start));
+
+  float t;
+  if (animDuration > 0.0f) {
+    t = static_cast<float>(span / static_cast<double>(animDuration));
+    if (t > 1.0f) t = 1.0f;
+  } else {
+    t = (span >= 0.0) ? 1.0f : 0.0f;
+  }
+  if (t < 0.0f) t = 0.0f;
+
+  // ---- Easing, applied to the progress. Same curves as ease(), written out.
+  float e;
+  switch (easing) {
+    case Easing::EaseOutQuad:
+      e = 1.0f - (1.0f - t) * (1.0f - t);
+      break;
+    case Easing::EaseOutCubic: {
+      const float u = 1.0f - t;
+      e = 1.0f - u * u * u;
+      break;
+    }
+    case Easing::EaseOutBack: {
+      const float u = t - 1.0f;
+      e = 1.0f + 1.70158f * u * u + 2.70158f * u * u * u;
+      break;
+    }
+    case Easing::EaseInOutCubic:
+      if (t < 0.5f) {
+        e = 4.0f * t * t * t;
+      } else {
+        // The original really calls powf here rather than multiplying; keeping
+        // that preserves its exact rounding.
+        e = 1.0f - 0.5f * std::pow(2.0f - 2.0f * t, 3.0f);
+      }
+      break;
+    default:
+      e = t;
+      break;
+  }
+
+  // ---- Anim, switched on second.
+  switch (anim) {
+    case Anim::Rise: {
+      style.alpha = e * 1.5f;
+      if (style.alpha > 1.0f) style.alpha = 1.0f;
+      style.scale = 1.0f;
+      style.offset = offsetDistance * (1.0f - e);
+      style.highlight = 0;
+      break;
+    }
+    case Anim::Fade:
+      style.alpha = e;
+      if (style.alpha > 1.0f) style.alpha = 1.0f;
+      style.scale = 1.0f;
+      style.offset = 0.0f;
+      style.highlight = 0;
+      break;
+    case Anim::Pop: {
+      style.alpha = e + e;
+      if (style.alpha > 1.0f) style.alpha = 1.0f;
+      style.scale = e * 0.7f + 0.3f;
+      style.offset = 0.0f;
+      style.highlight = 0;
+      break;
+    }
+    default:
+      // Anim::None, or any value outside 1..4: the identity.
+      style.alpha = 1.0f;
+      style.scale = 1.0f;
+      style.offset = 0.0f;
+      style.highlight = 0;
+      break;
+  }
+  return style;
 }
 
 

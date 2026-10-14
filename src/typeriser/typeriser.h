@@ -190,4 +190,74 @@ std::vector<Cue> parseSrt(const std::string& text);
 std::vector<int> wrapWords(const std::vector<float>& wordWidths,
                            float separatorWidth, float maxWidth);
 
+// ---------------------------------------------------------------------------
+// [RECOVERED] Anim — the per-word animation mode, selected by wordStyle's switch
+// on its first argument.
+//
+// The SELECTOR VALUES are read straight off the switch (1, 2, 3, 4, everything
+// else). The NAMES are not in the binary, but the plugin's own description
+// string is: "Each word pops, fades, rises, or karaoke-highlights in sync with
+// the cue timing." Those four behaviours, in that order, are what the four cases
+// actually compute — decoded from the code first, matched to the prose second:
+//
+//   1  alpha ramps at 2x, scale goes 0.3 -> 1.0        "pops"
+//   2  alpha ramps, nothing else changes               "fades"
+//   3  alpha ramps at 1.5x, an offset decays to 0      "rises"
+//   4  full alpha; the word under the playhead scales
+//      to 1.08 and is flagged for recolouring          "karaoke-highlights"
+//
+// 0 (and anything outside 1..4) is the identity: alpha 1, scale 1, no offset,
+// no highlight.
+// ---------------------------------------------------------------------------
+enum class Anim : int {
+  None = 0,
+  Pop = 1,
+  Fade = 2,
+  Rise = 3,
+  Karaoke = 4,
+};
+
+// ---------------------------------------------------------------------------
+// [RECOVERED LAYOUT] WordStyle — 16 bytes, returned in x0:x1, NOT in the float
+// registers, so it is not a homogeneous float aggregate: it is three floats plus
+// an int.
+//
+//     orr  x0, x8, x9, lsl #32    ; field 0 = low word, field 1 = high word
+//     fmov w1, s2                 ; field 2 = low word of x1
+//     ...                         ; field 3 = high word of x1, holds 0 or 1
+//
+// The caller TRWP_RenderCaptions pins the first and last fields:
+//     fmov s12, w19               ; field 0
+//     fcmp s12, #0.0 / b.ls       ; ...an all-zero result skips the word outright
+//     bl   typeriser::clampf(s12, 0, 1) / CGContextSetAlpha   ; so field 0 is ALPHA
+//     tst  x1, #0x100000000       ; field 3, used to pick between two colours
+//
+// Field 3 is read as a plain boolean by that `tst`. Which of the two colours it
+// selects, and what fields 1 and 2 are eventually used for, are NOT recovered —
+// they are named here for what wordStyle computes into them, which is all the
+// evidence supports.
+// ---------------------------------------------------------------------------
+struct WordStyle {
+  float alpha = 1.0f;      // field 0 — CONFIRMED: reaches CGContextSetAlpha
+  float scale = 1.0f;      // field 1 — 1.08 for the highlighted word in Karaoke
+  float offset = 0.0f;     // field 2 — in Rise, decays as `offsetDistance * (1 - e)`
+  int highlight = 0;       // field 3 — CONFIRMED: selects a colour at the call site
+};
+
+// ---------------------------------------------------------------------------
+// [exact] Per-word animation state at time `now`.
+//
+// `progress = (now - (start + wordIndex * wordStagger)) / animDuration`, clamped
+// to 0..1, with a degenerate animDuration (<= 0) collapsing to 0 or 1. The
+// Easing is applied to that progress, and the Anim then decides which fields
+// move. See the .cpp for the full derivation.
+//
+// NOTE: this re-implements the easing curves inline instead of calling ease() in
+// this same namespace — the same five curves, written twice in the original.
+// ---------------------------------------------------------------------------
+WordStyle wordStyle(Anim anim, Easing easing,
+                    long long start, long long end, long long now,
+                    int wordIndex, int wordCount,
+                    float wordStagger, float animDuration, float offsetDistance);
+
 }  // namespace typeriser
