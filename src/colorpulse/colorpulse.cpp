@@ -117,4 +117,93 @@ RGB saturationBoost(const RGB& c, float amount) {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// regionBounds(Region, int, int)
+//
+// __ZN10colorpulse12regionBoundsENS_6RegionEii, 57 instructions, recovered in full.
+//
+//     mov  w9, w1 / orr x8, x9, x2, lsl #32   ; x8 = {width, height}
+//     cmp  w0, #0x4 / b.eq 0x854              ; the BOTTOM THIRD arm is the odd one out
+//
+// Clang lowers the switch as: one arm for value 4, and the default plus values 2 and 3
+// fused into a `csel` chain. Reading that chain back is what gives the rectangles, and it
+// is worth doing carefully because the chain interleaves three cases:
+//
+//     cmp  w0, #0x2
+//     csel w12, wzr, w12, ne        ; (w0==2) ? height/4 : 0
+//     csel x8,  x8,  x11, ne        ; (w0==2) ? {w,h} : {3w/4, 3h/4}
+//     csel w11, wzr, w10, ne        ; (w0==2) ? width/4  : 0
+//     cmp  w0, #0x3
+//     csel w10, wzr, w12, eq        ; (w0==3) ? 0 : <above>     -> minY
+//     csel x8,  x9,  x8,  eq        ; (w0==3) ? {w, h/3} : <above>  -> maxX, maxY
+//     csel w9,  wzr, w11, eq        ; (w0==3) ? 0 : <above>     -> minX
+//
+// so minX/minY are 0 for both 3 and the default, and only value 2 moves them inward; and
+// maxX is `width` for 2 and 3 but `3w/4` for the default.
+//
+// The value-4 arm computes its own minY as `height - height/3`:
+//
+//     mov  w10, #0x55555555 / smull x10, w2, w10 / lsr x10, x10, #32
+//     sub  w10, w10, w2 / asr w11, w10, #1 / add w10, w11, w10, lsr #31
+//     add  w10, w10, w2
+//
+// which is `height - height/3` — checked numerically rather than assumed: at height 10 the
+// sequence gives 7, which is 10 - 3 and NOT 2*10/3 = 6. The two differ for every height
+// not divisible by 3, so the distinction matters.
+//
+// The join then applies the size floor, per axis and independently:
+//
+//     add  w11, w9, #0x1 / cmp w1, w11 / csinc w11, w1, w9, lt
+//         ; csinc Wd, Wn, Wm, cond is cond ? Wn : Wm+1, so this is min(width, minX+1)
+//     and  x12, x8, #0xffffffff00000000 / orr x11, x12, w11
+//     cmp  w9, w8 / csel x8, x8, x11, lt      ; only replace maxX when minX >= maxX
+//
+// and the same again for the Y axis with `bfi x13, w12, #32, #32` to patch the high half.
+// The halves are patched SEPARATELY rather than recomputing the whole pair, which is why
+// the two axes look asymmetric in the disassembly and are not.
+// ---------------------------------------------------------------------------
+Rect regionBounds(Region region, int width, int height) {
+  int minX = 0;
+  int minY = 0;
+  // `max` defaults to the FULL box, which is why the bundle materialises the pair
+  // `{width, height}` with `orr x8, x9, x2, lsl #32` BEFORE it tests the selector: that
+  // pair is a default value, not something only the arms need. Three of the four arms
+  // leave it alone and only the default arm moves it inward.
+  int maxX = width;
+  int maxY = height;
+
+  // Each arm computes its own divisions. Hoisting them into locals before the switch
+  // makes clang evaluate `width / 4` ahead of the value-4 test, which costs four
+  // instructions on a path that never uses it — the bundle computes the quarters and the
+  // thirds only on the paths that need them, and computes the value-4 arm's `height -
+  // height / 3` with a SEPARATE magic sequence rather than reusing the non-4 arm's.
+  switch (region) {
+    case Region::BottomRightThreeQuarters:
+      minX = width / 4;
+      minY = height / 4;
+      break;
+    case Region::TopThird:
+      minX = 0;
+      minY = 0;
+      maxY = height / 3;
+      break;
+    case Region::BottomThird:
+      minX = 0;
+      minY = height - height / 3;
+      break;
+    default:
+      // Region::TopLeftThreeQuarters, and everything the caller failed to narrow.
+      minX = 0;
+      minY = 0;
+      maxX = width - width / 4;
+      maxY = height - height / 4;
+      break;
+  }
+
+  if (minX >= maxX) maxX = (width < minX + 1) ? width : minX + 1;
+  if (minY >= maxY) maxY = (height < minY + 1) ? height : minY + 1;
+
+  return Rect{minX, minY, maxX, maxY};
+}
+
 }  // namespace colorpulse

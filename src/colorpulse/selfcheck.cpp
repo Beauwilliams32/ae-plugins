@@ -132,6 +132,113 @@ int main() {
     check(agree, "colorpulse::luma709 matches the closed form lutblend::luma709 implements");
   }
 
+  std::printf("regionBounds\n");
+  {
+    // The four rectangles, checked against the fractions read off the csel chain. The
+    // 400x300 box is deliberately NOT a multiple of 4 or 3 in one axis, so a wrong
+    // operator precedence or a rounded division shows up.
+    const colorpulse::Rect q = colorpulse::regionBounds(colorpulse::Region::TopLeftThreeQuarters,
+                                                       400, 300);
+    check(q.minX == 0 && q.minY == 0, "TopLeftThreeQuarters starts at the origin");
+    check(q.maxX == 300 && q.maxY == 225, "and ends at 3/4 of each axis");
+
+    const colorpulse::Rect br = colorpulse::regionBounds(
+        colorpulse::Region::BottomRightThreeQuarters, 400, 300);
+    check(br.minX == 100 && br.minY == 75, "BottomRightThreeQuarters starts at 1/4");
+    check(br.maxX == 400 && br.maxY == 300, "and ends at the full box");
+
+    const colorpulse::Rect top = colorpulse::regionBounds(colorpulse::Region::TopThird, 400, 300);
+    check(top.minX == 0 && top.maxX == 400, "TopThird spans the full width");
+    check(top.minY == 0 && top.maxY == 100, "and the first third of the height only");
+
+    const colorpulse::Rect bot = colorpulse::regionBounds(colorpulse::Region::BottomThird, 400, 300);
+    check(bot.minX == 0 && bot.maxX == 400, "BottomThird spans the full width");
+    // 300 - 300/3 = 200, NOT 2*300/3 = 200 -- the two agree here, so the next case uses a
+    // height where they differ.
+    check(bot.minY == 200 && bot.maxY == 300, "and the last third of the height");
+
+    // height = 10: `height - height/3` is 7, while `2*height/3` would be 6. This is the
+    // assertion that pins which expression the bundle uses.
+    const colorpulse::Rect odd = colorpulse::regionBounds(colorpulse::Region::BottomThird, 40, 10);
+    check(odd.minY == 7, "the bottom third's top edge is height - height/3 (7, not 6)");
+
+    // The DEFAULT arm catches everything the caller failed to narrow, not just 0 -- the
+    // call site maps an unrecognised mode to 0, so this is reachable in practice.
+    const int rawSelectors[5] = {0, 1, 5, -1, 99};
+    for (int raw : rawSelectors) {
+      const colorpulse::Rect d = colorpulse::regionBounds(static_cast<colorpulse::Region>(raw),
+                                                         400, 300);
+      check(d.minX == 0 && d.minY == 0 && d.maxX == 300 && d.maxY == 225,
+            "an unrecognised selector falls to the top-left three quarters");
+    }
+
+    // THE SIZE FLOOR. A box too small to hold the fraction must still come out with a
+    // usable size, bounded by the box itself.
+    const colorpulse::Rect tiny3 = colorpulse::regionBounds(colorpulse::Region::TopThird, 2, 2);
+    check(tiny3.maxY > tiny3.minY, "a 2-high TopThird is floored to a non-empty height");
+    check(tiny3.maxY <= 2, "and the floor does not run past the box");
+    check(tiny3.maxY == 1, "the floor lands on exactly one pixel here");
+
+    // minX >= maxX triggers the floor. At width 1, quarterW is 0 so BottomRight's minX is
+    // 0 and maxX is 1 -- already positive, so no floor. At width 3, quarterW is 0 too.
+    const colorpulse::Rect w1 = colorpulse::regionBounds(
+        colorpulse::Region::BottomRightThreeQuarters, 1, 1);
+    check(w1.maxX > w1.minX && w1.maxY > w1.minY, "a 1x1 box still yields a non-empty rect");
+    check(w1.maxX <= 1 && w1.maxY <= 1, "and it stays inside the box");
+
+    // Every selector, across a spread of boxes, must stay CONTAINED and non-inverted.
+    //
+    // NOT "non-empty", which is what this assertion said first and why it failed. The
+    // size floor cannot always produce a non-empty rectangle, and the case is worth
+    // stating exactly rather than papering over: for BottomThird, `minY` is `height -
+    // height/3` and `maxY` is `height`, so at height <= 2 the third rounds to 0 and the
+    // two are EQUAL. The floor then computes `min(height, minY + 1)`, which is `height`,
+    // so it reproduces the empty rectangle rather than fixing it.
+    //
+    // That is not a transcription error — it is why the EffectMain CALL SITE has its own
+    // clamp. The caller reads the rectangle as `x1 - x0` per axis and passes each
+    // difference through `csinc w24, w8, wzr, gt`, i.e. `max(size, 1)`, before capping it
+    // at 48. The floor here establishes containment; the caller establishes non-emptiness.
+    bool contained = true;
+    bool emptyOnlyInTheKnownCase = true;
+    for (int w = 1; w <= 40; ++w) {
+      for (int h = 1; h <= 40; ++h) {
+        for (int r = 0; r <= 5; ++r) {
+          const colorpulse::Rect b =
+              colorpulse::regionBounds(static_cast<colorpulse::Region>(r), w, h);
+          if (b.minX < 0 || b.minY < 0 || b.maxX > w || b.maxY > h
+              || b.maxX < b.minX || b.maxY < b.minY) {
+            contained = false;
+          }
+          const bool empty = (b.maxX == b.minX) || (b.maxY == b.minY);
+          if (empty && !(r == static_cast<int>(colorpulse::Region::BottomThird) && h <= 2)) {
+            emptyOnlyInTheKnownCase = false;
+          }
+        }
+      }
+    }
+    check(contained, "every selector yields a contained, non-inverted rect, up to 40x40");
+    check(emptyOnlyInTheKnownCase,
+          "an EMPTY rect appears only for BottomThird on a box 2 high or less");
+
+    // And that case is asserted directly, so the allowance above cannot widen unnoticed.
+    const colorpulse::Rect flat = colorpulse::regionBounds(
+        colorpulse::Region::BottomThird, 100, 2);
+    check(flat.minY == flat.maxY && flat.minY == 2,
+          "BottomThird on a 2-high box is empty, at the bottom edge");
+    const colorpulse::Rect just = colorpulse::regionBounds(
+        colorpulse::Region::BottomThird, 100, 3);
+    check(just.maxY > just.minY, "and 3 high is the first height that works: 3/3 == 1");
+
+    // It is a PURE function of its three inputs: no hidden state, no dependence on the
+    // order of calls. The effect calls it once per render, but a stale static would make
+    // the second call differ.
+    const colorpulse::Rect again = colorpulse::regionBounds(
+        colorpulse::Region::BottomRightThreeQuarters, 400, 300);
+    check(again.minX == br.minX && again.maxX == br.maxX,
+          "repeating a call gives the identical rectangle");
+  }
+
   std::printf("\n%s\n", failures == 0
                 ? "ALL RECOVERED COLORPULSE MATHS VERIFIED"
                 : "TRANSCRIPTION ERRORS PRESENT");
