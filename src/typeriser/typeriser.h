@@ -88,6 +88,18 @@ std::vector<std::string> splitWords(const std::string& s);
 long long parseTimestamp(const std::string& s);
 
 // ---------------------------------------------------------------------------
+// [exact] Parse one SRT timing line ("START --> END") into two millisecond
+// positions. Internal linkage in the binary — it never leaves the bundle.
+//
+// Returns true only when both sides parse AND end > start; a half-open or
+// reversed interval is rejected and the outputs are left UNTOUCHED. The left
+// side is parsed raw (no trimming); the right side is trimmed and then cut at
+// the first space, which is how SRT's optional "X1:.. X2:.. Y1:.. Y2:.."
+// coordinate suffix is discarded. See the .cpp for the full derivation.
+// ---------------------------------------------------------------------------
+bool parseTimingLine(const std::string& line, long long* outStart, long long* outEnd);
+
+// ---------------------------------------------------------------------------
 // [exact] Apply an easing curve to a normalised t.
 // ---------------------------------------------------------------------------
 float ease(Easing kind, float t);

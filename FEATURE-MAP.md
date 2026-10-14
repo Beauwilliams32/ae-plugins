@@ -53,7 +53,8 @@ is merely identified.
 | **`typeriser::ease`** + `Easing` enum (7 cases) | `src/typeriser/typeriser.cpp` | **Recovered + verified** | `test/typeriser.test.mjs` |
 | **`typeriser::trim` / `parseTimestamp`** (SRT time -> ms, with validation) | `src/typeriser/typeriser.cpp` | **Recovered + verified** | `test/typeriser.test.mjs` |
 | **`typeriser::splitWords`** (whitespace split, empty runs collapsed) | `src/typeriser/typeriser.cpp` | **Recovered + verified** | `test/typeriser.test.mjs` |
-| `typeriser::parseSrt` (512 instrs) | `specs/TypeRiser.md` | **Identified only** | none yet |
+| **`typeriser::parseTimingLine`** (`"START --> END"` → two ms positions; strict `end > start`; left parsed raw, right trimmed then cut at first space) | `src/typeriser/typeriser.cpp` | **Recovered + verified** | `test/typeriser.test.mjs` (JS oracle, 24 cases) |
+| `typeriser::parseSrt` (512 instrs) | `specs/TypeRiser.md` | **Identified only** — but every helper it calls (`trim`, `splitWords`, `parseTimestamp`, `parseTimingLine`, `cueIndexAt`, `clampf`) is now recovered in full, so only its own block/boundary loop is outstanding | none yet |
 | The other 13 effects' function bodies | `specs/*.md` | **Identified only** — architecture recovered, bodies not | none yet |
 | Buildable plugin bundles (AE SDK at `0x000d001d`) | — | **Not started** | none |
 
@@ -63,8 +64,11 @@ is merely identified.
 npm run check && npm test
 ```
 
-`npm test` does three things: asserts the disassembly constants decode as
-claimed, compiles `src/spectra/*.cpp` with `clang++ -Werror` and runs its 30
-internal property checks, and re-runs the extractor to prove the committed specs
-are reproducible. The compile test **skips** (rather than fails) where `clang++`
-is absent, so the specs stay readable on any machine.
+`npm test` runs nine tests: it asserts the disassembly constants decode as
+claimed, compiles each recovered namespace with `clang++ -Werror` and runs its
+internal property checks (spectra 107, lutblend 49, typeriser 135 — 291 in
+total), diffs the recovered DSP against all 26 vendored machine-code copies,
+cross-checks the three recovered `clampf` copies against each other, drives
+`parseTimingLine` through an independent JS oracle, and re-runs the extractor to
+prove the committed specs are reproducible. The compile tests **skip** (rather
+than fail) where `clang++` is absent, so the specs stay readable on any machine.

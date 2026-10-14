@@ -5,7 +5,7 @@
 //
 //   node tools/render-specs.mjs
 
-import { readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, existsSync } from "node:fs";
 import path from "node:path";
 
 const SPECS = path.join(import.meta.dirname, "..", "specs");
@@ -216,6 +216,24 @@ function renderCatalog(specs) {
   return out.join("\n");
 }
 
+// CATALOG.md carries hand-written analysis (the vendored-DSP duplication table)
+// that this generator cannot derive from the specs. Regenerating used to drop it
+// silently. Anything at or after the HAND-WRITTEN marker is carried over
+// verbatim, so `node tools/render-specs.mjs` is now safe to re-run.
+const HAND_WRITTEN = "<!-- HAND-WRITTEN: not generated; preserved on re-render -->";
+
+function preservedCatalogTail() {
+  const p = path.join(ROOT, "CATALOG.md");
+  if (!existsSync(p)) return "";
+  const at = readFileSync(p, "utf8").indexOf(HAND_WRITTEN);
+  if (at < 0) {
+    console.warn(`warning: CATALOG.md has no "${HAND_WRITTEN}" marker`);
+    console.warn("         there is no hand-written tail to preserve — add the marker above it");
+    return "";
+  }
+  return "\n" + readFileSync(p, "utf8").slice(at);
+}
+
 function main() {
   const files = readdirSync(SPECS).filter((f) => f.endsWith(".json") && f !== "index.json").sort();
   const specs = files.map((f) => JSON.parse(readFileSync(path.join(SPECS, f), "utf8")));
@@ -226,7 +244,7 @@ function main() {
   for (const s of specs) {
     writeFileSync(path.join(SPECS, `${s.plugin}.md`), renderPlugin(s));
   }
-  writeFileSync(path.join(ROOT, "CATALOG.md"), renderCatalog(specs));
+  writeFileSync(path.join(ROOT, "CATALOG.md"), renderCatalog(specs) + preservedCatalogTail());
   console.log(`rendered ${specs.length} effect specs + CATALOG.md`);
   return 0;
 }

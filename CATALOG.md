@@ -37,6 +37,8 @@
 
 **The fleet carries real, factorable DSP.** Several effects expose proper domain namespaces rather than flat C, which makes the math recoverable: see `spectra::` in SpectraKeys (radix-2 FFT, Hann window, dB conversion, spectrogram band analysis) and the audio helpers in PathScribe.
 
+<!-- HAND-WRITTEN: not generated; preserved on re-render -->
+
 ## The fleet vendors one DSP module into four effects
 
 Every effect namespaces its own code, and the audio/analysis helpers appear under four of

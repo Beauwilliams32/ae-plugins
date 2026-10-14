@@ -1,8 +1,9 @@
 // typeriser.cpp — recovered implementations for the TypeRiser karaoke timing core.
 //
-// Only RECOVERED functions appear here. parseSrt (512 instructions), splitWords,
-// parseTimestamp and ease are identified but not transcribed, and are absent
-// rather than stubbed.
+// Only RECOVERED functions appear here. parseSrt (512 instructions) is
+// identified but not transcribed, and is absent rather than stubbed; every
+// helper it delegates to (trim, splitWords, parseTimestamp, parseTimingLine,
+// cueIndexAt) is now recovered in full.
 
 #include "typeriser.h"
 
@@ -411,6 +412,110 @@ long long parseTimestamp(const std::string& raw) {
   }
 
   return ((hours * 60 + minutes) * 60 + seconds) * 1000 + millis;
+}
+
+
+// ---------------------------------------------------------------------------
+// parseTimingLine(const std::string&, long long*, long long*) -> bool
+//
+// __ZN9typeriserL15parseTimingLineE..., 215 instructions, recovered in full.
+// Internal linkage (the L in the mangled name), so it is a helper for parseSrt
+// that never crosses the bundle boundary. It is the last piece of the SRT path
+// that was still unread.
+//
+// STRUCTURE, read off the arm64 in this order:
+//     x21/x22 = data pointer / size      ; the usual SSO csel dance
+//     cmp  x22, #0x3 / b.lt <ret false>  ; fewer than 3 bytes cannot hold "-->"
+//     x23 = data + size                  ; end, hoisted out of the loop
+//     w24 = 0x2d2d ("--"), w25 = 0x3e ('>')
+//
+//   the find loop (0x1498..0x14d8), which is line.find("-->") inlined:
+//     memchr(p, '-', (end - p) - 2)      ; only positions that can still start
+//     cbz  x0 <ret false>                ;   a 3-byte match are searched
+//     ldrh w8, [x0] / cmp w8, w24        ; "--"
+//     ldrb w9, [x0, #0x2] / ccmp w9, w25 ; ">"
+//     b.eq <found>
+//     add  x0, x0, #1 / sub x8, x23, x0 / cmp x8, #3 / b.ge <loop>
+//
+//   Note the memchr's count is recomputed as (end - p) - 2 on every iteration,
+//   so the search window shrinks as p advances. libc++'s find(const char*)
+//   lowers to exactly this shape, which is why the source reads as a plain find.
+//
+//   after a match at 0x1500:
+//     x27 = arrow - data                 ; the offset, i.e. pos
+//     cmn x27, #0x1 / b.eq <ret false>   ; the npos guard
+//     x25 = 0x7ffffffffffffff6           ; libc++ basic_string::max_size()
+//     x22 = min(size, x27)               ; == pos, the substr(0, pos) length
+//     cmp x22, x25 / b.hi <throw_length_error>
+//     ... SSO-vs-heap for the left substring at sp+0x20 ...
+//     memmove(left, data, pos) / strb wzr, [left + pos]
+//     bl parseTimestamp(sp+0x20)         ; x21 = start
+//     x26 = x27 + 3                      ; skip past "-->"
+//
+//   the right side (0x15b0..0x1638) mirrors that but RELOADED from the input:
+//     ldrsb x9, [line, #0x17] / tbnz x9, #0x3f <heap>   ; sign bit picks the
+//     cmp   x26, x9 / b.ls <ok> / b <throw_out_of_range> ; size source again
+//     x22 = size - x26                   ; the substr(pos + 3) length
+//     memmove(right, data + x26, x22)    ; built at sp+0x8
+//
+//   then the right side is post-processed, and this is the part that matters:
+//     bl trim(sp+0x8)                    ; sret into sp+0x20 — TRIM only here
+//     ldrsb w27, [sp+0x37] / ldp x22, x9, [sp+0x20]
+//     csel x23, x22, sp+0x20, lt         ; trim result data pointer
+//     csel x24, x9, x8, lt               ; trim result length
+//     memchr(x23, ' ', x24)              ; first space in the trimmed text
+//     cbz  x0 <use whole string>
+//     x24 = min(x24, found - data)       ; cut at it, dropping the rest
+//     ... SSO-vs-heap, memmove into sp+0x8, moved up to sp+0x20 ...
+//     bl parseTimestamp(sp+0x20)         ; x8 = end
+//
+//   the accept test (0x171c..0x1738), which is one fused branch:
+//     orr  x9, x21, x0                   ; start | end
+//     cmn  x9, #0x1                      ; Z=1 iff x9 == -1
+//     ccmp x0, x21, #0x4, gt             ; compare only when x9 != -1
+//     cset w0, gt                        ; the return value
+//     b.le <done>                        ; and the same flags gate the stores
+//     str  x21, [x20] / str x8, [x19]    ; *outStart / *outEnd
+//
+// The `orr` trick is the interesting bit: parseTimestamp signals failure with
+// -1, i.e. all bits set, so OR-ing the two results gives -1 when EITHER failed.
+// ccmp is written with the #0x4 (Z=1) fallback so that when the guard fails the
+// flags are forced to "not greater than", which makes both the cset and the
+// b.le come out false. That is exactly:
+//
+//     if (start != -1 && end != -1 && end > start) { write; return true; }
+//     return false;
+//
+// Two asymmetries are load-bearing and would be easy to "clean up" wrongly:
+//   * The LEFT side is NOT trimmed and NOT cut at a space — it goes straight
+//     into parseTimestamp. Only the right side is trimmed and space-cut. Since
+//     parseTimestamp trims internally, the missing trim on the left is
+//     unobservable; the missing space-cut is not, but a space in the left field
+//     would make parseTimestamp fail anyway, so the two paths agree.
+//   * end > start is STRICT, so a zero-length cue is rejected and the caller
+//     never sees a start == end interval. Anything that wants to handle
+//     degenerate cues has to do it outside this function.
+// ---------------------------------------------------------------------------
+bool parseTimingLine(const std::string& line, long long* outStart, long long* outEnd) {
+  if (line.size() < 3) return false;
+
+  const size_t pos = line.find("-->");
+  if (pos == std::string::npos) return false;
+
+  const long long start = parseTimestamp(line.substr(0, pos));
+
+  std::string rest = trim(line.substr(pos + 3));
+  const size_t space = rest.find(' ');
+  if (space != std::string::npos) rest = rest.substr(0, space);
+
+  const long long end = parseTimestamp(rest);
+
+  if (start != -1 && end != -1 && end > start) {
+    *outStart = start;
+    *outEnd = end;
+    return true;
+  }
+  return false;
 }
 
 

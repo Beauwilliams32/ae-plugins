@@ -219,6 +219,58 @@ int main() {
   check(typeriser::parseTimestamp("00:01:23,456") == 83456, "a realistic SRT timestamp parses");
 
 
+  std::printf("typeriser::parseTimingLine\n");
+  {
+    long long a = 0, b = 0;
+
+    check(typeriser::parseTimingLine("00:00:01,000 --> 00:00:02,500", &a, &b), "a plain timing line parses");
+    check(a == 1000 && b == 2500, "both sides land in the outputs");
+
+    // SRT allows a coordinate suffix after the end time; the space-cut drops it.
+    a = b = 0;
+    check(typeriser::parseTimingLine("00:00:01,000 --> 00:00:02,500 X1:1 X2:2 Y1:3 Y2:4", &a, &b),
+          "a coordinate suffix does not stop the parse");
+    check(a == 1000 && b == 2500, "the suffix is discarded at the first space");
+
+    // The right side is trimmed, so padding around the end time is fine.
+    a = b = 0;
+    check(typeriser::parseTimingLine("00:00:01,000 -->    00:00:02,500   ", &a, &b),
+          "the right side tolerates surrounding whitespace");
+    check(a == 1000 && b == 2500, "trimmed whitespace does not leak into the value");
+
+    // A single arrow is not enough; the LEFT side is cut at the FIRST "-->".
+    a = b = 0;
+    check(typeriser::parseTimingLine("00:00:01,000-->00:00:02,500", &a, &b), "spaces around the arrow are optional");
+    check(a == 1000 && b == 2500, "a tight arrow still splits correctly");
+
+    // end > start is STRICT, so degenerate and reversed intervals are refused.
+    a = -7; b = -7;
+    check(!typeriser::parseTimingLine("00:00:02,000 --> 00:00:02,000", &a, &b),
+          "a zero-length interval is rejected (end > start is strict)");
+    check(a == -7 && b == -7, "and the outputs are left UNTOUCHED on failure");
+
+    check(!typeriser::parseTimingLine("00:00:05,000 --> 00:00:01,000", &a, &b), "a reversed interval is rejected");
+    check(a == -7 && b == -7, "still untouched after a reversed interval");
+
+    // A -1 on EITHER side fails: the orr/cmn/ccmp idiom ORs the two results.
+    check(!typeriser::parseTimingLine("not a time --> 00:00:02,000", &a, &b), "a bad start fails the line");
+    check(!typeriser::parseTimingLine("00:00:01,000 --> not a time", &a, &b), "a bad end fails the line");
+    check(!typeriser::parseTimingLine("00:00:01,000 --> 00:00:0", &a, &b), "a truncated end fails the line");
+
+    // Structural rejections.
+    check(!typeriser::parseTimingLine("", &a, &b), "empty input is rejected");
+    check(!typeriser::parseTimingLine("-->", &a, &b), "a bare arrow has no timestamps");
+    check(!typeriser::parseTimingLine("00:00:01,000", &a, &b), "a line with no arrow is rejected");
+    check(!typeriser::parseTimingLine("00:00:01,000 -> 00:00:02,000", &a, &b), "a 2-character arrow is not enough");
+    check(!typeriser::parseTimingLine("00:00:01,000 -- 00:00:02,000", &a, &b), "a truncated arrow is not enough");
+
+    // The left side is NOT cut at a space, so a prefixed start fails rather than
+    // silently parsing the first token. This is the asymmetry with the right.
+    check(!typeriser::parseTimingLine("X1:1 00:00:01,000 --> 00:00:02,000", &a, &b),
+          "a prefix on the LEFT is not trimmed away (only the right side is space-cut)");
+  }
+
+
   std::printf("typeriser::splitWords\n");
   {
     auto eq = [](const std::vector<std::string>& got, std::initializer_list<const char*> want) {
