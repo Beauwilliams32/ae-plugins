@@ -43,7 +43,7 @@ is merely identified.
 | Per-effect namespace inventory (16 namespaces) | `specs/*.json` → `symbols.byScope.domain` | **Recovered** | `test/spectra.test.mjs` (reproducibility) |
 | **`lutblend::clampf` / `lerpf` / `luma709`** | `src/lutblend/lutblend.cpp` | **Recovered + verified** | `test/lutblend.test.mjs` |
 | **`lutblend::CubeLUT::valid`** + full `CubeLUT` layout | `src/lutblend/lutblend.{h,cpp}` | **Recovered + verified** | `test/lutblend.test.mjs` |
-| Cross-bundle check: the two `clampf` copies agree | `test/lutblend.test.mjs` | **Verified** | own test |
+| Cross-bundle check: `lutblend::clampf` vs `spectra::clampf` | `test/lutblend.test.mjs` | **Verified** — superseded by the fleet-wide `test/clampf.test.mjs`, kept as a narrower check | own test |
 | **`lutblend::sampleLUT`** (trilinear 3D + per-channel 1D, domain clamp) | `src/lutblend/lutblend.cpp` | **Recovered + verified** | `test/lutblend.test.mjs` (identity LUT) |
 | `.cube` data ordering: red fastest (index = b·size² + g·size + r) | `src/lutblend/lutblend.cpp` | **Recovered** | identity round-trip |
 | **`lutblend::makeIdentity`** (269 instrs) — zeroes the range, fills the identity ramp in .cube order (B outer, G middle, R inner, triples stored (r,g,b)); clears then RESERVEs so capacity is reused | `src/lutblend/lutblend.cpp` | **Recovered + verified** | `test/lutblend.test.mjs` |
@@ -52,7 +52,7 @@ is merely identified.
 | **`CubeLUT` default member initialisers** | `src/lutblend/lutblend.h` | **Recovered + corrected** — parseCube's prologue initialises a default-constructed `CubeLUT` field by field at 0xd70..0xd98, giving `is3D=true, min=0, max=1`. The header said `max=0` and `is3D=false`; both were wrong and are fixed, with `static_assert`s on the size and the `data` offset | `test/lutblend.test.mjs` |
 | **`typeriser::clampf` / `karaokeWordAt` / `wordProgress` / `cueIndexAt`** | `src/typeriser/typeriser.cpp` | **Recovered + verified** | `test/typeriser.test.mjs` |
 | **`typeriser::Cue` layout** — 48 bytes: `int index`@0x0, `start`@0x8, `end`@0x10, `std::string text`@0x18 | `src/typeriser/typeriser.h` | **Recovered + verified** — `cueIndexAt` pinned the interval, `parseSrt` pinned the other two; four `static_assert`s hold the offsets | `test/typeriser.test.mjs` |
-| Third `clampf` copy; all three agree | `test/typeriser.test.mjs` | **Verified** across 3 bundles/namespaces | own test |
+| **`clampf` copies — 5 recovered, from 15 of the 16 bundles** | `src/*/` | **Verified** — `test/clampf.test.mjs` compares ALL FIVE against each other, including on inverted ranges. The per-namespace tests each covered a subset, so two copies could have drifted unnoticed | `test/clampf.test.mjs` |
 | **`typeriser::ease`** + `Easing` enum (7 cases) | `src/typeriser/typeriser.cpp` | **Recovered + verified** | `test/typeriser.test.mjs` |
 | **`typeriser::trim` / `parseTimestamp`** (SRT time -> ms, with validation) | `src/typeriser/typeriser.cpp` | **Recovered + verified** | `test/typeriser.test.mjs` |
 | **`typeriser::splitWords`** (whitespace split, empty runs collapsed) | `src/typeriser/typeriser.cpp` | **Recovered + verified** | `test/typeriser.test.mjs` |
@@ -92,7 +92,7 @@ is merely identified.
 npm run check && npm test
 ```
 
-`npm test` runs thirty-two tests: it asserts the disassembly constants decode as
+`npm test` runs thirty-three tests: it asserts the disassembly constants decode as
 claimed, compiles each recovered namespace with `clang++ -Werror` and runs its
 internal property checks (spectra 107, lutblend 102, typeriser 202 — 411 in
 total), diffs the recovered DSP against all 26 vendored machine-code copies,
