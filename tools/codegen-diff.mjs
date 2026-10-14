@@ -33,6 +33,7 @@ const BUNDLES = {
   spectra: "SpectraKeys",
   noisefield: "NoiseField",
   chromakey: "ChromaKeyAssist",
+  speedramp: "SpeedRampCurve",
 };
 
 function bundlePath(plugin) {
