@@ -60,7 +60,7 @@ modifies, moves or copies them.
 
 Be clear-eyed about this:
 
-- **Most function bodies.** Twelve namespaces are recovered (see below); the other
+- **Most function bodies.** Thirteen namespaces are recovered (see below); the other
   effects' DSP is still machine code. Names and signatures are free, behaviour needs
   per-function disassembly, and that is the bulk of the remaining work.
 - **`lutblend::parseCube`** (1924 instructions) is identified but unread, along with
@@ -79,7 +79,7 @@ Be clear-eyed about this:
   is untested. See `plugins/*/README.md` for exactly what is and is not claimed.
 
 So this repository contains a **complete architectural specification** of the fleet,
-twelve recovered source namespaces, and two effects that build into loadable bundles —
+thirteen recovered source namespaces, and two effects that build into loadable bundles —
 **not** a finished or verified product.
 
 ## The fleet
@@ -98,7 +98,7 @@ Two findings already worth acting on:
 
 ## Recovered source
 
-Twelve recovered namespaces, all transcribed from the disassembly with per-function commentary
+Thirteen recovered namespaces, all transcribed from the disassembly with per-function commentary
 citing the instructions that establish each behaviour:
 
 | Module | Contents | State |
@@ -115,6 +115,7 @@ citing the instructions that establish each behaviour:
 | `chromakey::` | The colour and statistics layer: `clampf`, `rgbToYCbCr` (Rec.601), `sensitivityToThreshold`, `chromaDistance`, `hueAngle`, `angularDiff`, `percentile`, `percentileUnsorted`, `gradientMagnitude` | **9 of 15** namespace symbols — the denominator is the differ's own count, which sees one symbol per template instantiation, so `analyzeFrame<T>` and `renderView<T>` account for two each. Outstanding: `spillScore` (82), `uniformityScore` (203) and those four instantiations. `StoreReadout` is outside the namespace and takes a `PF_InData*`, so it stays out of `src/`. Six of the nine are **instruction-identical**, `rgbToYCbCr` among them at 25 of 25 |
 | `noisefield::` | The noise core: `clampf`, `clampi`, `fbmAmplitudeSum`, `PermTable::build`, `noise3`, `fbm3`, and `kGrad3` — the twelve edge gradients of Perlin's improved noise, read out of the bundle's `__TEXT,__const` | **6 of 10** — three instruction-identical (`clampf`, `clampi`, `fbmAmplitudeSum`); `noise3` (183) and `fbm3` (51) compile to the bundle's instruction COUNT with a different register schedule, and are verified instead against an independently written textbook oracle — 4000 points agreeing to 7.8e-07. `PermTable::build` is Fisher-Yates over xorshift32 into a permutation written TWICE, which is what keeps `p[AA + 1]` in range. `fieldAt` (226), `curlField` (163) and the two `apply<T>` loops (408/412) are outstanding |
 | `pathscribe::` | The analysis pipeline, shared with SpectraKeys: `clampf`, `isPowerOfTwo`, `linearToDb`, `dbToLinear`, `hannWindow`, `hannCoherentGain`, `fftRadix2`, `downmixToMono`, `analyse`, `Spectrogram`, plus its own `spanCoverage`, `binEdgeHz`, `smoothStep` | **13 of 18** — eight INSTRUCTION-IDENTICAL. Ten of the eighteen are SpectraKeys' code, so one recovery covers four effects; the copy is checked by divergence parity rather than by matching, since four of the ten legitimately differ. `barLevels` (112), `smoothedLevelsAtFrame` (179), `waveformColumns` (80) and the two rasterisers (173/147) are outstanding |
+| `beatgrid::` | The beat maths: `clampf`, `isPowerOfTwo`, `downmixToMono` (shared), `subdivisionFactor`, `phaseSawtooth`, `phaseInLayerTime`, `OnsetEnvelope::frameTimeSeconds` | **7 of 12** namespace symbols — twelve, not the fourteen entries `specs/BeatGridRuler.json` lists, because two of those are `std::vector` member instantiations that take beatgrid types and the differ counts them under `std`, where they are not this effect's code. The four own functions all compile to the bundle's instruction counts, two functions are instruction-identical, and the subdivision factors (0.5, 0.25, 0.125 and **4.0** — the odd one out) were read out of the literal pool rather than guessed. `computeOnsetEnvelope` (436), `estimateTempoBpm` (578), `estimatePhaseSeconds` (138), `generateBeatGrid` (94) and `analyzeBeatGrid` (57) are outstanding, and `WriteMarkerGrid` (811) stays out of `src/` because it takes Adobe SDK types |
 
 Three fleet-wide duplications are recorded rather than silently deduplicated, because
 each was verified rather than assumed:

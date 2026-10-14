@@ -28,6 +28,7 @@ export const BUNDLES = {
   autoflickerfix: "AutoFlickerFix",
   beatsnap: "BeatSnap",
   pathscribe: "PathScribe",
+  beatgrid: "BeatGridRuler",
 };
 
 /** Recovered namespace directories, discovered from the tree. */

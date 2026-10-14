@@ -19,9 +19,21 @@ const SRC = path.join(ROOT, "src", "pathscribe");
 const BUNDLE = "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media"
   + "/PathScribe.plugin/Contents/MacOS/PathScribe";
 
-/** Copied from SpectraKeys, and the spectra names they were copied from. */
-const SHARED = ["clampf", "isPowerOfTwo", "linearToDb", "dbToLinear", "hannWindow",
-                "hannCoherentGain", "fftRadix2", "downmixToMono", "analyse", "Spectrogram"];
+/**
+ * Copied from SpectraKeys, as `[label, fragment]` pairs.
+ *
+ * The fragment is what the differ is asked for, and it is matched against the MANGLED
+ * symbol — so the destructor is asked for by its mangled suffix `D1Ev`. The label is
+ * what the answers are compared as. They differ only for `Spectrogram`, which is why
+ * the destructor is named explicitly rather than by its class: once the differ could see
+ * const members, SpectraKeys' `Spectrogram` had two symbols and the tool began labelling
+ * them `Spectrogram(D1Ev)` and `Spectrogram(7hzToBinEf)`.
+ */
+const SHARED = [["clampf", "clampf"], ["isPowerOfTwo", "isPowerOfTwo"],
+                ["linearToDb", "linearToDb"], ["dbToLinear", "dbToLinear"],
+                ["hannWindow", "hannWindow"], ["hannCoherentGain", "hannCoherentGain"],
+                ["fftRadix2", "fftRadix2"], ["downmixToMono", "downmixToMono"],
+                ["analyse", "analyse"], ["Spectrogram", "D1Ev"]];
 
 /** PathScribe's own, of which the last five are not recovered. */
 const OWN = ["spanCoverage", "binEdgeHz", "smoothStep"];
@@ -51,17 +63,25 @@ function runDiff(ns, fragment) {
  * therefore paired one function's status with another's difference count. That made the
  * parity check fail on a `Spectrogram` that is identical in both bundles.
  */
-function signature(ns, symbol) {
-  const out = runDiff(ns, symbol);
+function signature(ns, label, fragment = label) {
+  const out = runDiff(ns, fragment);
   const lines = out.split("\n");
-  const start = lines.findIndex((l) => new RegExp(`^\\s{2}(MATCH|DIFFER)\\s+${ns}::${symbol}\\b`).test(l));
-  assert.ok(start >= 0, `no result line for ${ns}::${symbol}:\n${out}`);
-  const status = lines[start];
-  // The detail line belongs to this block only if it comes before the next status line.
-  const next = lines.findIndex((l, i) => i > start && /^\s{2}(MATCH|DIFFER|absent)\s/.test(l));
-  const block = lines.slice(start + 1, next < 0 ? undefined : next);
-  const detail = block.find((l) => /^\s+\(/.test(l)) ?? "";
-  return `${status.replace(`${ns}::`, "NS::").replace(/\s+/g, " ").trim()} `
+  // The differ labels a symbol by its NAME and appends the mangled suffix only when the
+  // name is ambiguous: SpectraKeys prints `Spectrogram(D1Ev)` and `Spectrogram(7hzToBinEf)`
+  // while PathScribe, having only one, prints `Spectrogram`. So the label is matched, and
+  // when several share it the one whose suffix mentions the fragment asked for wins.
+  const candidates = lines.filter((l) =>
+    new RegExp(`^\\s{2}(MATCH|DIFFER)\\s+${ns}::${label}(\\([^)]*\\))?\\s`).test(l));
+  const chosen = candidates.find((l) => {
+    const suffix = l.match(/\(([^)]*)\)/);
+    return suffix ? suffix[1].includes(fragment) : true;
+  }) ?? candidates[0];
+  assert.ok(chosen, `no result line for ${ns}::${label} (fragment "${fragment}"):\n${out}`);
+
+  const start2 = lines.indexOf(chosen);
+  const next = lines.findIndex((l, i) => i > start2 && /^\s{2}(MATCH|DIFFER|absent)\s/.test(l));
+  const detail = lines.slice(start2 + 1, next < 0 ? undefined : next).find((l) => /^\s+\(/.test(l)) ?? "";
+  return `${chosen.replace(`${ns}::`, "NS::").replace(/\s+/g, " ").trim()} `
        + `${detail.replace(/\s+/g, " ").trim()}`.trim();
 }
 
@@ -95,10 +115,13 @@ test("recovered pathscribe source compiles and its maths verifies", (t) => {
 test("every shared function diverges from PathScribe as the spectra original does", (t) => {
   if (!bundlesInstalled()) { t.skip("PathScribe bundle is not installed"); return; }
 
-  const results = SHARED.map((fn) => ({
-    fn,
-    pathscribe: signature("pathscribe", fn),
-    spectra: signature("spectra", fn),
+  const results = SHARED.map(([label, fragment]) => ({
+    fn: label,
+    // The differ's overload suffix, `(D1Ev)`, is dropped before comparing: it is a label
+    // aid and it is present on one side only when the other namespace has fewer symbols
+    // of that name.
+    pathscribe: signature("pathscribe", label, fragment).replace(/\([^)]*\)/, ""),
+    spectra: signature("spectra", label, fragment).replace(/\([^)]*\)/, ""),
   }));
   for (const r of results) {
     assert.doesNotMatch(r.pathscribe, /absent/, `${r.fn} is not implemented in pathscribe`);
@@ -127,7 +150,7 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
   const recovered = [...out.matchAll(/^\s{2}(?:MATCH|DIFFER)\s+pathscribe::(\w+)/gm)].map((m) => m[1]).sort();
   const absent = [...out.matchAll(/^\s+absent\s+pathscribe::(\w+)/gm)].map((m) => m[1]).sort();
 
-  assert.deepEqual(recovered, [...SHARED, ...OWN].sort(),
+  assert.deepEqual(recovered, [...SHARED.map(([label]) => label), ...OWN].sort(),
     "the differ recovered a different set of functions than this file claims");
   assert.deepEqual(absent, [...OUTSTANDING].sort(),
     "the set of unrecovered functions changed — recover one and it comes off this list");

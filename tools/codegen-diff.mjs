@@ -231,7 +231,14 @@ function isLabel(line) {
  */
 function parseNested(mangled) {
   if (!mangled.startsWith("__ZN")) return null;
+  // Qualifier letters between the `N` and the name's length prefix: `K` for const, and
+  // `V`/`r` for volatile or a reference qualifier. `__ZNK8beatgrid13OnsetEnvelope16...`
+  // is a CONST member, and skipping it here meant every const member function in the
+  // fleet was silently invisible to this tool — not reported as absent, not reported at
+  // all, so a namespace's completeness marker was measured against a list with holes in
+  // it. `spectra::Spectrogram::hzToBin(...) const` was one of them.
   let i = 4;
+  while (i < mangled.length && /[KVr]/.test(mangled[i])) i += 1;
   const readLen = () => {
     let acc = "";
     while (i < mangled.length && mangled[i] >= "0" && mangled[i] <= "9") acc += mangled[i++];

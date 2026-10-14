@@ -271,6 +271,31 @@ test("the differ keeps overloads apart instead of collapsing them by name", () =
     `and the pointer overload must be distinguishable from it:\n${r.raw}`);
 });
 
+test("the differ sees const member functions, which it used to skip entirely", () => {
+  // `parseNested` required the mangling to start `__ZN`, and a CONST member is `__ZNK`.
+  // Every const member function in the fleet was therefore invisible: not reported as
+  // absent, not reported at all — so a namespace's completeness marker was being measured
+  // against a list with holes in it. `spectra::Spectrogram::hzToBin`,
+  // `lutblend::CubeLUT::valid` and `beatgrid::OnsetEnvelope::frameTimeSeconds` were the
+  // three it was hiding.
+  const src = readFileSync(path.join(ROOT, "tools", "codegen-diff.mjs"), "utf8");
+  const { parseNested } = new Function(
+    `${extractFunction(src, "parseNested")}; return { parseNested };`)();
+
+  // The case that was missed.
+  assert.deepEqual(parseNested("__ZNK8beatgrid13OnsetEnvelope16frameTimeSecondsEi"),
+    { ns: "beatgrid", name: "OnsetEnvelope" });
+  // And the plain form still works, so the fix did not trade one hole for another.
+  assert.deepEqual(parseNested("__ZN6glitch5applyIhEEvRKNS_4ViewIKT_EE"),
+    { ns: "glitch", name: "apply" });
+  // A volatile or ref-qualified member carries other qualifier letters in the same place.
+  assert.deepEqual(parseNested("__ZNV7spectra11Spectrogram7hzToBinEf"),
+    { ns: "spectra", name: "Spectrogram" });
+  // Refusals: not a nested name at all, and a name that is not an identifier.
+  assert.equal(parseNested("_ZN6glitch5applyIhEEv"), null, "a single leading underscore is not __ZN");
+  assert.equal(parseNested("__ZN6glitch"), null, "a missing name is not a symbol");
+});
+
 test("completeness is asserted in BOTH directions and cannot drift", (t) => {
   // A namespace can be complete in two senses that are easy to confuse, so both are
   // checked against the same source of truth — the differ's `absent` tally, which counts

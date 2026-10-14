@@ -31,10 +31,12 @@ const DOCS = ["README.md", "FEATURE-MAP.md", "CATALOG.md", "PARAMETERS.md", "CAP
  * situation without an entry fails the check below rather than passing quietly.
  */
 const NOT_COMPARABLE = {
-  lutblend: {
-    count: 1,
-    why: "CubeLUT::valid() is a one-line member the compiler inlines, so the bundle has no symbol to compare against",
-  },
+  // EMPTY, and it is kept as an empty object on purpose: the one entry it had was
+  // `lutblend: 1` for `CubeLUT::valid()`, which the differ could not see because
+  // `parseNested` only accepted `__ZN…` and a const member is `__ZNK…`. Fixing that
+  // made the function visible, so the exception was not needed any more — which is the
+  // good outcome for an exception table: it shrank because the measurement improved,
+  // not because the claim was dropped.
 };
 
 const read = (p) => readFileSync(path.join(ROOT, p), "utf8");
