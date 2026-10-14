@@ -30,19 +30,39 @@ namespace lutblend {
 // data is a std::vector<float> at 0x20.
 // ---------------------------------------------------------------------------
 struct CubeLUT {
-  bool is3D = false;        // [recovered] offset 0  — false means a 1D LUT
+  bool is3D = true;         // [recovered] offset 0  — false means a 1D LUT
   int size = 0;             // [recovered] offset 4  — entries per axis
   float minR = 0.0f;        // [recovered] offset 0x8
   float minG = 0.0f;        // [recovered] offset 0xc
   float minB = 0.0f;        // [recovered] offset 0x10
-  float maxR = 0.0f;        // [recovered] offset 0x14
-  float maxG = 0.0f;        // [recovered] offset 0x18
-  float maxB = 0.0f;        // [recovered] offset 0x1c
+  float maxR = 1.0f;        // [recovered] offset 0x14
+  float maxG = 1.0f;        // [recovered] offset 0x18
+  float maxB = 1.0f;        // [recovered] offset 0x1c
   std::vector<float> data;  // [recovered] offset 0x20 — RGB triples
 
   // [exact] _ZNK8lutblend7CubeLUT5validEv
   bool valid() const;
 };
+
+// The default member initialisers above are RECOVERED, not chosen. parseCube
+// builds into a default-constructed local CubeLUT, and the prologue writes the
+// whole struct field by field (0xd70..0xd98):
+//
+//     mov  w8, #0x1 / sturb w8, [x29, #-0xc8]   ; is3D  = true
+//     stur wzr,      [x29, #-0xc4]              ; size  = 0
+//     stur xzr,      [x29, #-0xc0]              ; minR = minG = 0
+//     stur wzr,      [x29, #-0xb8]              ; minB  = 0
+//     fmov.2s v0, #1.0 / stur d0, [x29, #-0xb4] ; maxR = maxG = 1.0
+//     mov  w8, #0x3f800000 / stur w8, [x29,#-0xac] ; maxB = 1.0
+//     stp  xzr, xzr, [x29, #-0xa0] / stur xzr, [x29, #-0xa8] ; data empty
+//
+// Those offsets land exactly on the layout above, which is how we know the
+// defaults are is3D = true, min = 0 and max = 1 rather than anything else.
+// Earlier revisions of this header defaulted max to 0.0f, which is wrong: a
+// default-constructed CubeLUT covers the [0,1] domain, and max = 0 would make
+// every default-constructed LUT degenerate under valid().
+static_assert(sizeof(CubeLUT) == 0x38, "CubeLUT must stay 56 bytes");
+static_assert(offsetof(CubeLUT, data) == 0x20, "parseCube writes data at 0x20");
 
 // ---------------------------------------------------------------------------
 // [exact] Scalar helpers.

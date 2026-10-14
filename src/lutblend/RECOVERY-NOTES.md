@@ -121,23 +121,96 @@ The three `push_back` calls against the ~9 `strtod` sites fit the shape: the
 extractor sites parse directive arguments, and data rows go through the
 `push_back` path into `CubeLUT::data`.
 
+### The reading loop and tokeniser — RECOVERED
+
+The whole of Phase 1 (0xe48..0xf80) is now read, which closes two of the open
+questions outright:
+
+```
+getloc / use_facet<ctype> / widen('\n')      ; the delimiter, i.e. plain getline
+getline(is, line, widened)                    ; line buffer at sp+0x220
+<stream state test> -> exit loop
+line ends with 0x0d ? drop the last byte      ; CRLF, both the SSO and heap paths
+line.find('#') != npos ? line.erase(pos,npos) ; '#' starts a comment, to end of line
+++lineNo                                       ; w21, incremented AFTER the strips
+istringstream ls(line, ios::in)                ; w2 = 8 == ios::in
+while (ls >> tok) tokens.push_back(tok)        ; vector<string> at sp+0xd0
+```
+
+So tokenising is whitespace-delimited `operator>>` on the stripped line, which
+means a directive's arguments must be on the SAME line as the keyword, and
+trailing `# comments` are removed before tokenising. The CR strip happens BEFORE
+the comment strip, so a `\r` after a comment is still removed with the comment.
+
+**`TITLE` is ignored entirely.** Its dispatch arm is length 5, matching `TITLE`,
+and it branches to the same block that an empty token list branches to — a
+`mov w24, #2` followed by a jump to the loop's continue point. There is no arity
+check and no validation of its content. That is a closed question, not a guess.
+
+An empty token list (a blank line, or a line that was only a comment) also jumps
+straight to "next line" without dispatching.
+
+### Directive dispatch — RECOVERED
+
+The dispatch compares the FIRST token's length, then its bytes, and clang emits
+the chain twice: once reading the SSO buffer inline, once via the heap data
+pointer. Lengths and match strings:
+
+| Length | Token | Handler |
+|---|---|---|
+| 5 | `TITLE` | ignored (next line) |
+| 10 | `DOMAIN_MIN` | 0x1528 / 0x142c |
+| 10 | `DOMAIN_MAX` | 0x142c / 0x187c |
+| 11 | `LUT_3D_SIZE` | 0x1270 |
+| 11 | `LUT_1D_SIZE` | 0x12e8 |
+| 18 | `LUT_3D_INPUT_RANGE` | 0x13ec |
+| 18 | `LUT_1D_INPUT_RANGE` | 0x139c |
+| other | — | error path |
+
+NOTE: the two 10-length arms resolve to different handler addresses between the
+SSO and heap copies of the chain (MIN -> 0x1528 in one, 0x142c in the other). That
+inconsistency has NOT been resolved. Either a handler is shared and entered with
+different state, or one of these addresses is a common tail rather than a distinct
+handler. It must be settled before `DOMAIN_MIN`/`DOMAIN_MAX` are implemented.
+
+### The working value is a local CubeLUT
+
+`parseCube` does not write through `out` as it goes. It builds a local `CubeLUT`
+at `x29-0xc8`, and the prologue initialises it field by field
+(0xd70..0xd98) — which is also where the struct's DEFAULT MEMBER INITIALISERS
+were recovered from:
+
+```
+is3D = true, size = 0, min = (0,0,0), max = (1,1,1), data empty
+```
+
+The offsets land exactly on `CubeLUT`'s layout, so this is a default-constructed
+`CubeLUT`, not a hand-filled aggregate. `CubeLUT` in the header had `max = 0.0f`
+and `is3D = false`; both were corrected to match. `max = 0` would have made a
+default-constructed LUT read as degenerate under `valid()`.
+
+This also means a failed parse can leave the caller's `out` untouched, since
+nothing is written through the pointer until the local is complete — but that is
+inferred from the shape, not read, and is listed below.
+
 ### What still needs reading
 
-Reading all 1924 instructions was not attempted. Specifically unresolved, and to
-be settled from the disassembly rather than guessed:
+Specifically unresolved, to be settled from the disassembly rather than guessed:
 
-* the exact tokeniser — whether token splitting is on runs of whitespace and
-  whether a directive's arguments must be on the same line;
-* whether `TITLE` content is validated at all or simply skipped;
-* the precise interleaving of the size declaration with the first data row;
-* how `LUT_3D_INPUT_RANGE` interacts with `DOMAIN_MIN`/`DOMAIN_MAX` — whether they
-  write the same fields or one overrides the other;
-* whether the error string is written before or after the partial `CubeLUT` state
-  is left behind, i.e. whether a failed parse leaves `out` modified.
+* the `DOMAIN_MIN` / `DOMAIN_MAX` handler duplication noted above;
+* how `LUT_3D_INPUT_RANGE` and `LUT_1D_INPUT_RANGE` interact with
+  `DOMAIN_MIN`/`DOMAIN_MAX` — whether they write the same fields or one overrides;
+* the precise interleaving of the size declaration with the first data row, and
+  what the per-line status code in `w24` means at each of its values;
+* whether a failed parse writes through `out` at all, or returns leaving it
+  untouched as the local-value shape suggests;
+* the four consecutive `strtod` sites at 0x1bdc..0x1d58, which do not obviously
+  match the three-values-per-data-row shape and need identifying.
 
 Until those are read, implementing from this document alone would mean guessing,
-which is exactly what this repository's method forbids. The grammar and the
-validation rules above are safe to rely on; the tokeniser details are not.
+which is exactly what this repository's method forbids. The grammar, the
+tokeniser, the dispatch lengths and the validation rules above are safe to rely
+on; the handler bodies are not.
 
 ## Cross-cutting findings in this module
 
