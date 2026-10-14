@@ -70,4 +70,44 @@ float luma709(float r, float g, float b);
 // ---------------------------------------------------------------------------
 void sampleLUT(const CubeLUT& lut, float r, float g, float b, float* out);
 
+// ---------------------------------------------------------------------------
+// [exact] Overwrite `lut` with the identity transform.
+//
+// Sets the range to [0,1] on all three axes and fills `data` with the identity
+// ramp in .cube order — B outermost, G middle, R innermost, each triple stored
+// (r, g, b) — so entry (b, g, r) is exactly (r, g, b) normalised by size - 1.
+// That is a SECOND, independent confirmation of the .cube ordering already
+// pinned by sampleLUT: this function writes the data and sampleLUT reads it, and
+// they agree.
+//
+// The vector is cleared and then reserved to exactly 3 * size^3 floats (3 * size
+// for a 1D LUT), so capacity is reused across calls rather than reallocated.
+//
+// NOTE: size == 1 divides by zero here (the normaliser is size - 1, which is 0),
+// so every entry becomes NaN. CubeLUT::valid() rejects size < 2, so a caller that
+// checks that first never reaches this. It is preserved rather than "fixed",
+// because changing it would change behaviour the shipped plugin has.
+// ---------------------------------------------------------------------------
+void makeIdentity(CubeLUT* lut, int size, bool is3D);
+
+// ---------------------------------------------------------------------------
+// [exact] Sample both LUTs at one RGB point, blend them, then blend the result
+// back against the original pixel.
+//
+//   mixed = lerp(sampleLUT(a, rgb), sampleLUT(b, rgb), clamp(blend, 0, 1))
+//   out   = lerp(rgb, mixed, clamp(intensity, 0, 1))
+//
+// When `preserveLuma` is set, `mixed` is first rescaled so its Rec.709 luma
+// matches the input's, which keeps a grade from changing overall brightness.
+// The rescale is skipped when the mixed luma is <= 1e-5, which is what keeps it
+// from dividing by zero on a black pixel.
+//
+// NOTE: the luma is computed with the same constants AND the same evaluation
+// order as luma709() in this namespace, instruction for instruction, rather than
+// by calling it. This implementation calls luma709() precisely because that is
+// bit-identical — see the .cpp.
+// ---------------------------------------------------------------------------
+void applyLUTBlend(const CubeLUT& a, const CubeLUT& b, float blend, float intensity,
+                   bool preserveLuma, const float* rgb, float* out);
+
 }  // namespace lutblend

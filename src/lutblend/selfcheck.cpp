@@ -209,6 +209,174 @@ int main() {
     }
   }
 
+  std::printf("lutblend::makeIdentity\n");
+  {
+    // 3D identity, size 2: 8 entries, R fastest, each stored (r, g, b).
+    lutblend::CubeLUT l;
+    lutblend::makeIdentity(&l, 2, true);
+
+    check(l.is3D, "3D flag is set");
+    check(l.size == 2, "size is stored");
+    check(l.minR == 0.f && l.minG == 0.f && l.minB == 0.f, "min is 0 on every axis");
+    check(l.maxR == 1.f && l.maxG == 1.f && l.maxB == 1.f, "max is 1 on every axis");
+    check(l.data.size() == 24, "3 * size^3 == 24 floats for size 2");
+    check(l.valid(), "the result passes CubeLUT::valid()");
+
+    // The whole point of the ordering: entry (b,g,r) must be (r,g,b) normalised.
+    const float want2[24] = {
+      0.f, 0.f, 0.f,   1.f, 0.f, 0.f,   // b=0 g=0: r=0, r=1
+      0.f, 1.f, 0.f,   1.f, 1.f, 0.f,   // b=0 g=1
+      0.f, 0.f, 1.f,   1.f, 0.f, 1.f,   // b=1 g=0
+      0.f, 1.f, 1.f,   1.f, 1.f, 1.f,   // b=1 g=1
+    };
+    bool same = l.data.size() == 24;
+    for (size_t i = 0; same && i < 24; ++i) same = (l.data[i] == want2[i]);
+    check(same, "entries are in .cube order: R fastest, triples stored (r,g,b)");
+
+    // A identity LUT must round-trip through sampleLUT.
+    float o[3];
+    lutblend::sampleLUT(l, 0.25f, 0.5f, 0.75f, o);
+    checkNear(o[0], 0.25f, 1e-5f, "the 3D identity round-trips R");
+    checkNear(o[1], 0.50f, 1e-5f, "the 3D identity round-trips G");
+    checkNear(o[2], 0.75f, 1e-5f, "the 3D identity round-trips B");
+
+    // Bigger, so interpolation actually has to happen between RGB lattice points.
+    lutblend::CubeLUT l5;
+    lutblend::makeIdentity(&l5, 5, true);
+    check(l5.data.size() == 375, "3 * 5^3 == 375 floats for size 5");
+    lutblend::sampleLUT(l5, 0.3f, 0.6f, 0.9f, o);
+    checkNear(o[0], 0.3f, 1e-5f, "a size-5 identity round-trips R through interpolation");
+    checkNear(o[1], 0.6f, 1e-5f, "a size-5 identity round-trips G through interpolation");
+    checkNear(o[2], 0.9f, 1e-5f, "a size-5 identity round-trips B through interpolation");
+
+    // 1D identity: size entries of (v, v, v).
+    lutblend::CubeLUT l1;
+    lutblend::makeIdentity(&l1, 4, false);
+    check(!l1.is3D, "1D flag is cleared");
+    check(l1.data.size() == 12, "3 * size == 12 floats for a size-4 1D LUT");
+    check(l1.data[0] == 0.f && l1.data[1] == 0.f && l1.data[2] == 0.f, "1D entry 0 is black");
+    checkNear(l1.data[3], 1.f / 3.f, 1e-6f, "1D entry 1");
+    checkNear(l1.data[4], 1.f / 3.f, 1e-6f, "1D entry 1 repeats across channels");
+    checkNear(l1.data[5], 1.f / 3.f, 1e-6f, "1D entry 1 repeats across channels again");
+    check(l1.data[3] == l1.data[4] && l1.data[4] == l1.data[5],
+          "1D entries are identical across channels (grey ramp)");
+    checkNear(l1.data[6], 2.f / 3.f, 1e-6f, "1D entry 2");
+    check(l1.data[9] == 1.f && l1.data[10] == 1.f && l1.data[11] == 1.f,
+          "the last 1D entry is white");
+
+    // Reuse: a second call must not reallocate, and must not leave stale data.
+    lutblend::CubeLUT reuse;
+    lutblend::makeIdentity(&reuse, 3, true);
+    const size_t cap1 = reuse.data.capacity();
+    const size_t n1 = reuse.data.size();
+    lutblend::makeIdentity(&reuse, 3, true);
+    check(reuse.data.size() == n1, "a repeated call produces the same size, not an append");
+    check(reuse.data.capacity() == cap1, "a repeated call reuses the allocation (reserve, not resize)");
+
+    // Shrinking then growing must not leave stale entries behind.
+    lutblend::makeIdentity(&reuse, 2, true);
+    check(reuse.data.size() == 24, "shrinking resizes correctly");
+    lutblend::makeIdentity(&reuse, 3, true);
+    check(reuse.data.size() == 81, "growing back resizes correctly, with no stale tail");
+
+    // size <= 0 writes no data (after the reserve has run).
+    lutblend::CubeLUT lz;
+    lutblend::makeIdentity(&lz, 0, true);
+    check(lz.data.empty(), "size 0 writes no entries");
+    check(!lz.valid(), "and is not a valid LUT");
+  }
+
+
+  std::printf("lutblend::applyLUTBlend\n");
+  {
+    // Build two constant LUTs so the expected blend is exact.
+    auto constant3D = [](float r, float g, float b) {
+      lutblend::CubeLUT l;
+      lutblend::makeIdentity(&l, 2, true);
+      for (size_t i = 0; i + 2 < l.data.size(); i += 3) {
+        l.data[i] = r; l.data[i + 1] = g; l.data[i + 2] = b;
+      }
+      return l;
+    };
+
+    const lutblend::CubeLUT black = constant3D(0.f, 0.f, 0.f);
+    const lutblend::CubeLUT white = constant3D(1.f, 1.f, 1.f);
+    const lutblend::CubeLUT half  = constant3D(0.5f, 0.5f, 0.5f);
+    const float rgb[3] = {0.2f, 0.4f, 0.6f};
+    float o[3];
+
+    // blend 0 -> entirely the first LUT; blend 1 -> entirely the second.
+    lutblend::applyLUTBlend(black, white, 0.f, 1.f, false, rgb, o);
+    checkNear(o[0], 0.f, 1e-6f, "blend 0 takes LUT A");
+    checkNear(o[1], 0.f, 1e-6f, "blend 0 takes LUT A on every channel");
+    checkNear(o[2], 0.f, 1e-6f, "blend 0 takes LUT A on every channel again");
+
+    lutblend::applyLUTBlend(black, white, 1.f, 1.f, false, rgb, o);
+    checkNear(o[0], 1.f, 1e-6f, "blend 1 takes LUT B");
+    checkNear(o[2], 1.f, 1e-6f, "blend 1 takes LUT B on every channel");
+
+    lutblend::applyLUTBlend(black, white, 0.25f, 1.f, false, rgb, o);
+    checkNear(o[0], 0.25f, 1e-6f, "blend 0.25 lands a quarter of the way to B");
+
+    // intensity 0 -> the original pixel, whatever the LUTs say.
+    lutblend::applyLUTBlend(black, white, 1.f, 0.f, false, rgb, o);
+    checkNear(o[0], 0.2f, 1e-6f, "intensity 0 returns the original R");
+    checkNear(o[1], 0.4f, 1e-6f, "intensity 0 returns the original G");
+    checkNear(o[2], 0.6f, 1e-6f, "intensity 0 returns the original B");
+
+    // intensity 0.5 -> halfway between the original and the LUT result.
+    lutblend::applyLUTBlend(half, half, 0.f, 0.5f, false, rgb, o);
+    checkNear(o[0], 0.35f, 1e-6f, "intensity 0.5 blends the original halfway");
+    checkNear(o[2], 0.55f, 1e-6f, "intensity 0.5 blends the original halfway on B");
+
+    // Both amounts are CLAMPED, not merely expected to be in range.
+    lutblend::applyLUTBlend(black, white, 5.f, 1.f, false, rgb, o);
+    checkNear(o[0], 1.f, 1e-6f, "blend > 1 clamps to 1");
+    lutblend::applyLUTBlend(black, white, -5.f, 1.f, false, rgb, o);
+    checkNear(o[0], 0.f, 1e-6f, "blend < 0 clamps to 0");
+    lutblend::applyLUTBlend(black, white, 1.f, 2.f, false, rgb, o);
+    checkNear(o[0], 1.f, 1e-6f, "intensity > 1 clamps to 1");
+    lutblend::applyLUTBlend(white, white, 0.f, -1.f, false, rgb, o);
+    checkNear(o[0], 0.2f, 1e-6f, "intensity < 0 clamps to 0");
+
+    // Identity LUTs leave the pixel alone when both amounts are 1.
+    lutblend::CubeLUT id;
+    lutblend::makeIdentity(&id, 5, true);
+    lutblend::applyLUTBlend(id, id, 0.5f, 1.f, false, rgb, o);
+    checkNear(o[0], 0.2f, 1e-5f, "identity LUTs pass R through");
+    checkNear(o[1], 0.4f, 1e-5f, "identity LUTs pass G through");
+    checkNear(o[2], 0.6f, 1e-5f, "identity LUTs pass B through");
+
+    // With identity LUTs the luma already matches, so preserveLuma is a no-op.
+    lutblend::applyLUTBlend(id, id, 0.5f, 1.f, true, rgb, o);
+    checkNear(o[0], 0.2f, 1e-5f, "preserveLuma on an identity grade changes nothing");
+
+    // A black result must not divide by zero: the 1e-5 guard skips the rescale.
+    lutblend::applyLUTBlend(black, black, 0.f, 1.f, true, rgb, o);
+    checkNear(o[0], 0.f, 1e-6f, "preserveLuma against a black LUT stays black (no 0/0)");
+    check(o[0] == o[0] && o[1] == o[1] && o[2] == o[2], "and produces no NaN");
+
+    // Luminance preservation actually rescales: blend a white LUT toward a
+    // dim grey one and check the result's luma equals the input's.
+    const lutblend::CubeLUT grey = constant3D(0.25f, 0.25f, 0.25f);
+    lutblend::applyLUTBlend(white, grey, 0.f, 1.f, true, rgb, o);
+    const float wantLuma = lutblend::luma709(rgb[0], rgb[1], rgb[2]);
+    const float gotLuma  = lutblend::luma709(o[0], o[1], o[2]);
+    checkNear(gotLuma, wantLuma, 1e-5f, "preserveLuma restores the input's Rec.709 luma");
+
+    // ...and without it, the luma is NOT restored. Same inputs, flag off.
+    lutblend::applyLUTBlend(white, grey, 0.f, 1.f, false, rgb, o);
+    check(std::fabs(lutblend::luma709(o[0], o[1], o[2]) - wantLuma) > 0.1f,
+          "without preserveLuma the luma is genuinely different (the flag does something)");
+
+    // The luma is computed the way luma709 computes it, so a colour that only
+    // differs in which channel carries the energy must scale identically.
+    lutblend::applyLUTBlend(white, constant3D(0.5f, 0.25f, 0.125f), 0.f, 1.f, true, rgb, o);
+    const float r2 = lutblend::luma709(o[0], o[1], o[2]);
+    checkNear(r2, wantLuma, 1e-5f, "preserveLuma holds for a coloured LUT too");
+  }
+
+
   std::printf("\n%s\n", failures == 0 ? "ALL RECOVERED LUTBLEND MATHS VERIFIED"
                                       : "TRANSCRIPTION ERRORS PRESENT");
   return failures == 0 ? 0 : 1;

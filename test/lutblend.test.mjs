@@ -38,7 +38,7 @@ test("recovered lutblend source compiles and its maths verifies", (t) => {
     assert.match(out, /ALL RECOVERED LUTBLEND MATHS VERIFIED/, `self-check failed:\n${out}`);
     assert.doesNotMatch(out, /\bFAIL\b/, out);
     const passes = (out.match(/^  PASS/gm) ?? []).length;
-    assert.ok(passes >= 20, `expected >= 20 checks, saw ${passes}`);
+    assert.ok(passes >= 100, `expected >= 100 checks, saw ${passes}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

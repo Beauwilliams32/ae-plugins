@@ -229,5 +229,171 @@ void sampleLUT(const CubeLUT& lut, float r, float g, float b, float* out) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// makeIdentity(CubeLUT*, int, bool)
+//
+// __ZN8lutblend12makeIdentityEPNS_7CubeLUTEib, 269 instructions, recovered in
+// full. Most of the count is std::vector growth inlined four times over (one
+// growth path per push_back in the triple loop), not logic.
+//
+// SETUP (0x8d4..0x900):
+//     strb w2, [x0]              ; lut->is3D  = is3D
+//     str  w1, [x0, #0x4]        ; lut->size  = size
+//     str  xzr, [x0, #0x8]       ; minR = minG = 0   (one 8-byte store)
+//     str  wzr, [x0, #0x10]      ; minB = 0
+//     memset_pattern16(x0 + 0x14, <0xba50>, 0xc)
+//                                ; maxR = maxG = maxB = 1.0f
+//     x21 = [x20 + 0x20]!        ; lut->data.begin
+//     str x21, [x24, #0x8]       ; lut->data.end = begin   <-- the clear()
+//   The pattern at 0xba50 is four 1.0f floats, so the 12-byte fill is exactly
+//   three 1.0f values. The end = begin store IS the vector clear; there is no
+//   call for it, which is why it is easy to miss.
+//
+// RESERVE (0x90c..0x94c for 3D, 0xba4..0xbdc for 1D):
+//     x22 = 3 * size^3           ; 3D      (3 * size for 1D)
+//     if (x22 > (cap - begin) / 4)        ; capacity in floats
+//         reallocate to exactly x22, free the old buffer
+//   So a repeated call reuses the existing allocation: the common case does no
+//   allocation at all.
+//
+// FILL. The loop nesting is B outermost, G middle, R innermost, and each triple
+// is stored in (r, g, b) order:
+//     3D: for b in [0,size) for g in [0,size) for r in [0,size)
+//             data.push_back(r/(size-1), g/(size-1), b/(size-1))
+//     1D: for i in [0,size) data.push_back(v, v, v) with v = i/(size-1)
+//   The store order gives the nesting away and is the opposite of what the loop
+//   counters look like they are doing: at 0x9b4 the innermost push writes s11,
+//   then 0x9c8 writes s10, then 0x9dc writes s9 — and s11/s10/s9 are the
+//   INNER/MIDDLE/OUTER counters. So the innermost counter is R, stored first.
+//   That is .cube order, R fastest, which sampleLUT in this same file
+//   independently assumes. Two functions, opposite directions, same layout.
+//
+//   The normaliser is `size - 1`, computed once as a float (0x95c) and reused, so
+//   a size-1 LUT divides 0 by 0 and yields NaN. Preserved deliberately.
+//
+// The `subs w8, w19, #1 / b.lt` guard at 0x950 and 0xbe0 means size <= 0 writes
+// nothing, after the reserve has already run.
+// ---------------------------------------------------------------------------
+void makeIdentity(CubeLUT* lut, int size, bool is3D) {
+  lut->is3D = is3D;
+  lut->size = size;
+  lut->minR = 0.0f;
+  lut->minG = 0.0f;
+  lut->minB = 0.0f;
+  lut->maxR = 1.0f;
+  lut->maxG = 1.0f;
+  lut->maxB = 1.0f;
+
+  lut->data.clear();
+
+  const long long n = size;
+
+  if (is3D) {
+    lut->data.reserve(static_cast<size_t>(3 * n * n * n));
+    const float denom = static_cast<float>(size - 1);
+    for (int b = 0; b < size; ++b) {
+      for (int g = 0; g < size; ++g) {
+        for (int r = 0; r < size; ++r) {
+          // (r, g, b), R innermost: .cube order.
+          lut->data.push_back(static_cast<float>(r) / denom);
+          lut->data.push_back(static_cast<float>(g) / denom);
+          lut->data.push_back(static_cast<float>(b) / denom);
+        }
+      }
+    }
+  } else {
+    lut->data.reserve(static_cast<size_t>(3 * n));
+    const float denom = static_cast<float>(size - 1);
+    for (int i = 0; i < size; ++i) {
+      const float v = static_cast<float>(i) / denom;
+      lut->data.push_back(v);
+      lut->data.push_back(v);
+      lut->data.push_back(v);
+    }
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// applyLUTBlend(const CubeLUT&, const CubeLUT&, float, float, bool,
+//               const float*, float*)
+//
+// __ZN8lutblend13applyLUTBlendE..., 112 instructions, recovered in full. The
+// whole function is a double lerp with an optional luma correction.
+//
+// ARGUMENT REGISTERS. Integer and float arguments are allocated independently,
+// which is what makes this signature readable at all:
+//     x0 lutA   x1 lutB   s0 blend   s1 intensity   w2 preserveLuma
+//     x3 rgb (const float*)   x4 out (float*)
+//   The bool is the THIRD integer argument, so it lands in w2 and pushes the two
+//   pointers to x3/x4 — not, as a naive reading of the declaration order would
+//   suggest, after both floats.
+//
+//     0x3308..0x331c: s14 = clamp(s0, 0, 1)      ; the LUT-vs-LUT blend
+//     ldp s9, s11, [x3] / ldr s10, [x3, #0x8]   ; s9 = rgb[0], s11 = rgb[1],
+//                                               ; s10 = rgb[2]  (note the ORDER:
+//                                               ; the pair load puts index 1 in s11)
+//     sampleLUT(lutA, s9, s11, s10, sp+0xc)
+//     sampleLUT(lutB, s9, s11, s10, sp)
+//     0x3354..0x3378: three `fsub` + `fmadd` pairs
+//                                               ; mixed = a + (b - a) * s14
+//
+//   LUMA PRESERVATION (0x337c..0x3400), skipped entirely when !preserveLuma:
+//     0x3380..0x33ac: luma(mixed) = 0.7152*g + 0.2126*r + 0.0722*b
+//     0x33b0:         fcmp / b.le <skip>        ; skip if luma <= 1e-5
+//     0x33c4..0x33f0: luma(rgb) with the SAME constants and the SAME fmadd order
+//     0x33f4:         ratio = luma(rgb) / luma(mixed)
+//     0x33f8..0x3400: mixed *= ratio
+//   Those constants decode to exactly Rec.709 — 0x3f371759 is 0.7152,
+//   0x3e59b3d0 is 0.2126, 0x3d93dd98 is 0.0722 — and the accumulation order is
+//   `(g*c1) + r*c2`, then `+ b*c3`. That is luma709() in this same namespace,
+//   instruction for instruction, INLINED rather than called. Since it is
+//   bit-identical, this transcription calls luma709() and removes the duplicate
+//   without changing a single result. The 1e-5 (0x3727c5ac) epsilon guard is
+//   what stops a black pixel dividing by zero.
+//
+//   FINAL BLEND (0x3404..0x343c):
+//     0x3404..0x3410: s3 = clamp(s1, 0, 1)       ; the intensity
+//     0x3414..0x343c: out[i] = rgb[i] + (mixed[i] - rgb[i]) * s3
+//   Note the second lerp re-reads rgb from memory (`[x20, #0x4]`, `[x20, #0x8]`)
+//   rather than reusing s11/s10 — so it blends against the ORIGINAL pixel, not
+//   against anything the luma step touched.
+//
+// A stack canary is installed (0x32f8..0x3304) and checked on the way out, which
+// is why the epilogue has a __stack_chk_fail branch.
+// ---------------------------------------------------------------------------
+void applyLUTBlend(const CubeLUT& a, const CubeLUT& b, float blend, float intensity,
+                   bool preserveLuma, const float* rgb, float* out) {
+  const float mix = clampf(blend, 0.0f, 1.0f);
+
+  const float r = rgb[0];
+  const float g = rgb[1];
+  const float bl = rgb[2];
+
+  float outA[3];
+  float outB[3];
+  sampleLUT(a, r, g, bl, outA);
+  sampleLUT(b, r, g, bl, outB);
+
+  float m0 = outA[0] + (outB[0] - outA[0]) * mix;
+  float m1 = outA[1] + (outB[1] - outA[1]) * mix;
+  float m2 = outA[2] + (outB[2] - outA[2]) * mix;
+
+  if (preserveLuma) {
+    const float lumaMixed = luma709(m0, m1, m2);
+    if (lumaMixed > 1e-5f) {
+      const float ratio = luma709(r, g, bl) / lumaMixed;
+      m0 *= ratio;
+      m1 *= ratio;
+      m2 *= ratio;
+    }
+  }
+
+  const float amount = clampf(intensity, 0.0f, 1.0f);
+  out[0] = r + (m0 - r) * amount;
+  out[1] = g + (m1 - g) * amount;
+  out[2] = bl + (m2 - bl) * amount;
+}
+
 
 }  // namespace lutblend

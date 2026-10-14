@@ -46,7 +46,9 @@ is merely identified.
 | Cross-bundle check: the two `clampf` copies agree | `test/lutblend.test.mjs` | **Verified** | own test |
 | **`lutblend::sampleLUT`** (trilinear 3D + per-channel 1D, domain clamp) | `src/lutblend/lutblend.cpp` | **Recovered + verified** | `test/lutblend.test.mjs` (identity LUT) |
 | `.cube` data ordering: red fastest (index = b·size² + g·size + r) | `src/lutblend/lutblend.cpp` | **Recovered** | identity round-trip |
-| `lutblend::parseCube` / `applyLUTBlend` / `makeIdentity` | `specs/LUTBlend.md` | **Identified only** | none yet |
+| **`lutblend::makeIdentity`** (269 instrs) — zeroes the range, fills the identity ramp in .cube order (B outer, G middle, R inner, triples stored (r,g,b)); clears then RESERVEs so capacity is reused | `src/lutblend/lutblend.cpp` | **Recovered + verified** | `test/lutblend.test.mjs` |
+| **`lutblend::applyLUTBlend`** (112 instrs) — `out = lerp(rgb, lerp(A, B, clamp(blend)), clamp(intensity))`, with an optional Rec.709 luma-preserving rescale guarded by a 1e-5 epsilon | `src/lutblend/lutblend.cpp` | **Recovered + verified** | `test/lutblend.test.mjs` |
+| `lutblend::parseCube` (1924 instrs — the largest function in the fleet) | `specs/LUTBlend.md` | **Identified only** | none yet |
 | **`typeriser::clampf` / `karaokeWordAt` / `wordProgress` / `cueIndexAt`** | `src/typeriser/typeriser.cpp` | **Recovered + verified** | `test/typeriser.test.mjs` |
 | **`typeriser::Cue` layout** — 48 bytes: `int index`@0x0, `start`@0x8, `end`@0x10, `std::string text`@0x18 | `src/typeriser/typeriser.h` | **Recovered + verified** — `cueIndexAt` pinned the interval, `parseSrt` pinned the other two; four `static_assert`s hold the offsets | `test/typeriser.test.mjs` |
 | Third `clampf` copy; all three agree | `test/typeriser.test.mjs` | **Verified** across 3 bundles/namespaces | own test |
@@ -74,7 +76,7 @@ npm run check && npm test
 
 `npm test` runs twelve tests: it asserts the disassembly constants decode as
 claimed, compiles each recovered namespace with `clang++ -Werror` and runs its
-internal property checks (spectra 107, lutblend 49, typeriser 202 — 358 in
+internal property checks (spectra 107, lutblend 102, typeriser 202 — 411 in
 total), diffs the recovered DSP against all 26 vendored machine-code copies,
 cross-checks the three recovered `clampf` copies against each other, drives
 `parseTimingLine` through an independent JS oracle, and re-runs the extractor to

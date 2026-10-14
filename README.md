@@ -80,12 +80,12 @@ Two findings already worth acting on:
 ## Domain engines recovered so far
 
 Beyond the shared `spectra::` audio module, two effects carry their own
-self-contained engines. LUTBlend's is partially recovered:
+self-contained engines — one complete, one all but one function:
 
 | Module | Contents | State |
 |---|---|---|
 | `spectra::` | FFT, Hann window, STFT, band analysis, falloff envelope | **recovered + verified** (4 effects) |
-| `lutblend::` | `clampf`, `lerpf`, `luma709`, `CubeLUT::valid` + layout | **partially recovered** (`parseCube`, `sampleLUT`, `applyLUTBlend` pending) |
+| `lutblend::` | `clampf`, `lerpf`, `luma709`, `CubeLUT::valid`, `sampleLUT`, `makeIdentity`, `applyLUTBlend` + `CubeLUT` layout | **7 of 8 recovered + verified** (`parseCube` pending — 1924 instructions, the largest function in the fleet) |
 | `typeriser::` | The whole SRT karaoke engine: `parseSrt`, `parseTimingLine`, `parseTimestamp`, `trim`, `splitWords`, `wrapWords`, `wordStyle`, `ease`, `karaokeWordAt`, `wordProgress`, `cueIndexAt`, `Cue` + `WordStyle` + `Anim` layouts | **complete — all 12 authored functions recovered + verified** |
 
 One cross-bundle detail worth recording: `clampf` was recovered from three
@@ -98,6 +98,16 @@ curves that `typeriser::ease` implements, inline instead of calling it. Both wer
 recovered independently and a test drives each against the other, so the
 duplication is verified rather than assumed — and the one place they legitimately
 differ (wordStyle clamps its alpha to 1.0, `ease` does not) is asserted explicitly.
+
+A third: `lutblend::applyLUTBlend` inlines `lutblend::luma709` — same three
+Rec.709 constants, same `fmadd` accumulation order, instruction for instruction.
+Because it is bit-identical, the transcription calls `luma709()` and deletes the
+duplicate without moving a single result bit.
+
+The `.cube` memory layout is also confirmed from two independent directions:
+`makeIdentity` *writes* the ramp with R innermost and triples stored `(r, g, b)`,
+and `sampleLUT` *reads* it that way. Writer and reader were recovered separately
+and agree, which is a stronger check on the ordering than either alone.
 
 ## Roadmap
 
