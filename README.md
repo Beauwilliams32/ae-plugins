@@ -1,3 +1,5 @@
+<p align="center"><img src="brand/assets/icon-512.png" alt="Williams Media AE Fleet" width="128" height="128"></p>
+
 # Williams Media — After Effects plugin fleet
 
 Sixteen After Effects effects (`com.williamsmedia.aftereffects.*`), **recovered by
@@ -295,6 +297,39 @@ can be checked against the artefact:
 md5 "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/SpectraKeys.plugin/Contents/MacOS/SpectraKeys"
 jq -r .binary.md5 specs/SpectraKeys.json
 ```
+
+## Brand
+
+The fleet wears the Trident Studio brand system (Media and creative family): a coral
+to pink tile with a double-diamond glyph, coral `#FF6B5E` and pink `#E04E8B` as the
+accent pair, and a dark and a light theme. The tagline in the brand book is a proposal
+awaiting review, so it is not used in the copy here.
+
+| What | Where |
+|---|---|
+| Usage rules, colour, type, voice, motion | `brand/DESIGN.md` |
+| Brand book (cover, essence, logo, colour, type, system, applications) | `brand/brand-book.pdf` |
+| Design tokens, dark and light | `brand/tokens.css`, `brand/tokens.json` |
+| Tile, glyph and the icon set (favicon, touch icon, PWA, maskable, 1024 px app icon) | `brand/assets/` |
+
+What the brand touches in this repository, and what it deliberately does not:
+
+- **The tile** is the README header above. An After Effects effect has no icon slot:
+  the installed bundles carry only their `.rsrc` resource and an `Info.plist` with no
+  icon key, so no effect or bundle gets one. Use `brand/assets/` for any store listing,
+  release page or avatar.
+- **The tokens** replace the chart palette in `tools/demo/harness.cpp`, the only place
+  this repository draws colour. Series run accent, accent-2, then the shared signals.
+  The recovered functions read none of it: the harness's results.json is identical
+  before and after.
+- **Type** is unchanged. Nothing here renders text and the repository self-hosts no
+  fonts, so `brand/tokens.css` is kept as the reference and not linked from anything.
+- **Effect code, PiPL resources and code signing** are untouched.
+
+`test/brand.test.mjs` fails if the tile, the icon sizes or the tokens drift, if a
+token pair stops meeting contrast, or if the harness palette stops matching the tokens.
+To adopt a reissued tile, copy the new files into `brand/` and update the hash table in
+that test in the same commit.
 
 ## Provenance and licence
 
