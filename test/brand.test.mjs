@@ -4,10 +4,16 @@
 // an After Effects effect is a PiPL resource plus code, and AE draws its own panel. So the
 // brand lives in four places, and this file holds each of them to the source of truth:
 //
-//   1. brand/            the tile, the icon set, the tokens, the usage rules, the book
-//   2. README.md         wears the tile and has a Brand section pointing at brand/DESIGN.md
+//   1. brand/            the tile, the icon set, the lockups, the link-preview card, the
+//                        tokens, the usage rules, the book
+//   2. README.md         opens with the lockup (dark and light) and has a Brand section
+//                        pointing at brand/DESIGN.md
 //   3. tools/demo/       the demo harness's chart palette is the dark-theme token set
 //   4. FEATURE-MAP.md    has the rows that say so
+//
+// THERE IS NO PUBLIC WEB PAGE, so there are no og:image / twitter:image tags to point at the
+// card. The card (brand/assets/og-card.png) is for the GitHub social preview. A test below
+// fails if an HTML page is ever added without the card's meta tags.
 //
 // WHY HASHES. "Drift" for a tile is any byte changing, so the files are pinned by SHA-256.
 // That is deliberately strict: if Beau reissues the tile, copy the new files from
@@ -30,6 +36,7 @@ const BRAND = path.join(ROOT, "brand");
 const read = (p) => readFileSync(path.join(ROOT, p), "utf8");
 const bytes = (p) => readFileSync(path.join(ROOT, p));
 const sha = (p) => createHash("sha256").update(bytes(p)).digest("hex");
+const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 // Every file under brand/, pinned. Adding or removing a file there must touch this table.
 const EXPECTED = {
@@ -44,6 +51,10 @@ const EXPECTED = {
   "brand/assets/icon-192.png": "b3c486f847ea841927cff255ef0aa3ddf820b3848366bca3d569291d1a6ac1e2",
   "brand/assets/icon-512.png": "5ee7ed9d8d3c396a6511e77e6ff8bb1b0ba8c21edef4c5cb5fc247557209bc95",
   "brand/assets/icon-maskable-512.png": "a1e518f95c9ee3a5904d77a0212a259deb31e24ec48ead9be76178e4dea092fb",
+  "brand/assets/lockup-dark.svg": "0ccfa5f0d3bba631b39eb98432e65c9893d8e5220cdb67693b44d1cc6521335e",
+  "brand/assets/lockup-light.svg": "3ecc09664469f845fc83d89efaa0c30173bf60ae8773a7dd02b586d99d64515a",
+  "brand/assets/og-card.png": "6940aa679d0dbe55a37185c7c5df8f1ef6a31f53f71014490d69410a494294d8",
+  "brand/assets/og-card.svg": "63e0da1557f82d3844cae877a83c9a654261a89f22ed8bd03ed4c68a4889b938",
   "brand/assets/tile-bleed.svg": "fba82c24b301500691d204b0e2bcf13615770dff63385b451fbacbf81fcad2ba",
   "brand/assets/tile-maskable.svg": "2fbb18d4ae29ee66de1a6bd9fe5422939e05601b8456bbafb7186b214922e1c7",
   "brand/assets/tile.svg": "76615a75a9d4cf8fd44958fb6ca46f6b8159eb6bc00bf2d57e5f01c4993449d9",
@@ -93,7 +104,6 @@ test("brand/ holds exactly the pinned files, byte for byte", () => {
 });
 
 test("the icon set exists at the sizes each platform asks for", () => {
-  const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   const png = (file) => {
     const b = bytes(file);
     assert.ok(b.subarray(0, 8).equals(PNG_SIG), `${file} is not a PNG`);
@@ -232,24 +242,118 @@ test("the demo harness chart palette is the dark-theme token set, and reads on i
   }
 });
 
-test("README wears the tile and its Brand section points at DESIGN.md", () => {
+// ---- the link-preview card and the lockups -------------------------------------------------
+
+test("the link-preview card is 1200 x 630, in PNG and SVG, at the pinned size", () => {
+  const b = bytes("brand/assets/og-card.png");
+  assert.ok(b.subarray(0, 8).equals(PNG_SIG), "og-card.png is not a PNG");
+  // IHDR: width, height, bit depth, colour type (2 = RGB: a card is opaque).
+  assert.deepEqual({ w: b.readUInt32BE(16), h: b.readUInt32BE(20), depth: b[24], colourType: b[25] },
+    { w: 1200, h: 630, depth: 8, colourType: 2 }, "og-card.png should be 1200x630, 8-bit RGB");
+  // 1200 x 630 is the 1.91:1 box the large link-preview cards use. X refuses a card image
+  // over 5 MB, so a reissued card has to stay under that as well as match the pin.
+  assert.equal(b.length, 390739, "og-card.png byte size changed (update this and EXPECTED together)");
+  assert.ok(b.length < 5 * 1024 * 1024, "og-card.png must stay under 5 MB");
+
+  const svg = read("brand/assets/og-card.svg");
+  assert.match(svg, /viewBox="0 0 1200 630"/, "og-card.svg is a 1200 x 630 box");
+  assert.equal(statSync(path.join(ROOT, "brand/assets/og-card.svg")).size, 52093, "og-card.svg byte size changed");
+  // It is the AE card: the page gradient runs the dark bg to the AE plum, and the tile pair is there.
+  const stops = [...svg.matchAll(/stop-color:(#[0-9A-Fa-f]{6})/g)].map((m) => m[1].toUpperCase());
+  assert.deepEqual(stops, ["#161523", "#532642", "#FF6B5E", "#E04E8B"], "og-card.svg gradient stops");
+});
+
+test("the lockups are 640 x 160 outlined artwork: dark for dark surfaces, light for light", () => {
+  const { dark, light } = themes();
+  const SIZES = { "lockup-dark.svg": 23296, "lockup-light.svg": 23296 };
+  const fills = (svg) => new Set([...svg.matchAll(/fill="(#[0-9A-Fa-f]{6})"/g)].map((m) => m[1].toUpperCase()));
+
+  for (const [f, size] of Object.entries(SIZES)) {
+    const svg = read(`brand/assets/${f}`);
+    assert.equal(statSync(path.join(ROOT, `brand/assets/${f}`)).size, size, `${f} byte size changed`);
+    assert.match(svg, /viewBox="0 0 640 160"/, `${f} is a 640 x 160 box`);
+    // Text is outlined, so the file needs no font and cannot reflow. A <text>, <image>, <font>
+    // or <script> means someone swapped in something that is not the supplied artwork.
+    assert.doesNotMatch(svg, /<(text|tspan|image|font|script|foreignObject)\b/, `${f} must be plain outlined paths`);
+    // The tile is inside the lockup, with the product gradient.
+    const stops = [...svg.matchAll(/stop-color:(#[0-9A-Fa-f]{6})/g)].map((m) => m[1].toUpperCase());
+    assert.deepEqual(stops, ["#FF6B5E", "#E04E8B"], `${f} carries the tile gradient`);
+    assert.match(svg, /<path fill="url\(#SVGID_1_\)" d="M16,115\.84V44\.16C16,28\.67/, `${f} starts with the 128 px tile`);
+  }
+
+  // Dark: white name on dark, coral "by Trident Studio". Light: ink name, link-coral line.
+  assert.deepEqual([...fills(read("brand/assets/lockup-dark.svg"))].sort(), ["#FF6B5E", "#FFFFFF"]);
+  assert.deepEqual([...fills(read("brand/assets/lockup-light.svg"))].sort(), ["#0B0B0D", "#AD4940", "#FFFFFF"]);
+
+  // Each version reads on the surfaces it is for: 4.5:1 for the text colours.
+  for (const surface of ["--bg", "--surface"]) {
+    for (const ink of ["#FFFFFF", "#FF6B5E"]) {
+      const r = contrast(ink, dark[surface]);
+      assert.ok(r >= 4.5, `lockup-dark ${ink} on dark ${surface} is ${r.toFixed(2)}:1, needs 4.5:1`);
+    }
+    for (const ink of ["#0B0B0D", "#AD4940"]) {
+      const r = contrast(ink, light[surface]);
+      assert.ok(r >= 4.5, `lockup-light ${ink} on light ${surface} is ${r.toFixed(2)}:1, needs 4.5:1`);
+    }
+  }
+  assert.equal(light["--link"].toUpperCase(), "#AD4940", "the light lockup's second line is the light link colour");
+  assert.equal(dark["--link"].toUpperCase(), "#FF6B5E", "the dark lockup's second line is the dark link colour");
+});
+
+test("README opens with the lockup (light by default, dark on a dark theme) and its Brand section points at DESIGN.md", () => {
   const readme = read("README.md");
-  const tile = readme.match(/<img src="(brand\/assets\/[\w.-]+\.png)"/);
-  assert.ok(tile, "README should open with the tile image");
-  assert.ok(existsSync(path.join(ROOT, tile[1])), `README tile ${tile[1]} does not exist`);
-  assert.ok(readme.indexOf(tile[0]) < readme.indexOf("\n# "), "the tile sits above the title");
+  const header = readme.slice(0, readme.indexOf("\n# "));
+  assert.ok(header.includes("<picture>"), "README should open with a <picture> holding the lockup");
+
+  const dark = header.match(/<source media="\(prefers-color-scheme: dark\)" srcset="(brand\/assets\/[\w.-]+\.svg)"/);
+  const light = header.match(/<img src="(brand\/assets\/[\w.-]+\.svg)" alt="([^"]+)"/);
+  assert.ok(dark, "README lockup needs a dark-theme <source>");
+  assert.ok(light, "README lockup needs a light <img>");
+  assert.equal(dark[1], "brand/assets/lockup-dark.svg");
+  assert.equal(light[1], "brand/assets/lockup-light.svg");
+  assert.match(light[2], /Williams Media AE/, "the lockup's alt text names the product");
+  assert.match(header, /width="480" height="120"/, "the lockup is shown at 480 x 120, its 4:1 shape");
+  for (const f of [dark[1], light[1]]) assert.ok(existsSync(path.join(ROOT, f)), `README lockup ${f} does not exist`);
 
   const section = readme.split(/^## /m).find((s) => s.startsWith("Brand\n"));
   assert.ok(section, "README has no '## Brand' section");
-  for (const ref of ["brand/DESIGN.md", "brand/tokens.css", "brand/assets/", "test/brand.test.mjs"]) {
+  for (const ref of ["brand/DESIGN.md", "brand/tokens.css", "brand/assets/", "test/brand.test.mjs",
+    "brand/assets/lockup-dark.svg", "brand/assets/lockup-light.svg", "brand/assets/og-card.png"]) {
     assert.ok(section.includes(ref), `README Brand section should mention ${ref}`);
+  }
+});
+
+test("any web page added to this repo carries the link-preview card", () => {
+  // Today there is none (the fleet is After Effects effects and a recovered spec), so this
+  // finds nothing and passes. The day an HTML page appears, it must point og:image and
+  // twitter:image at the card, say 1200 x 630, describe it, and ask for the large card.
+  const skip = new Set([".git", "node_modules", "build", "dist"]);
+  const pages = [];
+  const walk = (dir, rel = "") => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (skip.has(e.name)) continue;
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) walk(path.join(dir, e.name), r);
+      else if (/\.html?$/i.test(e.name)) pages.push(r);
+    }
+  };
+  walk(ROOT);
+  for (const page of pages) {
+    const html = read(page);
+    const meta = (key) => html.match(new RegExp(`<meta[^>]+(?:property|name)="${key}"[^>]*content="([^"]*)"`, "i"))?.[1];
+    assert.match(meta("og:image") ?? "", /og-card\.png/, `${page}: og:image should be the brand card`);
+    assert.match(meta("twitter:image") ?? "", /og-card\.png/, `${page}: twitter:image should be the brand card`);
+    assert.equal(meta("og:image:width"), "1200", `${page}: og:image:width`);
+    assert.equal(meta("og:image:height"), "630", `${page}: og:image:height`);
+    assert.ok(meta("og:image:alt"), `${page}: og:image:alt describes the card`);
+    assert.equal(meta("twitter:card"), "summary_large_image", `${page}: twitter:card`);
   }
 });
 
 test("FEATURE-MAP has the brand rows and they name a test that exists", () => {
   const map = read("FEATURE-MAP.md");
-  const rows = map.split("\n").filter((l) => /^\|.*\*\*(Brand system|Demo harness chart palette)/.test(l));
-  assert.equal(rows.length, 2, "FEATURE-MAP should have a Brand system row and a Demo harness chart palette row");
+  const rows = map.split("\n").filter((l) => /^\|.*\*\*(Brand system|Brand lockups and link-preview card|Demo harness chart palette)/.test(l));
+  assert.equal(rows.length, 3, "FEATURE-MAP should have a Brand system row, a Brand lockups and link-preview card row, and a Demo harness chart palette row");
   for (const r of rows) assert.match(r, /test\/brand\.test\.mjs/);
   assert.ok(statSync(path.join(ROOT, "test/brand.test.mjs")).isFile());
 });
