@@ -153,6 +153,7 @@ is merely identified.
 | **GlitchKit `EffectMain`** + the five glitch modes (engine in `GlitchRender.cpp`, host-free) | `plugins/GlitchKit/` | **NEW CODE** driving the RECOVERED `hashKey`/`patternFrame`, so the patterns come from the shipped plugin's own generator | `test/build.test.mjs`, `test/codegen.test.mjs` |
 | **GlitchKit render core EXECUTED** — determinism, mode distinctness, 8/16-bit agreement, degenerate frames | `plugins/GlitchKit/GlitchRender.cpp` | **Verified by execution** on synthetic frames (3 negative controls). Not a host test | `test/glitchrender.test.mjs` |
 | **LUTBlend render core EXECUTED** — the three Drive modes, strength as a lerp, `preserveLuma`, null-LUT identity fallback, **depth-aware `meanLuma` as a regression test** (control reproduces the round-23 bug: 56.4 vs 0.44) | `plugins/LUTBlend/LutRender.cpp` | **Verified by execution** on synthetic frames (3 negative controls). Not a host test | `test/lutrender.test.mjs` |
+| **Fleet demo harness** — runs eight recovered namespaces (noisefield, chromakey, lutblend, spectra, echo, colorpulse, speedramp, glitch) on synthetic input, writes PPM panels + a results.json with provenance and a not-an-AE-render disclaimer | `tools/demo/harness.cpp`, `tools/demo/build.sh` | **Working** — demonstration only, output gitignored. Band meter calls `bandValues` with the hop rate (an earlier draft passed a time and got NaN peaks) | `test/demo.test.mjs` |
 | `EffectMain` for the other 14 effects | — | **Not started** | none |
 
 ## Gate

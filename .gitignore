@@ -8,3 +8,7 @@ node_modules/
 
 # Worktrees used for isolated recovery lanes.
 .worktrees/
+
+# Demo harness output (regenerate with tools/demo/build.sh && build/fleet-demo).
+tools/demo/out/
+.DS_Store
