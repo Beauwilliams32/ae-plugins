@@ -643,7 +643,7 @@ static J demoChromaKey() {
    .num("percentile10", chromakey::percentile(dist.data(), dist.size(), 10.0f))
    .str("note", "The scoring is the point: the sweep is scored against a mask the plate was "
                 "built with, so the trade-off is measured rather than asserted. The plate, the "
-                "heat-map colour ramp and the backdrop should are this harness's scaffolding; "
+                "heat-map colour ramp and the backdrop shot are this harness's scaffolding; "
                 "the distance field, the threshold mapping, the percentiles and the gradient "
                 "are the recovered functions. Nothing here is an AE render.");
   return j;
