@@ -440,7 +440,7 @@ const swatchRow = (d) => {
     (name, i) =>
       `        <li><span class="sw" style="background:${esc(d.swatchHex[i])}"></span><b>${esc(
         d.swatchHex[i]
-      )}</b> ${esc(name)}</li>`
+      )}</b><span class="sw-name">${esc(name)}</span></li>`
   );
   return `      <ul class="swatches">\n${items.join('\n')}\n      </ul>`;
 };
@@ -569,10 +569,15 @@ const html = `<!doctype html>
   .stats tr + tr th, .stats tr + tr td { border-top: 1px solid color-mix(in srgb, var(--tg-glass-edge) 60%, transparent); }
   .fns { font-size: 12.5px; color: var(--tg-muted); margin: 0 0 10px; line-height: 1.9; }
   .fns-label { display: block; text-transform: uppercase; letter-spacing: .09em; font-size: 11px; color: color-mix(in srgb, var(--tg-muted) 75%, transparent); margin-bottom: 2px; }
+  .why, .caveat, .stats td, .fns { overflow-wrap: anywhere; }
   .fns code, .caveat code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: color-mix(in srgb, #0e1a2b 70%, transparent); border: 1px solid var(--tg-glass-edge); border-radius: 5px; padding: 1px 6px; color: var(--tg-ink); }
   .caveat { color: var(--tg-muted); font-size: 13.5px; line-height: 1.6; margin: 0; }
   .swatches { list-style: none; margin: 0 0 16px; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
-  .swatches li { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--tg-muted); border: 1px solid var(--tg-glass-edge); border-radius: 8px; padding: 6px 11px; }
+  .swatches li { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; font-size: 12.5px; color: var(--tg-muted); border: 1px solid var(--tg-glass-edge); border-radius: 8px; padding: 6px 11px; }
+  /* The name is an identifier, not a sentence: give it the wrapping rule that also
+     lowers min-content width, or it holds the card open at phone width. */
+  .sw-name { min-width: 0; overflow-wrap: anywhere; }
+  .swatches .sw, .swatches b { flex: 0 0 auto; }
   .swatches b { color: var(--tg-ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 500; }
   .sw { width: 18px; height: 18px; border-radius: 5px; border: 1px solid rgba(255,255,255,.18); }
   .chip { display: inline-flex; border: 1px solid var(--tg-glass-edge); border-radius: 999px; padding: 3px 9px; font-size: 12px; color: var(--tg-muted); white-space: nowrap; }
