@@ -486,6 +486,7 @@ const sections = FLEET.map((spec) => {
         <span class="chip ${noSource ? 'wait' : 'ok'}">${noSource ? 'spec only' : 'computed output'}</span>
       </div>
       <p class="use">${esc(spec.use)}</p>
+      <p class="why">${esc(spec.why)}</p>
 ${figures}${spec.swatches ? swatchRow(d) + '\n' : ''}${statsTable(spec, d) + '\n'}${fns}${symbols}      <p class="caveat">${esc(d.note ?? '')}</p>
     </article>`;
 });
@@ -553,7 +554,11 @@ const html = `<!doctype html>
   .fx-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 14px; }
   .fx-head .tg-h2 { margin: 0; }
   .ns { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; color: var(--tg-a1); font-weight: 500; }
-  .use { color: var(--tg-ink); font-size: 15px; margin: 6px 0 14px; }
+  .use { color: var(--tg-ink); font-size: 15px; margin: 6px 0 8px; }
+  /* What the panel proves, in prose. Without this the page would be a gallery of
+     unexplained images; it is the part a generator cannot invent and a reader
+     cannot infer. */
+  .why { color: var(--tg-muted); font-size: 14.5px; line-height: 1.68; margin: 0 0 16px; max-width: 820px; }
   .panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin: 0 0 18px; }
   .panel { margin: 0; background: #070d16; border: 1px solid var(--tg-glass-edge); border-radius: 12px; overflow: hidden; }
   .panel img { display: block; width: 100%; height: auto; }
