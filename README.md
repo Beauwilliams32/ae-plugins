@@ -61,9 +61,11 @@ modifies, moves or copies them.
 **[RECOVERY-STATUS.md](RECOVERY-STATUS.md)** is the coverage table, and it is **generated**
 by `tools/recovery-status.mjs` from the differ's own output — so its numbers are measured,
 and `test/status.test.mjs` fails if it ever stops matching a fresh run. At this revision:
-**112 of 144 named symbols recovered, 55 of them instruction-identical, 7,452 of the
-fleet's 19,161 authored instructions (38.9%)**, across 13,607 lines of recovered source.
-Six effects are at 100% instruction coverage and two have no recovered source at all.
+**114 of 155 named symbols recovered, 56 of them instruction-identical, 7,500 of the
+fleet's 20,883 authored instructions (35.9%)**, across 13,897 lines of recovered source.
+Six effects are at 100% instruction coverage and one — MotionCurveX — has no recovered
+source at all. The two sentences above are the one copy of these figures that is not
+generated; if they disagree with the table, the table wins.
 
 ```bash
 npm run status                  # regenerate RECOVERY-STATUS.md
@@ -187,6 +189,40 @@ one of them reproduces a real 16-bit stride bug that was written once in this re
 npm test                        # the whole gate
 node tools/codegen-diff.mjs glitch   # instruction-level fidelity per namespace
 ```
+
+## Demonstrating the effects
+
+Compiled code that is never run is a claim, not a demonstration. `tools/demo/` executes
+the recovered namespaces on synthetic input and publishes what comes out:
+
+```bash
+npm run demo                                     # build tools/demo/harness.cpp, run it
+node tools/demo/publish.mjs --out <site-dir>     # turn the panels into a WebP page
+```
+
+`tools/demo/harness.cpp` is **new code** (it lives in `tools/`, like every other
+harness here) that calls each recovered namespace and writes one PPM panel plus the
+numbers per effect into `results.json`. Three things make the output worth trusting:
+
+* **The measured demos are scored, not admired.** Where a synthetic input has a known
+  answer the demo reports the error against it: `ChromaKeyAssist` sweeps sensitivity and
+  reports the false-positive/false-negative rate against the plate's ground-truth mask,
+  and `BeatSnap` detects five of five clicks within a hop of their true times.
+* **`shake::median`'s defect is shown on purpose.** The same multiset shuffled 200 times
+  returns 28 different answers, because the shipped code's second `nth_element` range is
+  one element wide and libc++ elides it. A demo page that only displayed clean output
+  would be hiding the most useful thing in that bundle.
+* **MotionCurveX is a spec card, not a picture.** It has no recovered source, so it gets
+  its symbol list and an architecture paragraph instead of an invented illustration.
+
+Nothing in the demo output is an After Effects render: no host has loaded a rebuilt
+bundle yet, so an AE screenshot does not exist and none is imitated. `test/demo.test.mjs`
+builds and runs the harness and then publishes from it, so a stat that resolves to
+nothing fails the gate instead of reaching a page.
+
+`tools/demo/publish.mjs` writes the static page under `trident-tools`'s
+`public/products/after-effects-plugins/demos/`; the site's `fleet-demos` test gates what
+actually shipped.
 
 ## Differential codegen verification
 

@@ -6,8 +6,9 @@
   "description": "Recovered specification and DSP core for the Williams Media After Effects plugin fleet",
   "scripts": {
     "recover": "node tools/recover.mjs && node tools/render-specs.mjs && node tools/render-pipl.mjs && node tools/decode-flags.mjs",
-    "check": "for f in tools/*.mjs test/*.test.mjs; do node --check \"$f\" || exit 1; done",
+    "check": "for f in tools/*.mjs tools/demo/*.mjs test/*.test.mjs; do node --check \"$f\" || exit 1; done",
     "test": "node --test test/*.test.mjs",
-    "status": "node tools/recovery-status.mjs"
+    "status": "node tools/recovery-status.mjs",
+    "demo": "bash tools/demo/build.sh && ./build/fleet-demo tools/demo/out"
   }
 }

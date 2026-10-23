@@ -171,6 +171,13 @@ float rawBandLevel(const std::vector<float>& spectrum,
 // Per-frame band levels with the effect's falloff/decay applied, mapped through
 // the band's output range. `hopRateHz` is AnalysisConfig::hopRateHz; the compiled
 // code inverts it to get seconds per hop, which is the falloff time step.
-std::vector<float> bandValues(const Spectrogram& spectrogram, const BandSpec& band, double time);
+//
+// ONE RESULT PER FRAME, not one per call: this walks the whole spectrogram and
+// returns `frameCount` values. The third parameter was misnamed `time` here until a
+// caller (tools/demo/harness.cpp) believed the name, passed seconds, and got an
+// empty vector back for every call. The docstring above it, the implementation and
+// analyseBands all agree it is a hop rate; only the parameter name disagreed.
+std::vector<float> bandValues(const Spectrogram& spectrogram, const BandSpec& band,
+                              double hopRateHz);
 
 }  // namespace spectra

@@ -278,8 +278,13 @@ std::vector<double> linspace(double a, double b, int n) {
 
 // A green-screen plate: gradient screen, soft-edged subject, deliberate green
 // spill on the subject's rim (the case a key assist exists to fix).
-Canvas greenScreenPlate(int w, int h) {
+// A ground-truth subject mask is produced alongside the plate. Without it an
+// "auto" key is unfalsifiable: every threshold looks plausible on screen. With it
+// the harness can score a sensitivity against what it SHOULD have kept, which is
+// the whole point of the sweep below.
+Canvas greenScreenPlate(int w, int h, std::vector<unsigned char>* maskOut = nullptr) {
   Canvas c(w, h);
+  std::vector<unsigned char> mask(size_t(w) * h, 0);
   for (int y = 0; y < h; ++y) {
     for (int x = 0; x < w; ++x) {
       const float u = float(x) / float(w - 1), v = float(y) / float(h - 1);
@@ -295,6 +300,7 @@ Canvas greenScreenPlate(int w, int h) {
       const float dy = (float(y) - cy) / (h * 0.34f);
       const float d = std::sqrt(dx * dx + dy * dy);
       if (d > 1.0f) continue;
+      mask[size_t(y) * w + x] = 1;                             // ground truth: subject
       const float edge = std::min(1.0f, (1.0f - d) * 6.0f);   // antialiased rim
       const float shade = 0.55f + 0.45f * (1.0f - std::fabs(dx));
       float r = 0.72f * shade, g = 0.50f * shade, b = 0.40f * shade;
@@ -306,6 +312,7 @@ Canvas greenScreenPlate(int w, int h) {
       c.set(x, y, r, g, b);
     }
   }
+  if (maskOut) *maskOut = mask;
   return c;
 }
 
@@ -507,93 +514,138 @@ static J demoNoiseField() {
 // ---------------------------------------------------------------------------
 static J demoChromaKey() {
   const int W = 480, H = 270;
-  Canvas plate = greenScreenPlate(W, H);
+  std::vector<unsigned char> truth;
+  Canvas plate = greenScreenPlate(W, H, &truth);
 
   const chromakey::RGB keyRgb{0.14f, 0.72f, 0.16f};
   const chromakey::YCbCr key = chromakey::rgbToYCbCr(keyRgb);
-
   const float sens = 40.0f;
   const float thr = chromakey::sensitivityToThreshold(sens);
-  const float thrHard = chromakey::sensitivityToThreshold(12.0f);
 
+  // The distance field is the recovered function's raw output: one chromaDistance
+  // per pixel. Everything downstream is a threshold on this field.
   std::vector<float> dist(size_t(W) * H, 0.0f);
+  std::vector<float> srcRGB(size_t(W) * H * 3, 0.0f);
   for (int y = 0; y < H; ++y) {
     for (int x = 0; x < W; ++x) {
       const size_t i = (size_t(y) * W + x) * 3;
       chromakey::RGB px{float(plate.px[i]) / 255.0f, float(plate.px[i + 1]) / 255.0f,
                         float(plate.px[i + 2]) / 255.0f};
+      srcRGB[i + 0] = px.r;
+      srcRGB[i + 1] = px.g;
+      srcRGB[i + 2] = px.b;
       dist[size_t(y) * W + x] = chromakey::chromaDistance(chromakey::rgbToYCbCr(px), key);
     }
   }
-  // Auto-level: the 97th percentile of the distance field is where the screen is,
-  // so a threshold at 60% of it keys most of the screen without eating the subject.
-  const float p97 = chromakey::percentile(dist.data(), dist.size(), 97.0f);
-  const float thrAuto = p97 * 0.60f;
 
-  Canvas matteFixed(W, H), matteAuto(W, H), comp(W, H);
+  // The plate is scored, not admired. `mask` is the truth: 1 = subject. A pixel
+  // with distance >= threshold is KEPT (opaque), so a background pixel that is
+  // kept is a false positive (screen left in) and a subject pixel that is dropped
+  // is a false negative (a hole in the actor).
+  struct Score { double fp, fn; };
+  auto score = [&](float threshold) {
+    double bg = 0, fg = 0, fp = 0, fn = 0;
+    for (size_t i = 0; i < dist.size(); ++i) {
+      const bool kept = dist[i] >= threshold;
+      if (truth[i]) { fg += 1; if (!kept) fn += 1; }
+      else { bg += 1; if (kept) fp += 1; }
+    }
+    return Score{fp / bg, fn / fg};
+  };
+  const Score atThr = score(thr);
+
+  // Sensitivity sweep through the recovered mapping. This is the panel that says
+  // something a screenshot cannot: where the trade-off actually sits on this plate.
+  const int sweepN = 41;
+  std::vector<double> sensAxis, fpCurve, fnCurve, errCurve;
+  double bestErr = 2.0, bestSens = 0.0;
+  for (int i = 0; i < sweepN; ++i) {
+    const float sN = 2.0f + 98.0f * float(i) / float(sweepN - 1);
+    const Score sc = score(chromakey::sensitivityToThreshold(sN));
+    sensAxis.push_back(double(sN));
+    fpCurve.push_back(sc.fp);
+    fnCurve.push_back(sc.fn);
+    errCurve.push_back(sc.fp + sc.fn);
+    if (sc.fp + sc.fn < bestErr) { bestErr = sc.fp + sc.fn; bestSens = double(sN); }
+  }
+
+  // Panels: the plate, the distance field, the matte at sensitivity 40, and that
+  // matte applied over a backdrop.
+  Canvas heat(W, H), matte(W, H), comp(W, H);
+  float dLo = dist[0], dHi = dist[0];
+  for (float d : dist) { dLo = std::min(dLo, d); dHi = std::max(dHi, d); }
   for (int y = 0; y < H; ++y) {
     for (int x = 0; x < W; ++x) {
-      const float d = dist[size_t(y) * W + x];
-      const float mF = d >= thr ? 1.0f : 0.0f;
-      const float s = std::min(1.0f, std::max(0.0f, (d - thrAuto * 0.75f) / (thrAuto * 0.35f)));
-      const float mA = s * s * (3.0f - 2.0f * s);   // soft edge, this harness's choice
-      matteFixed.set(x, y, 0.55f * mF + 0.05f, 0.72f * mF + 0.06f, 0.95f * mF + 0.08f);
-      matteAuto.set(x, y, 0.55f * mA + 0.05f, 0.72f * mA + 0.06f, 0.95f * mA + 0.08f);
+      const size_t idx = size_t(y) * W + x;
+      const float d = dist[idx];
+      const bool kept = d >= thr;
+      matte.set(x, y, kept ? 0.98f : 0.04f, kept ? 0.98f : 0.05f, kept ? 0.99f : 0.08f);
 
-      const size_t i = (size_t(y) * W + x) * 3;
-      const float fr = float(plate.px[i]) / 255.0f;
-      const float fg = float(plate.px[i + 1]) / 255.0f;
-      const float fb = float(plate.px[i + 2]) / 255.0f;
+      // Heat map on a fixed 0..0.40 scale so the two sides of the threshold are
+      // comparable across plates; the threshold itself is drawn as a dark contour.
+      const float t = std::min(1.0f, std::max(0.0f, d / 0.40f));
+      float hr = std::min(1.0f, t * 1.9f);
+      float hg = std::min(1.0f, std::max(0.0f, t * 1.9f - 0.55f)) * 0.85f + 0.12f * (1.0f - t);
+      float hb = 0.20f + 0.62f * (1.0f - std::min(1.0f, t * 1.6f));
+      if (std::fabs(d - thr) < 0.004f) { hr = hg = hb = 0.02f; }   // iso-line at threshold
+      heat.set(x, y, hr, hg, hb);
+
       const float u = float(x) / float(W - 1), v = float(y) / float(H - 1);
-      const float br = 0.92f - 0.62f * v, bg = 0.55f - 0.30f * v, bb = 0.30f + 0.55f * u;
-      comp.set(x, y, fr * mA + br * (1.0f - mA), fg * mA + bg * (1.0f - mA),
-               fb * mA + bb * (1.0f - mA));
+      const float br = 0.92f - 0.62f * v, bg2 = 0.55f - 0.30f * v, bb = 0.30f + 0.55f * u;
+      const float m = kept ? 1.0f : 0.0f;
+      comp.set(x, y, srcRGB[idx * 3 + 0] * m + br * (1.0f - m),
+               srcRGB[idx * 3 + 1] * m + bg2 * (1.0f - m),
+               srcRGB[idx * 3 + 2] * m + bb * (1.0f - m));
     }
   }
   plate.save("chromakey_input.ppm");
-  matteFixed.save("chromakey_matte_fixed.ppm");
-  matteAuto.save("chromakey_matte_auto.ppm");
+  heat.save("chromakey_distance.ppm");
+  matte.save("chromakey_matte.ppm");
   comp.save("chromakey_composite.ppm");
 
-  // Edge energy on the matte, through the recovered gradientMagnitude, is what
-  // tells a keyer whether the edge is soft enough to hold up.
-  double edgeSum = 0.0;
-  float edgeMax = 0.0f;
-  std::vector<float> matteField(size_t(W) * H, 0.0f);
-  for (int y = 0; y < H; ++y)
-    for (int x = 0; x < W; ++x) {
-      const float d = dist[size_t(y) * W + x];
-      const float s = std::min(1.0f, std::max(0.0f, (d - thrAuto * 0.75f) / (thrAuto * 0.35f)));
-      matteField[size_t(y) * W + x] = s * s * (3.0f - 2.0f * s);
-    }
-  for (int y = 1; y < H - 1; ++y)
-    for (int x = 1; x < W - 1; ++x) {
-      const float g = chromakey::gradientMagnitude(matteField.data(), W, H, long(W), x, y);
-      edgeSum += g;
-      edgeMax = std::max(edgeMax, g);
-    }
+  Canvas curve(640, 280);
+  curve.fill(0.05f, 0.06f, 0.09f);
+  Plot pl(curve, 46, 22, 620, 236, 0.0, 100.0, 0.0, 1.0);
+  pl.grid(10, 5);
+  pl.curve(sensAxis, fpCurve, kCyan[0], kCyan[1], kCyan[2]);
+  pl.curve(sensAxis, fnCurve, kMagenta[0], kMagenta[1], kMagenta[2]);
+  pl.curve(sensAxis, errCurve, kAmber[0], kAmber[1], kAmber[2]);
+  pl.dashedH(atThr.fp, 0.38f, 0.46f, 0.58f);
+  curve.save("chromakey_sweep.ppm");
 
   J j;
   j.str("plugin", "ChromaKeyAssist").str("namespace", "chromakey::")
-   .str("input", "A 480x270 synthetic green-screen plate: unevenly lit screen, soft-edged "
-                 "subject, and deliberate green spill on the subject rim.")
-   .strs("panels", {"chromakey_input.ppm", "chromakey_matte_fixed.ppm",
-                    "chromakey_matte_auto.ppm", "chromakey_composite.ppm"})
-   .strs("panelLabels", {"synthetic plate", "chromaDistance >= threshold (sensitivity 40)",
-                         "auto-levelled matte (97th percentile)", "matte applied over a backdrop"})
+   .str("input", "A 480x270 synthetic green-screen plate with a ground-truth subject mask: "
+                 "unevenly lit screen, soft-edged subject, and deliberate green spill on the "
+                 "subject rim.")
+   .strs("panels", {"chromakey_input.ppm", "chromakey_distance.ppm", "chromakey_matte.ppm",
+                    "chromakey_composite.ppm", "chromakey_sweep.ppm"})
+   .strs("panelLabels", {"synthetic plate", "chromaDistance to the key colour (dark contour = threshold)",
+                         "matte at sensitivity 40", "matte over a backdrop",
+                         "keying error vs sensitivity, scored against the truth mask"})
    .strs("recovered", {"rgbToYCbCr", "chromaDistance", "sensitivityToThreshold", "percentile",
                        "gradientMagnitude"})
    .num("keyR", keyRgb.r).num("keyG", keyRgb.g).num("keyB", keyRgb.b)
    .num("keyY", key.y).num("keyCb", key.cb).num("keyCr", key.cr)
    .num("sensitivity", sens).num("threshold", thr)
-   .num("hardThreshold", thrHard)
-   .num("percentile97", p97).num("autoThreshold", thrAuto)
-   .num("distanceMin", *std::min_element(dist.begin(), dist.end()))
-   .num("distanceMax", *std::max_element(dist.begin(), dist.end()))
-   .num("edgeMean", edgeSum / double((H - 2) * (W - 2))).num("edgeMax", edgeMax)
-   .str("note", "The plate, the 97th-percentile auto-level and the composite are this "
-                "harness's scaffolding. The distance field, the threshold mapping, the "
-                "percentile and the edge magnitude are the recovered functions.");
+   .num("falsePositiveRate", atThr.fp).num("falseNegativeRate", atThr.fn)
+   .num("distanceMin", dLo).num("distanceMax", dHi)
+   .num("bestSensitivity", bestSens).num("bestTotalError", bestErr)
+   .num("subjectFraction", [&] {
+     double n = 0;
+     for (unsigned char t : truth) n += t ? 1 : 0;
+     return n / double(truth.size());
+   }())
+   .strs("sweepAxes", {"sensitivity", "falsePositive", "falseNegative", "totalError"})
+   .arr("sweepFP", fpCurve, 5).arr("sweepFN", fnCurve, 5)
+   .num("percentile90", chromakey::percentile(dist.data(), dist.size(), 90.0f))
+   .num("percentile50", chromakey::percentile(dist.data(), dist.size(), 50.0f))
+   .num("percentile10", chromakey::percentile(dist.data(), dist.size(), 10.0f))
+   .str("note", "The scoring is the point: the sweep is scored against a mask the plate was "
+                "built with, so the trade-off is measured rather than asserted. The plate, the "
+                "heat-map colour ramp and the backdrop should are this harness's scaffolding; "
+                "the distance field, the threshold mapping, the percentiles and the gradient "
+                "are the recovered functions. Nothing here is an AE render.");
   return j;
 }
 
@@ -862,9 +914,28 @@ static J demoEchoTrails() {
   screenPanel.save("echo_screen.ppm");
   addPanel.save("echo_add.ppm");
 
-  // One bilinear sample, to show the documented half-brightness edge behaviour.
-  float edge[4] = {0, 0, 0, 0};
-  echo::sampleBilinear(src, -0.5f, float(N) * 0.5f, edge);
+  // The documented border behaviour, demonstrated rather than asserted.
+  //
+  // The ring sits away from the plate's border, so sampling `src` off the edge
+  // returns zeros and proves nothing. A dedicated probe does: a 4x4 image whose
+  // first three columns are fully opaque red. Sampling at x = 1.5 lands both taps
+  // inside the image and returns full red; sampling at x = -0.5 drops the left tap
+  // (it is at x = -1, outside) and keeps the right one at weight fx = 0.5 WITHOUT
+  // renormalising, so the result is half red. A sampler that clamped the coordinate
+  // instead would return full red for both, which is the difference being shown.
+  echo::ImageF probe;
+  probe.width = 4;
+  probe.height = 4;
+  probe.pixels.assign(4 * 4 * 4, 0.0f);
+  for (int y = 0; y < 4; ++y)
+    for (int x = 0; x < 3; ++x) {
+      float* q = &probe.pixels[(size_t(y) * 4 + x) * 4];
+      q[0] = 1.0f; q[1] = 0.0f; q[2] = 0.0f; q[3] = 1.0f;
+    }
+  float inside[4] = {0, 0, 0, 0}, border[4] = {0, 0, 0, 0}, clampedWouldBe[4] = {0, 0, 0, 0};
+  echo::sampleBilinear(probe, 1.5f, 1.5f, inside);
+  echo::sampleBilinear(probe, -0.5f, 1.5f, border);
+  echo::sampleBilinear(probe, 0.0f, 1.5f, clampedWouldBe);   // what clamping would return
 
   J j;
   j.str("plugin", "EchoTrails").str("namespace", "echo::")
@@ -876,11 +947,13 @@ static J demoEchoTrails() {
                        "blendPixel"})
    .arr("ladderScale", scales).arr("ladderAngleDeg", angles).arr("ladderAmount", amounts)
    .num("rungs", n)
-   .num("offEdgeSampleR", edge[0]).num("offEdgeSampleG", edge[1]).num("offEdgeSampleB", edge[2])
-   .num("offEdgeSampleA", edge[3])
-   .str("note", "The off-edge sample is the documented behaviour, not a bug: a tap that falls "
+   .num("probeInsideR", inside[0]).num("probeBorderR", border[0])
+   .num("probeClampedR", clampedWouldBe[0])
+   .num("sourceMinX", 0).num("sampleBorderX", -0.5)
+   .str("note", "The border probe is the documented behaviour, not a bug: a tap that falls "
                 "outside the image contributes zero and the surviving weights are NOT "
-                "renormalised, so half a pixel off the left border returns half brightness. "
+                "renormalised, so sampling half a pixel off the left border returns HALF the "
+                "value (0.5) where a coordinate-clamping sampler would return the full 1.0. "
                 "The highlight rolloff above is this harness's display transform.");
   return j;
 }
@@ -1144,6 +1217,698 @@ static J demoGlitch() {
 }
 
 // ---------------------------------------------------------------------------
+// Demo 9 — AutoFlickerFix (aff::)
+// ---------------------------------------------------------------------------
+static J demoAutoFlickerFix() {
+  const int frames = 120;
+  // A flat plate whose exposure wanders: a slow drift plus per-frame jitter, which
+  // is exactly the artefact this effect exists to remove. Generated here with a
+  // xorshift so the run is reproducible.
+  std::vector<float> luma;
+  luma.reserve(size_t(frames));
+  unsigned int seed = 20261011u;
+  auto rnd = [&]() {
+    seed ^= seed << 13u; seed ^= seed >> 17u; seed ^= seed << 5u;
+    return float(seed % 100000u) / 100000.0f;
+  };
+  for (int i = 0; i < frames; ++i) {
+    const float slow = 0.55f + 0.05f * float(std::sin(2.0 * M_PI * double(i) / 40.0));
+    const float jitter = (rnd() - 0.5f) * 0.11f;
+    luma.push_back(slow + jitter);
+  }
+
+  const int window = 9;
+  // temporalTarget is a SCALAR, not a track: it median-filters the whole signal and
+  // then takes the mean, producing the one brightness the effect corrects toward.
+  const float targetScalar = aff::temporalTarget(luma, window);
+  const std::vector<float> medianed = aff::medianFilter(luma, window);
+  const aff::GainClamp clamp = aff::dbToGainClamp(6.0f);
+
+  std::vector<double> raw, tgt, med, corrected, gain;
+  for (int i = 0; i < frames; ++i) {
+    const float g = aff::computeGain(luma[size_t(i)], targetScalar, 1.0f, clamp);
+    raw.push_back(double(luma[size_t(i)]));
+    tgt.push_back(double(targetScalar));
+    med.push_back(double(medianed[size_t(i)]));
+    gain.push_back(double(g));
+    corrected.push_back(double(luma[size_t(i)] * g));
+  }
+  // Flicker metric: the standard deviation of the deviation from the smooth target.
+  // That is what "the flicker is gone" has to mean if it is to mean anything.
+  auto deviationStd = [&](const std::vector<double>& v) {
+    double m = 0.0;
+    for (size_t i = 0; i < v.size(); ++i) m += v[i] - tgt[i];
+    m /= double(v.size());
+    double s = 0.0;
+    for (size_t i = 0; i < v.size(); ++i) { const double d = v[i] - tgt[i] - m; s += d * d; }
+    return std::sqrt(s / double(v.size()));
+  };
+  const double flutterBefore = deviationStd(raw);
+  const double flutterAfter = deviationStd(corrected);
+  double gainLo = gain[0], gainHi = gain[0];
+  for (double g : gain) { gainLo = std::min(gainLo, g); gainHi = std::max(gainHi, g); }
+
+  const std::vector<double> xs = linspace(0.0, double(frames - 1), frames);
+  Canvas p1(660, 280), p2(660, 280);
+  p1.fill(0.05f, 0.06f, 0.09f);
+  p2.fill(0.05f, 0.06f, 0.09f);
+  double lo = raw[0], hi = raw[0];
+  for (double v : raw) { lo = std::min(lo, v); hi = std::max(hi, v); }
+  const double pad = (hi - lo) * 0.15 + 1e-3;
+  Plot g1(p1, 46, 22, 640, 236, 0.0, double(frames - 1), lo - pad, hi + pad);
+  g1.grid(6, 4);
+  g1.curve(xs, raw, 0.55f, 0.60f, 0.70f, 1);
+  g1.curve(xs, med, kViolet[0], kViolet[1], kViolet[2], 1);
+  g1.curve(xs, tgt, kAmber[0], kAmber[1], kAmber[2], 2);
+  p1.save("autoflickerfix_track.ppm");
+
+  Plot g2(p2, 46, 22, 640, 236, 0.0, double(frames - 1), lo - pad, hi + pad);
+  g2.grid(6, 4);
+  g2.curve(xs, tgt, 0.45f, 0.50f, 0.60f, 1);
+  g2.curve(xs, corrected, kGreen[0], kGreen[1], kGreen[2], 2);
+  p2.save("autoflickerfix_corrected.ppm");
+
+  const aff::RegionBounds region = aff::centerRegion(1920, 1080, 0.5f);
+
+  J j;
+  j.str("plugin", "AutoFlickerFix").str("namespace", "aff::")
+   .str("input", "A 120-frame exposure track: 0.55 mean luma with a slow sine drift and "
+                 "+-5.5% per-frame jitter, generated reproducibly by the harness.")
+   .strs("panels", {"autoflickerfix_track.ppm", "autoflickerfix_corrected.ppm"})
+   .strs("panelLabels", {"track (grey), medianFilter (violet), the scalar temporalTarget (amber)",
+                         "corrected track against the target"})
+   .strs("recovered", {"temporalTarget", "medianFilter", "computeGain", "dbToGainClamp",
+                       "centerRegion", "meanOf", "medianOf", "trimmedMean"})
+   .num("frames", frames).num("window", window)
+   .num("targetScalar", double(targetScalar))
+   .num("flutterBefore", flutterBefore).num("flutterAfter", flutterAfter)
+   .num("flutterReduction", 1.0 - flutterAfter / flutterBefore)
+   .num("gainMin", gainLo).num("gainMax", gainHi)
+   .num("clampLo", clamp.lo).num("clampHi", clamp.hi)
+   .num("regionMinX", region.minX).num("regionMinY", region.minY)
+   .num("regionMaxX", region.maxX).num("regionMaxY", region.maxY)
+   .str("note", "This is the effect's own claim measured rather than asserted: the gain is "
+                "computed by the recovered function and applied by the harness, and the "
+                "flutter number is the residual deviation from temporalTarget before and "
+                "after. A 6 dB clamp bounds how hard it can correct.");
+  return j;
+}
+
+// ---------------------------------------------------------------------------
+// Demo 10 — BeatSnap (beatsnap::)
+// ---------------------------------------------------------------------------
+static J demoBeatSnap() {
+  const int rate = 44100;
+  const double seconds = 2.0;
+  const double clicks[] = {0.25, 0.75, 1.00, 1.50, 1.75};
+  const int nClicks = int(sizeof clicks / sizeof clicks[0]);
+
+  // A stereo click track: short decaying bursts over a low noise floor. The
+  // interleaved buffer exists so the recovered downmixToMono has real work to do.
+  const int n = int(rate * seconds);
+  std::vector<float> interleaved(size_t(n) * 2, 0.0f);
+  unsigned int nseed = 99u;
+  auto noise = [&]() {
+    nseed ^= nseed << 13u; nseed ^= nseed >> 17u; nseed ^= nseed << 5u;
+    return float(nseed % 20000u) / 20000.0f - 0.5f;
+  };
+  for (int i = 0; i < n; ++i) {
+    const double t = double(i) / rate;
+    double v = 0.006 * noise();
+    for (int k = 0; k < nClicks; ++k) {
+      const double dt = t - clicks[k];
+      if (dt >= 0.0 && dt < 0.05) v += 0.9 * std::exp(-dt / 0.008) * std::sin(2.0 * M_PI * 1800.0 * dt);
+    }
+    interleaved[size_t(i) * 2 + 0] = float(v);
+    interleaved[size_t(i) * 2 + 1] = float(v * 0.9);
+  }
+  const std::vector<float> mono = beatsnap::downmixToMono(interleaved.data(), size_t(n), 2);
+
+  // Spectral flux, built from the recovered window and FFT. Flux itself is this
+  // harness's analysis choice; the transform under it is recovered code.
+  const int fftSize = 1024, hop = 512;
+  const std::vector<float> win = beatsnap::hannWindow(fftSize);
+  const int nFrames = (int(mono.size()) - fftSize) / hop + 1;
+  std::vector<float> flux(size_t(nFrames), 0.0f);
+  std::vector<float> prevMag(size_t(fftSize / 2), 0.0f);
+  for (int f = 0; f < nFrames; ++f) {
+    std::vector<float> re(static_cast<size_t>(fftSize));
+    std::vector<float> im(static_cast<size_t>(fftSize), 0.0f);
+    for (int i = 0; i < fftSize; ++i) re[size_t(i)] = mono[size_t(f * hop + i)] * win[size_t(i)];
+    beatsnap::fftRadix2(re, im);
+    float sum = 0.0f;
+    for (int b = 0; b < fftSize / 2; ++b) {
+      const float mag = std::sqrt(re[size_t(b)] * re[size_t(b)] + im[size_t(b)] * im[size_t(b)]);
+      const float d = mag - prevMag[size_t(b)];
+      if (d > 0.0f) sum += d;
+      prevMag[size_t(b)] = mag;
+    }
+    flux[size_t(f)] = sum;
+  }
+
+  const int window = 16;
+  const float scale = 50.0f;
+  const std::vector<float> threshold = beatsnap::adaptiveThreshold(flux, window, scale);
+
+  // Peak picking is this harness's scaffold (local max + refractory window), not
+  // recovered code. It is scored against the click times, which is the point.
+  std::vector<int> onsetFrames;
+  int lastOnset = -1000;
+  for (int f = 1; f + 1 < nFrames; ++f) {
+    if (flux[size_t(f)] <= threshold[size_t(f)]) continue;
+    if (flux[size_t(f)] < flux[size_t(f - 1)] || flux[size_t(f)] < flux[size_t(f + 1)]) continue;
+    if (f - lastOnset < 3) continue;
+    onsetFrames.push_back(f);
+    lastOnset = f;
+  }
+  auto frameToMs = [&](int f) { return 1000.0 * double(f * hop) / rate; };
+
+  int matched = 0;
+  double errSum = 0.0;
+  std::vector<double> trueMs, foundMs;
+  for (int k = 0; k < nClicks; ++k) trueMs.push_back(clicks[k] * 1000.0);
+  for (int f : onsetFrames) foundMs.push_back(frameToMs(f));
+  for (double tTrue : trueMs) {
+    double best = 1e9;
+    for (double tFound : foundMs) best = std::min(best, std::fabs(tFound - tTrue));
+    if (best <= 1000.0 * 2.0 * hop / rate) { matched += 1; errSum += best; }
+  }
+
+  Canvas c(700, 300);
+  c.fill(0.05f, 0.06f, 0.09f);
+  const std::vector<double> fx = linspace(0.0, double(nFrames - 1), nFrames);
+  double fmax = 0.0;
+  for (float v : flux) fmax = std::max(fmax, double(v));
+  for (float v : threshold) fmax = std::max(fmax, double(v));
+  Plot pl(c, 46, 22, 680, 250, 0.0, double(nFrames - 1), 0.0, fmax * 1.08);
+  pl.grid(8, 4);
+  pl.curve(fx, std::vector<double>(flux.begin(), flux.end()), 0.62f, 0.66f, 0.74f, 1);
+  pl.curve(fx, std::vector<double>(threshold.begin(), threshold.end()), kAmber[0], kAmber[1],
+           kAmber[2], 2);
+  for (int f : onsetFrames) {
+    const int px = pl.X(double(f));
+    c.vline(px, 30, 250, kGreen[0], kGreen[1], kGreen[2]);
+    pl.dot(double(f), double(flux[size_t(f)]), kGreen[0], kGreen[1], kGreen[2], 3);
+  }
+  for (double tTrue : trueMs) {
+    const int px = pl.X(tTrue / (1000.0 * double(hop) / rate));
+    for (int y = 30; y < 250; y += 8) c.set(px, y, kMagenta[0], kMagenta[1], kMagenta[2]);
+  }
+  c.save("beatsnap_onsets.ppm");
+
+  J j;
+  j.str("plugin", "BeatSnap").str("namespace", "beatsnap::")
+   .str("input", "A 2.0 s stereo click track at 44.1 kHz: five bursts (0.25, 0.75, 1.00, 1.50, "
+                 "1.75 s) over a noise floor, downmixed by the recovered downmixToMono.")
+   .strs("panels", {"beatsnap_onsets.ppm"})
+   .strs("panelLabels", {"spectral flux (grey), adaptiveThreshold (amber), detected onsets "
+                         "(green), true clicks (magenta ticks)"})
+   .strs("recovered", {"downmixToMono", "hannWindow", "fftRadix2", "adaptiveThreshold",
+                       "medianOfWindow", "isPowerOfTwo"})
+   .num("sampleRate", rate).num("seconds", seconds)
+   .num("fftSize", fftSize).num("hop", hop).num("frames", nFrames)
+   .num("window", window).num("scale", scale)
+   .num("trueClicks", nClicks).num("detected", int(onsetFrames.size()))
+   .num("matched", matched)
+   .num("meanErrorMs", matched > 0 ? errSum / matched : 0.0)
+   .num("hopMs", 1000.0 * double(hop) / rate)
+   .arr("trueClickMs", trueMs).arr("detectedMs", foundMs, 6)
+   .str("note", "Spectral flux and the peak picker are this harness's scaffolding, which is "
+                "stated because the recovered code stops at adaptiveThreshold. What the panel "
+                "measures is whether that threshold actually separates the five clicks — and "
+                "it is scored against times the input was built with, not eyeballed.");
+  return j;
+}
+
+// ---------------------------------------------------------------------------
+// Demo 11 — BeatGridRuler (beatgrid::)
+// ---------------------------------------------------------------------------
+static J demoBeatGrid() {
+  const double bpm = 128.0;
+  const double start = 0.0;
+  const double beatSeconds = 60.0 / bpm;
+
+  const beatgrid::Subdivision subs[4] = {beatgrid::Subdivision::Beat, beatgrid::Subdivision::Quarter,
+                                         beatgrid::Subdivision::Eighth,
+                                         beatgrid::Subdivision::FourBeats};
+  const char* subNames[4] = {"Beat", "Quarter", "Eighth", "FourBeats"};
+
+  std::vector<double> factors, periods;
+  for (int k = 0; k < 4; ++k) {
+    factors.push_back(beatgrid::subdivisionFactor(subs[k]));
+    periods.push_back(beatSeconds * factors.back());
+  }
+
+  const double span = 4.0;   // seconds
+  const std::vector<double> ts = linspace(0.0, span, 800);
+  std::vector<std::vector<double>> phases(4);
+  for (int k = 0; k < 4; ++k)
+    for (double t : ts) phases[size_t(k)].push_back(double(beatgrid::phaseSawtooth(bpm, start, subs[size_t(k)], t)));
+
+  // A tick strip: where each subdivision's phase wraps, which is where a beat
+  // marker would land.
+  std::vector<double> wrapTimes[4];
+  for (int k = 0; k < 4; ++k) {
+    const double period = periods[size_t(k)];
+    for (double t = 0.0; t <= span + 1e-9; t += period) wrapTimes[k].push_back(t);
+  }
+
+  Canvas c(700, 300);
+  c.fill(0.05f, 0.06f, 0.09f);
+  Plot pl(c, 46, 22, 680, 250, 0.0, span, 0.0, 1.0);
+  pl.grid(8, 4);
+  for (int t = 0; t <= int(span); ++t) {
+    const int px = pl.X(double(t));
+    for (int y = 30; y < 250; y += 10) c.set(px, y, 0.34f, 0.38f, 0.46f);
+  }
+  pl.curve(ts, phases[0], kInk[0], kInk[1], kInk[2], 2);
+  pl.curve(ts, phases[1], kCyan[0], kCyan[1], kCyan[2], 2);
+  pl.curve(ts, phases[2], kAmber[0], kAmber[1], kAmber[2], 1);
+  c.save("beatgrid_phase.ppm");
+
+  Canvas ticks(700, 150);
+  ticks.fill(0.05f, 0.06f, 0.09f);
+  const float rowCols[4][3] = {{kInk[0], kInk[1], kInk[2]}, {kCyan[0], kCyan[1], kCyan[2]},
+                               {kAmber[0], kAmber[1], kAmber[2]},
+                               {kMagenta[0], kMagenta[1], kMagenta[2]}};
+  for (int k = 0; k < 4; ++k) {
+    const int y = 26 + k * 30;
+    ticks.hline(40, 680, y, 0.18f, 0.20f, 0.26f);
+    for (double t : wrapTimes[k]) {
+      const int px = 40 + int(std::lround(t / span * 640.0));
+      ticks.vline(px, y - 9, y + 9, rowCols[k][0], rowCols[k][1], rowCols[k][2]);
+    }
+  }
+  ticks.save("beatgrid_ticks.ppm");
+
+  // phaseInLayerTime returns SECONDS, not a fraction — the trap this fleet's own
+  // notes record, so it is printed next to a value a fraction would have given.
+  const double pit = beatgrid::phaseInLayerTime(bpm, 0.0, 0.0, 1.0);
+
+  J j;
+  j.str("plugin", "BeatGridRuler").str("namespace", "beatgrid::")
+   .str("input", "128 BPM from 0 s, evaluated over 4 s. Beat = 60/128 = 0.46875 s.")
+   .strs("panels", {"beatgrid_phase.ppm", "beatgrid_ticks.ppm"})
+   .strs("panelLabels", {"phaseSawtooth for Beat, Quarter and Eighth (1 s grid lines)",
+                         "wrap ticks per subdivision: Beat, Quarter, Eighth, FourBeats"})
+   .strs("recovered", {"subdivisionFactor", "phaseSawtooth", "phaseInLayerTime"})
+   .num("bpm", bpm).num("beatSeconds", beatSeconds)
+   .strs("subdivisionNames", std::vector<std::string>(subNames, subNames + 4))
+   .arr("subdivisionFactors", factors).arr("periodSeconds", periods)
+   .num("phaseInLayerTimeSeconds", pit)
+   .num("phaseInLayerTimeAsFraction", pit / beatSeconds)
+   .num("totalTicksBeat", double(wrapTimes[0].size()))
+   .arr("beatTickSeconds", wrapTimes[0], 5)
+   .str("note", "phaseSawtooth returns a FRACTION in [0,1); phaseInLayerTime returns SECONDS "
+                "over [0, 60/bpm). Both are printed so the difference is visible rather than "
+                "remembered.");
+  return j;
+}
+
+// ---------------------------------------------------------------------------
+// Demo 12 — MaskFlow (maskflow::)
+// ---------------------------------------------------------------------------
+static J demoMaskFlow() {
+  const maskflow::DownsampleDims d1080 = maskflow::computeDownsampleDims(1920, 1080, 512);
+  const maskflow::DownsampleDims d4k = maskflow::computeDownsampleDims(3840, 2160, 512);
+  const maskflow::DownsampleDims dSquare = maskflow::computeDownsampleDims(1000, 1000, 256);
+
+  std::vector<double> tolerances, scales;
+  for (int i = 0; i <= 20; ++i) {
+    const float tol = 0.01f + 0.99f * float(i) / 20.0f;
+    tolerances.push_back(double(tol));
+    scales.push_back(double(maskflow::edgeCostScaleFromTolerance(tol)));
+  }
+
+  // A soft reveal matte built with the recovered smoothstep over a radial field:
+  // a checkerboard shown through a soft-edged disc. The growth algorithm itself is
+  // NOT recovered (only these three helpers are), and the panel says so.
+  const int S = 320;
+  Canvas reveal(S, S);
+  for (int y = 0; y < S; ++y) {
+    for (int x = 0; x < S; ++x) {
+      const float dx = (float(x) - S * 0.5f) / (S * 0.5f);
+      const float dy = (float(y) - S * 0.5f) / (S * 0.5f);
+      const float d = std::sqrt(dx * dx + dy * dy);
+      const float m = 1.0f - maskflow::smoothstep(0.42f, 0.92f, d);
+      const bool check = ((x / 20) + (y / 20)) % 2 == 0;
+      const float base = check ? 0.16f : 0.30f;
+      reveal.set(x, y, base + (0.72f - base) * m, base * 0.9f + (0.88f - base * 0.9f) * m,
+                 base * 1.2f + (0.42f - base * 1.2f) * m);
+    }
+  }
+  reveal.save("maskflow_reveal.ppm");
+
+  Canvas c(600, 280);
+  c.fill(0.05f, 0.06f, 0.09f);
+  Plot pl(c, 46, 22, 580, 236, 0.0, 1.1, 0.0, 1.0);
+  pl.grid(5, 5);
+  const std::vector<double> xs = linspace(0.0, 1.1, 400);
+  const float pairs[3][2] = {{0.2f, 0.4f}, {0.4f, 0.8f}, {0.0f, 1.1f}};
+  const float pairCols[3][3] = {{kAmber[0], kAmber[1], kAmber[2]}, {kCyan[0], kCyan[1], kCyan[2]},
+                                {kMagenta[0], kMagenta[1], kMagenta[2]}};
+  for (int k = 0; k < 3; ++k) {
+    std::vector<double> ys;
+    for (double x : xs) ys.push_back(double(maskflow::smoothstep(pairs[k][0], pairs[k][1], float(x))));
+    pl.curve(xs, ys, pairCols[k][0], pairCols[k][1], pairCols[k][2], 2);
+  }
+  c.save("maskflow_smoothstep.ppm");
+
+  Canvas c2(600, 280);
+  c2.fill(0.05f, 0.06f, 0.09f);
+  double smax = 0.0;
+  for (double v : scales) smax = std::max(smax, v);
+  Plot p2(c2, 46, 22, 580, 236, 0.0, 1.0, 0.0, smax * 1.08);
+  p2.grid(5, 4);
+  p2.curve(tolerances, scales, kGreen[0], kGreen[1], kGreen[2], 2);
+  c2.save("maskflow_edgecost.ppm");
+
+  J j;
+  j.str("plugin", "MaskFlow").str("namespace", "maskflow::")
+   .str("input", "A radial distance field shown through the recovered smoothstep (soft-edged "
+                 "disc), plus curve sweeps of the three recovered helpers.")
+   .strs("panels", {"maskflow_reveal.ppm", "maskflow_smoothstep.ppm", "maskflow_edgecost.ppm"})
+   .strs("panelLabels", {"soft reveal via smoothstep(0.42, 0.92, r)",
+                         "smoothstep for three edge pairs",
+                         "edgeCostScaleFromTolerance over 0.01..1.0"})
+   .strs("recovered", {"smoothstep", "edgeCostScaleFromTolerance", "computeDownsampleDims"})
+   .num("hdWidth", d1080.width).num("hdHeight", d1080.height).num("hdScale", d1080.scale)
+   .num("uhdWidth", d4k.width).num("uhdHeight", d4k.height).num("uhdScale", d4k.scale)
+   .num("squareWidth", dSquare.width).num("squareScale", dSquare.scale)
+   .num("edgeCostAtTol1", scales.back())
+   .str("note", "Only the three helpers are recovered code: the edge-aware growth solver that "
+                "consumes them is not in the bundle, so nothing on this page claims to be a "
+                "grown mask. What is shown is the exact transfer function the grower is fed, "
+                "and the soft reveal it produces through smoothstep.");
+  return j;
+}
+
+// ---------------------------------------------------------------------------
+// Demo 13 — PathScribe (pathscribe::)
+// ---------------------------------------------------------------------------
+static J demoPathScribe() {
+  const int rate = 44100;
+  const double seconds = 1.0;
+  std::vector<float> mono = testSignal(rate, seconds);
+
+  pathscribe::AnalysisConfig cfg;
+  cfg.sampleRate = double(rate);
+  cfg.fftSize = 1024;
+  cfg.hopRateHz = 120.0;
+  pathscribe::Spectrogram sg = pathscribe::analyse(mono.data(), mono.size(), cfg);
+
+  const int bars = 28;
+  const double minHz = 40.0, maxHz = 16000.0;
+  std::vector<double> edges;
+  for (int i = 0; i <= bars; ++i) edges.push_back(pathscribe::binEdgeHz(i, bars, minHz, maxHz));
+
+  // Bar heights from the recovered spectrum at one frame, using the recovered
+  // geometric band edges. Sum of magnitudes inside each band.
+  const int atFrame = std::min(sg.frameCount - 1, int(0.30 * cfg.hopRateHz));
+  std::vector<double> heights;
+  double hmax = 0.0;
+  for (int b = 0; b < bars; ++b) {
+    const int lo = std::max(0, int(edges[size_t(b)] / sg.hzPerBin));
+    const int hi = std::max(lo + 1, int(edges[size_t(b) + 1] / sg.hzPerBin));
+    double sum = 0.0;
+    for (int k = lo; k < hi && k < sg.binCount; ++k) sum += double(sg.frames[size_t(atFrame)][size_t(k)]);
+    heights.push_back(sum);
+    hmax = std::max(hmax, sum);
+  }
+
+  const int W = 700, H = 300;
+  Canvas c(W, H);
+  c.fill(0.05f, 0.06f, 0.09f);
+  const int baseY = H / 2 + 40;
+  const int barW = (W - 80) / bars;
+  for (int b = 0; b < bars; ++b) {
+    const double hRatio = hmax > 0.0 ? heights[size_t(b)] / hmax : 0.0;
+    const int hgt = int(std::lround(hRatio * 150.0));
+    const int x0 = 40 + b * barW + 1;
+    const float t = float(b) / float(bars - 1);
+    const float r = 0.20f + 0.78f * t, gg = 0.72f - 0.34f * t, bb = 0.92f - 0.60f * t;
+    for (int y = baseY - hgt; y < baseY; ++y)
+      for (int x = x0; x < x0 + barW - 2; ++x) c.set(x, y, r, gg, bb);
+    // Mirrored below the axis, at 35%, the way an EQ reads.
+    for (int y = baseY + 1; y < baseY + int(hgt * 0.35); ++y)
+      for (int x = x0; x < x0 + barW - 2; ++x) c.set(x, y, r * 0.5f, gg * 0.5f, bb * 0.5f);
+  }
+  c.hline(40, W - 40, baseY, 0.45f, 0.5f, 0.6f);
+  c.save("pathscribe_bars.ppm");
+
+  // spanCoverage: the recovered frame-overlap helper, as a curve.
+  Canvas c2(600, 280);
+  c2.fill(0.05f, 0.06f, 0.09f);
+  std::vector<double> spans, cov;
+  for (int i = 0; i <= 80; ++i) {
+    const float span = 4.0f * float(i) / 80.0f;
+    spans.push_back(double(span));
+    cov.push_back(double(pathscribe::spanCoverage(10.0f, 10.0f, 10.0f + span)));
+  }
+  Plot pl(c2, 46, 22, 580, 236, 0.0, 4.0, 0.0, 1.05);
+  pl.grid(8, 4);
+  pl.curve(spans, cov, kCyan[0], kCyan[1], kCyan[2], 2);
+  c2.save("pathscribe_span.ppm");
+
+  J j;
+  j.str("plugin", "PathScribe").str("namespace", "pathscribe::")
+   .str("input", "The same 1.0 s synthetic mix as SpectraKeys, analysed at fftSize 1024 and 120 "
+                 "hops/s, split into 28 bars with the recovered geometric band edges.")
+   .strs("panels", {"pathscribe_bars.ppm", "pathscribe_span.ppm"})
+   .strs("panelLabels", {"28 bars from binEdgeHz geometric edges at t = 0.30 s",
+                         "spanCoverage(10, 10, 10 + span) as the span grows"})
+   .strs("recovered", {"binEdgeHz", "spanCoverage", "smoothStep", "analyse", "fftRadix2",
+                       "hannWindow", "linearToDb"})
+   .num("barCount", bars).num("minHz", minHz).num("maxHz", maxHz)
+   .num("frameUsed", atFrame).num("frameCount", sg.frameCount)
+   .num("firstBarHz", edges.front()).num("lastBarEdgeHz", edges.back())
+   .num("barHzStepAtBottom", edges[1] - edges[0])
+   .num("barHzStepAtTop", edges[bars] - edges[bars - 1])
+   .num("coverageFullSpan", cov.back())
+   .str("note", "binEdgeHz is geometric, so the top bar is far wider in Hz than the bottom one: "
+                "the two step values printed show that ratio. Bar colour and the mirrored "
+                "reflection are this harness's presentation; the edges, the spectrum and the "
+                "coverage curve are recovered code.");
+  return j;
+}
+
+// ---------------------------------------------------------------------------
+// Demo 14 — ShakeCapture (shake::)
+// ---------------------------------------------------------------------------
+static J demoShakeCapture() {
+  // The recovered median() carries a real defect: its second nth_element call is on
+  // a ONE-ELEMENT range, which libc++ elides, so `values[mid - 1]` is never placed
+  // and the result depends on the input ORDER rather than only on the multiset.
+  // The panel shows that directly: the same 1000 values, shuffled 200 times.
+  const int N = 1000;
+  const double trueMedian = 499.5;
+  std::vector<float> base(static_cast<size_t>(N));
+  for (int i = 0; i < N; ++i) base[size_t(i)] = float(i);
+
+  unsigned int seed = 424242u;
+  auto next = [&]() {
+    seed ^= seed << 13u; seed ^= seed >> 17u; seed ^= seed << 5u;
+    return seed;
+  };
+
+  const int trials = 200;
+  std::vector<double> results;
+  int differing = 0;
+  double lo = 1e9, hi = -1e9;
+  for (int t = 0; t < trials; ++t) {
+    std::vector<float> shuffled = base;
+    for (int i = N - 1; i > 0; --i) {
+      const int j = int(next() % unsigned(i + 1));
+      std::swap(shuffled[size_t(i)], shuffled[size_t(j)]);
+    }
+    const double m = double(shake::median(shuffled));
+    results.push_back(m);
+    lo = std::min(lo, m);
+    hi = std::max(hi, m);
+    if (std::fabs(m - trueMedian) > 1e-6) differing += 1;
+  }
+  const double sortedResult = double(shake::median(base));   // already ascending
+
+  Canvas c(680, 280);
+  c.fill(0.05f, 0.06f, 0.09f);
+  const double yLo = std::min(lo, trueMedian) - 8.0, yHi = std::max(hi, trueMedian) + 8.0;
+  Plot pl(c, 46, 22, 660, 236, 0.0, double(trials), yLo, yHi);
+  pl.grid(8, 4);
+  pl.dashedH(trueMedian, kGreen[0], kGreen[1], kGreen[2]);
+  for (int t = 0; t < trials; ++t) pl.dot(double(t) + 0.5, results[size_t(t)], kMagenta[0],
+                                          kMagenta[1], kMagenta[2], 2);
+  c.save("shake_median.ppm");
+
+  J j;
+  j.str("plugin", "ShakeCapture").str("namespace", "shake::")
+   .str("input", "The multiset {0, 1, ... 999} shuffled 200 times by a reproducible xorshift, "
+                 "each shuffle run through the recovered shake::median.")
+   .strs("panels", {"shake_median.ppm"})
+   .strs("panelLabels", {"median returned per shuffle; green line = the true median 499.5"})
+   .strs("recovered", {"median", "clampf"})
+   .num("trials", trials).num("trueMedian", trueMedian)
+   .num("returnedMin", lo).num("returnedMax", hi)
+   .num("trialsDiffering", differing)
+   .num("sortedInputResult", sortedResult)
+   .str("note", "This is a recorded DEFECT, not a feature: the median of a multiset must not "
+                "depend on input order, and here it does. The cause is a one-element "
+                "nth_element range that libc++ drops. Shown because a demo that only displays "
+                "clean output would be hiding the most useful thing this bundle says.");
+  return j;
+}
+
+// ---------------------------------------------------------------------------
+// Demo 15 — TypeRiser (typeriser::)
+// ---------------------------------------------------------------------------
+static J demoTypeRiser() {
+  const std::string srt =
+      "1\n"
+      "00:00:00,400 --> 00:00:01,900\n"
+      "every cut lands on the beat\n"
+      "\n"
+      "2\n"
+      "00:00:02,100 --> 00:00:03,000\n"
+      "and the caption keeps up\n"
+      "\n"
+      "3\n"
+      "00:00:03,150 --> 00:00:04,400\n"
+      "karaoke timing from an SRT\n";
+
+  const std::vector<typeriser::Cue> cues = typeriser::parseSrt(srt);
+  std::vector<double> cueStarts, cueEnds, wordCounts;
+  std::vector<std::string> texts;
+  std::vector<int> wordsPerCue;
+  for (const typeriser::Cue& cue : cues) {
+    cueStarts.push_back(double(cue.start));
+    cueEnds.push_back(double(cue.end));
+    texts.push_back(cue.text);
+    wordsPerCue.push_back(int(typeriser::splitWords(cue.text).size()));
+    wordCounts.push_back(double(wordsPerCue.back()));
+  }
+
+  // Two timelines: which cue is active, and which word of that cue is active.
+  const int steps = 400;
+  const std::vector<double> ts = linspace(0.0, 4.6, steps);
+  std::vector<double> cueIdx, wordIdx, wordProg;
+  for (double t : ts) {
+    const long long ms = (long long)std::llround(t * 1000.0);
+    const int ci = typeriser::cueIndexAt(cues, ms);
+    cueIdx.push_back(double(ci));
+    if (ci >= 0 && ci < int(cues.size())) {
+      const int nw = wordsPerCue[size_t(ci)];
+      const int wi = typeriser::karaokeWordAt(cues[size_t(ci)].start, cues[size_t(ci)].end, ms, nw);
+      wordIdx.push_back(double(wi));
+      wordProg.push_back(wi >= 0
+                             ? double(typeriser::wordProgress(cues[size_t(ci)].start,
+                                                              cues[size_t(ci)].end, wi, 0.12f, 0.24f))
+                             : std::nan(""));
+    } else {
+      wordIdx.push_back(-1.0);
+      wordProg.push_back(std::nan(""));
+    }
+  }
+
+  Canvas c(700, 300);
+  c.fill(0.05f, 0.06f, 0.09f);
+  Plot pl(c, 60, 26, 680, 250, 0.0, 4.6, -1.5, 3.5);
+  pl.grid(10, 5);
+  pl.curve(ts, cueIdx, kCyan[0], kCyan[1], kCyan[2], 2);
+  pl.curve(ts, wordIdx, kAmber[0], kAmber[1], kAmber[2], 2);
+  c.save("typeriser_timeline.ppm");
+
+  // The cue blocks themselves, with a tick per word boundary: the geometry the
+  // effect is animating over.
+  Canvas blocks(700, 200);
+  blocks.fill(0.05f, 0.06f, 0.09f);
+  for (size_t ci = 0; ci < cues.size(); ++ci) {
+    const int y = 30 + int(ci) * 46;
+    const int x0 = 40 + int(std::lround(double(cues[ci].start) / 4600.0 * 620.0));
+    const int x1 = 40 + int(std::lround(double(cues[ci].end) / 4600.0 * 620.0));
+    const float rowCols[3][3] = {{kCyan[0], kCyan[1], kCyan[2]}, {kAmber[0], kAmber[1], kAmber[2]},
+                                 {kMagenta[0], kMagenta[1], kMagenta[2]}};
+    const float* col = rowCols[ci % 3];
+    for (int x = x0; x < x1; ++x)
+      for (int dy = -10; dy <= 10; ++dy) blocks.set(x, y + dy, col[0] * 0.55f, col[1] * 0.55f,
+                                                    col[2] * 0.55f);
+    const int nw = wordsPerCue[ci];
+    for (int w = 0; w <= nw; ++w) {
+      const int px = x0 + int(std::lround(double(x1 - x0) * double(w) / double(std::max(1, nw))));
+      blocks.vline(px, y - 16, y + 16, col[0], col[1], col[2]);
+    }
+  }
+  blocks.save("typeriser_cues.ppm");
+
+  Canvas c2(620, 280);
+  c2.fill(0.05f, 0.06f, 0.09f);
+  Plot p2(c2, 46, 22, 600, 236, 0.0, 1.0, 0.0, 1.0);
+  p2.grid(5, 5);
+  const std::vector<double> xs = linspace(0.0, 1.0, 300);
+  const typeriser::Easing kinds[4] = {typeriser::Easing::EaseOutQuad, typeriser::Easing::EaseOutCubic,
+                                      typeriser::Easing::EaseOutBack,
+                                      typeriser::Easing::EaseInOutCubic};
+  const float ec[4][3] = {{kCyan[0], kCyan[1], kCyan[2]}, {kAmber[0], kAmber[1], kAmber[2]},
+                          {kMagenta[0], kMagenta[1], kMagenta[2]},
+                          {kGreen[0], kGreen[1], kGreen[2]}};
+  for (int k = 0; k < 4; ++k) {
+    std::vector<double> ys;
+    for (double x : xs) ys.push_back(double(typeriser::ease(kinds[k], float(x))));
+    p2.curve(xs, ys, ec[k][0], ec[k][1], ec[k][2], 2);
+  }
+  c2.save("typeriser_ease.ppm");
+
+  J j;
+  j.str("plugin", "TypeRiser").str("namespace", "typeriser::")
+   .str("input", "A three-cue SRT document authored in the harness (word timings derive from "
+                 "equal division of each cue), parsed by the recovered parseSrt.")
+   .strs("panels", {"typeriser_timeline.ppm", "typeriser_cues.ppm", "typeriser_ease.ppm"})
+   .strs("panelLabels", {"cueIndexAt (cyan) and karaokeWordAt (amber) over 4.6 s",
+                         "cue blocks with one tick per word boundary",
+                         "EaseOutQuad, EaseOutCubic, EaseOutBack, EaseInOutCubic"})
+   .strs("recovered", {"parseSrt", "parseTimestamp", "parseTimingLine", "splitWords", "trim",
+                       "cueIndexAt", "karaokeWordAt", "wordProgress", "ease"})
+   .num("cueCount", int(cues.size()))
+   .arr("cueStartMs", cueStarts).arr("cueEndMs", cueEnds)
+   .strs("cueText", texts).arr("cueWordCounts", wordCounts)
+   .arr("cueIndexAtSamples", {cueIdx[0], cueIdx[60], cueIdx[180], cueIdx[300], cueIdx[399]})
+   .str("note", "SRT parsing, cue lookup, karaoke word selection and the easing curves are all "
+                "recovered code. Word timing is equal division because the recovered "
+                "wordProgress spaces words evenly; the SRT has no per-word timing to read.");
+  return j;
+}
+
+// ---------------------------------------------------------------------------
+// Demo 16 — MotionCurveX (motioncurve::) — SPEC ONLY
+//
+// This is the one effect with no recovered namespace: the symbol table names the
+// entry points and the parameter strings give the control surface, but no source
+// was transcribed, so there is nothing to execute. The card states that rather
+// than illustrating a function that does not exist in this repository.
+// ---------------------------------------------------------------------------
+static J demoMotionCurveX() {
+  J j;
+  j.str("plugin", "MotionCurveX").str("namespace", "motioncurve::")
+   .boolean("hasSource", false)
+   .str("input", "None. No source was recovered for this namespace, so there is no output to "
+                 "compute and none is shown.")
+   .strs("panels", {})
+   .strs("panelLabels", {})
+   .strs("recovered", {})
+   .strs("knownSymbols", {"clampf", "quadraticPeakOffset", "accumulate", "medianOfWindow",
+                          "smoothMovingAverage", "buildPyramid", "cropCenter",
+                          "temporalMedianFilter", "sadAt", "downsample2x", "estimateTranslation"})
+   .str("pipeline",
+        "The symbol names alone describe the method: downsample2x and buildPyramid make an "
+        "image pyramid, cropCenter and sadAt score a sum of absolute differences at an offset, "
+        "estimateTranslation searches a translation, quadraticPeakOffset refines it to "
+        "sub-pixel, and accumulate, smoothMovingAverage, temporalMedianFilter and "
+        "medianOfWindow turn the per-frame estimates into curves.")
+   .str("note", "Recorded as the fleet's open gap rather than filled with a confident guess. "
+                "The other fifteen namespaces are transcribed and executable; this one is a "
+                "signature list and an architecture paragraph.");
+  return j;
+}
+
+// ---------------------------------------------------------------------------
 int main(int argc, char** argv) {
   if (argc > 1) gOutDir = argv[1];
 
@@ -1159,6 +1924,14 @@ int main(int argc, char** argv) {
   demos.raw("colorpulse", demoColorPulse());
   demos.raw("speedramp", demoSpeedRamp());
   demos.raw("glitch", demoGlitch());
+  demos.raw("autoflickerfix", demoAutoFlickerFix());
+  demos.raw("beatsnap", demoBeatSnap());
+  demos.raw("beatgrid", demoBeatGrid());
+  demos.raw("maskflow", demoMaskFlow());
+  demos.raw("pathscribe", demoPathScribe());
+  demos.raw("shake", demoShakeCapture());
+  demos.raw("typeriser", demoTypeRiser());
+  demos.raw("motioncurvex", demoMotionCurveX());
 
   J root;
   root.str("harness", "tools/demo/harness.cpp")
