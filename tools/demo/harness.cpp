@@ -124,6 +124,27 @@ struct J {
 };
 
 // ---------------------------------------------------------------------------
+// Shared palette so every panel reads the same way.
+//
+// These are the Williams Media AE Fleet dark-theme tokens from brand/tokens.css
+// (Trident Studio brand system). The hex stays beside each value so a reader, and
+// test/brand.test.mjs, can hold this block to the token file. Chart series follow
+// the brand order: accent first, accent-2 second, then the shared signals. This is
+// display scaffolding only: no recovered function reads any of it.
+// ---------------------------------------------------------------------------
+constexpr float c8(int v) { return float(v) / 255.0f; }
+const float kBg[3] = {c8(0x16), c8(0x15), c8(0x23)};        // --bg        #161523
+const float kLine[3] = {c8(0x3B), c8(0x22), c8(0x2C)};      // --line      #3B222C
+const float kMuted[3] = {c8(0x9A), c8(0xA7), c8(0xBD)};     // --muted     #9AA7BD
+const float kInk[3] = {c8(0xFF), c8(0xFF), c8(0xFF)};       // --text      #FFFFFF
+const float kAccent[3] = {c8(0xFF), c8(0x6B), c8(0x5E)};    // --accent    #FF6B5E
+const float kAccent2[3] = {c8(0xE0), c8(0x4E), c8(0x8B)};   // --accent-2  #E04E8B
+const float kAccentDeep[3] = {c8(0xAD), c8(0x49), c8(0x40)};// --accent-700 #AD4940
+const float kAccentPale[3] = {c8(0xFF), c8(0xF3), c8(0xF2)};// --accent-50 #FFF3F2
+const float kInfo[3] = {c8(0x3B), c8(0xA8), c8(0xF0)};      // --info      #3BA8F0
+const float kSuccess[3] = {c8(0x2F), c8(0xD3), c8(0x9A)};   // --success   #2FD39A
+
+// ---------------------------------------------------------------------------
 // Canvas: 8-bit RGB, top-down, written as binary PPM.
 // ---------------------------------------------------------------------------
 struct Canvas {
@@ -220,16 +241,16 @@ struct Plot {
     return y1 - int(std::lround((v - ymin) / (ymax - ymin) * double(y1 - y0)));
   }
 
-  void grid(int nx, int ny, float g = 0.22f) const {
+  void grid(int nx, int ny) const {
     for (int i = 0; i <= nx; ++i) {
       const double v = xmin + (xmax - xmin) * double(i) / nx;
-      c.vline(X(v), y0, y1, g, g, g);
+      c.vline(X(v), y0, y1, kLine[0], kLine[1], kLine[2]);
     }
     for (int i = 0; i <= ny; ++i) {
       const double v = ymin + (ymax - ymin) * double(i) / ny;
-      c.hline(x0, x1, Y(v), g, g, g);
+      c.hline(x0, x1, Y(v), kLine[0], kLine[1], kLine[2]);
     }
-    c.rect(x0, y0, x1, y1, 0.42f, 0.42f, 0.42f);
+    c.rect(x0, y0, x1, y1, kMuted[0], kMuted[1], kMuted[2]);
   }
 
   // Both series must be the same length; NaN breaks the polyline so a guard or a
@@ -256,13 +277,15 @@ struct Plot {
   }
 };
 
-// Shared palette so every panel reads the same way.
-const float kInk[3] = {0.92f, 0.94f, 0.97f};
-const float kCyan[3] = {0.24f, 0.78f, 0.95f};
-const float kAmber[3] = {0.98f, 0.72f, 0.24f};
-const float kMagenta[3] = {0.93f, 0.36f, 0.62f};
-const float kGreen[3] = {0.42f, 0.86f, 0.52f};
-const float kViolet[3] = {0.60f, 0.53f, 0.96f};
+// Sequential colour ramp for magnitude panels, built only from palette tokens:
+// bg -> accent-2 -> accent -> accent-50, evenly spaced over t in [0, 1].
+void brandRamp(float t, float* out) {
+  const float* stops[4] = {kBg, kAccent2, kAccent, kAccentPale};
+  const float x = std::min(std::max(t, 0.0f), 1.0f) * 3.0f;
+  const int i = std::min(int(x), 2);
+  const float f = x - float(i);
+  for (int k = 0; k < 3; ++k) out[k] = stops[i][k] + (stops[i + 1][k] - stops[i][k]) * f;
+}
 
 std::vector<double> linspace(double a, double b, int n) {
   std::vector<double> v(static_cast<size_t>(n));
@@ -758,13 +781,12 @@ static J demoSpectra() {
     for (int b = 0; b < sg.binCount; ++b) {
       const float mag = sg.frames[size_t(f)][size_t(b)];
       const float db = spectra::linearToDb(mag);
-      // -90..0 dB mapped through the recovered clamp, then a violet/amber ramp.
+      // -90..0 dB mapped through the recovered clamp, then the brand ramp:
+      // bg -> accent-2 -> accent -> accent-50.
       const float t = spectra::clampf((db + 90.0f) / 90.0f, 0.0f, 1.0f);
-      const float y = float(sg.binCount - 1 - b) / float(std::max(1, sg.binCount - 1));
-      const float r = 0.06f + 0.94f * std::pow(t, 1.4f);
-      const float g = 0.04f + 0.86f * std::pow(t, 2.2f) * (0.35f + 0.65f * y);
-      const float bl = 0.16f + 0.84f * std::pow(t, 0.8f) * (1.0f - 0.55f * y);
-      spec.set(f, sg.binCount - 1 - b, r, g, bl);
+      float rgb[3];
+      brandRamp(std::pow(t, 1.4f), rgb);
+      spec.set(f, sg.binCount - 1 - b, rgb[0], rgb[1], rgb[2]);
     }
   }
   spec.save("spectra_spectrogram.ppm");
@@ -811,12 +833,12 @@ static J demoSpectra() {
   };
 
   Canvas meter(640, 260);
-  meter.fill(0.05f, 0.06f, 0.09f);
+  meter.fill(kBg[0], kBg[1], kBg[2]);
   Plot pl(meter, 40, 20, 620, 220, 0.0, seconds, 0.0, 100.0);
   pl.grid(10, 5);
-  pl.curve(ts, lowV, kCyan[0], kCyan[1], kCyan[2]);
-  pl.curve(ts, midV, kAmber[0], kAmber[1], kAmber[2]);
-  pl.curve(ts, highV, kMagenta[0], kMagenta[1], kMagenta[2]);
+  pl.curve(ts, lowV, kAccent[0], kAccent[1], kAccent[2]);
+  pl.curve(ts, midV, kAccent2[0], kAccent2[1], kAccent2[2]);
+  pl.curve(ts, highV, kInfo[0], kInfo[1], kInfo[2]);
   meter.save("spectra_bands.ppm");
 
   J j;
@@ -992,9 +1014,9 @@ static J demoColorPulse() {
   std::vector<colorpulse::RGB> regionColors;
   std::vector<double> regionX0, regionY0, regionW, regionH;
   Canvas regionsPanel = scene;
-  const float regCols[4][3] = {{kCyan[0], kCyan[1], kCyan[2]}, {kAmber[0], kAmber[1], kAmber[2]},
-                               {kMagenta[0], kMagenta[1], kMagenta[2]},
-                               {kGreen[0], kGreen[1], kGreen[2]}};
+  const float regCols[4][3] = {{kInk[0], kInk[1], kInk[2]}, {kAccent[0], kAccent[1], kAccent[2]},
+                               {kAccent2[0], kAccent2[1], kAccent2[2]},
+                               {kSuccess[0], kSuccess[1], kSuccess[2]}};
   for (int r = 0; r < 4; ++r) {
     const colorpulse::Rect b = colorpulse::regionBounds(regions[r], W, H);
     const int bw = b.maxX - b.minX, bh = b.maxY - b.minY;
@@ -1086,16 +1108,16 @@ static J demoSpeedRamp() {
   const char* names[5] = {"LinearA", "Smoothstep", "Smootherstep", "Step", "LinearB"};
 
   Canvas c1(680, 300), c2(680, 300);
-  c1.fill(0.05f, 0.06f, 0.09f);
-  c2.fill(0.05f, 0.06f, 0.09f);
+  c1.fill(kBg[0], kBg[1], kBg[2]);
+  c2.fill(kBg[0], kBg[1], kBg[2]);
   Plot p1(c1, 46, 24, 656, 250, 0.0, 1.2, 0.0, 1.2);
   Plot p2(c2, 46, 24, 656, 250, 0.0, 1.2, 0.0, 220.0);
   p1.grid(6, 6);
   p2.grid(6, 4);
 
-  const float cols[5][3] = {{kInk[0], kInk[1], kInk[2]}, {kCyan[0], kCyan[1], kCyan[2]},
-                            {kAmber[0], kAmber[1], kAmber[2]}, {kMagenta[0], kMagenta[1], kMagenta[2]},
-                            {kGreen[0], kGreen[1], kGreen[2]}};
+  const float cols[5][3] = {{kInk[0], kInk[1], kInk[2]}, {kAccent[0], kAccent[1], kAccent[2]},
+                            {kAccent2[0], kAccent2[1], kAccent2[2]}, {kInfo[0], kInfo[1], kInfo[2]},
+                            {kSuccess[0], kSuccess[1], kSuccess[2]}};
   std::vector<double> mapEnds;
   for (int k = 0; k < 5; ++k) {
     speedramp::RampParams rk = r;
@@ -1110,8 +1132,8 @@ static J demoSpeedRamp() {
     mapEnds.push_back(mapped.back());
   }
   // Region markers: the ramp window and the two constant-speed plateaus.
-  p2.dashedH(50.0, 0.45f, 0.5f, 0.6f);
-  p2.dashedH(200.0, 0.45f, 0.5f, 0.6f);
+  p2.dashedH(50.0, kMuted[0], kMuted[1], kMuted[2]);
+  p2.dashedH(200.0, kMuted[0], kMuted[1], kMuted[2]);
   c1.save("speedramp_maptime.ppm");
   c2.save("speedramp_speed.ppm");
 
@@ -1154,7 +1176,7 @@ static J demoGlitch() {
   const int frames = int(fps * seconds);
 
   Canvas c(680, 300);
-  c.fill(0.05f, 0.06f, 0.09f);
+  c.fill(kBg[0], kBg[1], kBg[2]);
   Plot pl(c, 46, 24, 656, 250, 0.0, seconds, 0.0, 1.0);
   pl.grid(6, 5);
 
@@ -1171,14 +1193,14 @@ static J demoGlitch() {
     patternA.push_back(double(pf % 8u) / 7.0);
     patternB.push_back(double(glitch::patternFrame(4u, float(t)) % 8u) / 7.0);
   }
-  pl.curve(ts, gate, kCyan[0], kCyan[1], kCyan[2]);
+  pl.curve(ts, gate, kAccent[0], kAccent[1], kAccent[2]);
   for (size_t i = 0; i < ts.size(); ++i) {
     // Stem plot: the frame's gate value is a discrete decision, not a signal.
-    c.vline(pl.X(ts[i]), pl.Y(0.0), pl.Y(gate[i]), 0.30f, 0.42f, 0.62f);
-    pl.dot(ts[i], gate[i], kCyan[0], kCyan[1], kCyan[2], 2);
+    c.vline(pl.X(ts[i]), pl.Y(0.0), pl.Y(gate[i]), kAccentDeep[0], kAccentDeep[1], kAccentDeep[2]);
+    pl.dot(ts[i], gate[i], kAccent[0], kAccent[1], kAccent[2], 2);
   }
-  pl.curve(ts, patternA, kAmber[0], kAmber[1], kAmber[2], 2);
-  pl.curve(ts, patternB, kMagenta[0], kMagenta[1], kMagenta[2], 2);
+  pl.curve(ts, patternA, kAccent2[0], kAccent2[1], kAccent2[2], 2);
+  pl.curve(ts, patternB, kInfo[0], kInfo[1], kInfo[2], 2);
   c.save("glitch_gate.ppm");
 
   double mean = 0.0;

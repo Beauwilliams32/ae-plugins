@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="brand/assets/lockup-dark.svg">
+    <img src="brand/assets/lockup-light.svg" alt="Williams Media AE, by Trident Studio" width="480" height="120">
+  </picture>
+</p>
+
 # Williams Media — After Effects plugin fleet
 
 Sixteen After Effects effects (`com.williamsmedia.aftereffects.*`), **recovered by
@@ -331,6 +338,48 @@ can be checked against the artefact:
 md5 "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/SpectraKeys.plugin/Contents/MacOS/SpectraKeys"
 jq -r .binary.md5 specs/SpectraKeys.json
 ```
+
+## Brand
+
+The fleet wears the Trident Studio brand system (Media and creative family): a coral
+to pink tile with a double-diamond glyph, coral `#FF6B5E` and pink `#E04E8B` as the
+accent pair, and a dark and a light theme. The tagline in the brand book is a proposal
+awaiting review, so it is not used in the copy here.
+
+| What | Where |
+|---|---|
+| Usage rules, colour, type, voice, motion | `brand/DESIGN.md` |
+| Brand book (cover, essence, logo, colour, type, system, applications) | `brand/brand-book.pdf` |
+| Design tokens, dark and light | `brand/tokens.css`, `brand/tokens.json` |
+| Tile, glyph and the icon set (favicon, touch icon, PWA, maskable, 1024 px app icon) | `brand/assets/` |
+| Lockups: tile plus the name and "by Trident Studio", for dark and light surfaces | `brand/assets/lockup-dark.svg`, `brand/assets/lockup-light.svg` |
+| Link-preview card, 1200 x 630 (PNG for uploads, SVG source) | `brand/assets/og-card.png`, `brand/assets/og-card.svg` |
+
+What the brand touches in this repository, and what it deliberately does not:
+
+- **The lockup** is the README header above: the light version by default, the dark one
+  when the viewer's theme is dark. An After Effects effect has no icon slot: the
+  installed bundles carry only their `.rsrc` resource and an `Info.plist` with no icon
+  key, so no effect or bundle gets one. Use the tile in `brand/assets/` for any store
+  listing, release page or avatar.
+- **The link-preview card** (`brand/assets/og-card.png`) has no page to point at: this
+  repository ships no web page, so there are no `og:image` or `twitter:image` tags to
+  set. It is for the GitHub social preview (repository Settings, Social preview) and for
+  any release page or post that wants one. The card carries the tagline the brand book
+  marks as a proposal, so it is not published anywhere until that is approved.
+- **The tokens** replace the chart palette in `tools/demo/harness.cpp`, the only place
+  this repository draws colour. Series run accent, accent-2, then the shared signals.
+  The recovered functions read none of it: the harness's results.json is identical
+  before and after.
+- **Type** is unchanged. Nothing here renders text and the repository self-hosts no
+  fonts, so `brand/tokens.css` is kept as the reference and not linked from anything.
+- **Effect code, PiPL resources and code signing** are untouched.
+
+`test/brand.test.mjs` fails if the tile, the lockups, the link-preview card, the icon
+sizes or the tokens drift or go missing, if a token pair stops meeting contrast, if the
+README loses its lockup header, if a web page is added without the card, or if the
+harness palette stops matching the tokens. To adopt a reissued tile, lockup or card, copy
+the new files into `brand/` and update the hash table in that test in the same commit.
 
 ## Provenance and licence
 
