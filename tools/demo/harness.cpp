@@ -143,6 +143,7 @@ const float kAccentDeep[3] = {c8(0xAD), c8(0x49), c8(0x40)};// --accent-700 #AD4
 const float kAccentPale[3] = {c8(0xFF), c8(0xF3), c8(0xF2)};// --accent-50 #FFF3F2
 const float kInfo[3] = {c8(0x3B), c8(0xA8), c8(0xF0)};      // --info      #3BA8F0
 const float kSuccess[3] = {c8(0x2F), c8(0xD3), c8(0x9A)};   // --success   #2FD39A
+const float kWarning[3] = {c8(0xF5), c8(0xB8), c8(0x3D)};   // --warning   #F5B83D
 
 // ---------------------------------------------------------------------------
 // Canvas: 8-bit RGB, top-down, written as binary PPM.
@@ -627,12 +628,12 @@ static J demoChromaKey() {
   comp.save("chromakey_composite.ppm");
 
   Canvas curve(640, 280);
-  curve.fill(0.05f, 0.06f, 0.09f);
+  curve.fill(kBg[0], kBg[1], kBg[2]);
   Plot pl(curve, 46, 22, 620, 236, 0.0, 100.0, 0.0, 1.0);
   pl.grid(10, 5);
-  pl.curve(sensAxis, fpCurve, kCyan[0], kCyan[1], kCyan[2]);
-  pl.curve(sensAxis, fnCurve, kMagenta[0], kMagenta[1], kMagenta[2]);
-  pl.curve(sensAxis, errCurve, kAmber[0], kAmber[1], kAmber[2]);
+  pl.curve(sensAxis, fpCurve, kInfo[0], kInfo[1], kInfo[2]);
+  pl.curve(sensAxis, fnCurve, kAccent2[0], kAccent2[1], kAccent2[2]);
+  pl.curve(sensAxis, errCurve, kWarning[0], kWarning[1], kWarning[2]);
   pl.dashedH(atThr.fp, 0.38f, 0.46f, 0.58f);
   curve.save("chromakey_sweep.ppm");
 
@@ -1292,22 +1293,22 @@ static J demoAutoFlickerFix() {
 
   const std::vector<double> xs = linspace(0.0, double(frames - 1), frames);
   Canvas p1(660, 280), p2(660, 280);
-  p1.fill(0.05f, 0.06f, 0.09f);
-  p2.fill(0.05f, 0.06f, 0.09f);
+  p1.fill(kBg[0], kBg[1], kBg[2]);
+  p2.fill(kBg[0], kBg[1], kBg[2]);
   double lo = raw[0], hi = raw[0];
   for (double v : raw) { lo = std::min(lo, v); hi = std::max(hi, v); }
   const double pad = (hi - lo) * 0.15 + 1e-3;
   Plot g1(p1, 46, 22, 640, 236, 0.0, double(frames - 1), lo - pad, hi + pad);
   g1.grid(6, 4);
   g1.curve(xs, raw, 0.55f, 0.60f, 0.70f, 1);
-  g1.curve(xs, med, kViolet[0], kViolet[1], kViolet[2], 1);
-  g1.curve(xs, tgt, kAmber[0], kAmber[1], kAmber[2], 2);
+  g1.curve(xs, med, kAccent2[0], kAccent2[1], kAccent2[2], 1);
+  g1.curve(xs, tgt, kWarning[0], kWarning[1], kWarning[2], 2);
   p1.save("autoflickerfix_track.ppm");
 
   Plot g2(p2, 46, 22, 640, 236, 0.0, double(frames - 1), lo - pad, hi + pad);
   g2.grid(6, 4);
   g2.curve(xs, tgt, 0.45f, 0.50f, 0.60f, 1);
-  g2.curve(xs, corrected, kGreen[0], kGreen[1], kGreen[2], 2);
+  g2.curve(xs, corrected, kSuccess[0], kSuccess[1], kSuccess[2], 2);
   p2.save("autoflickerfix_corrected.ppm");
 
   const aff::RegionBounds region = aff::centerRegion(1920, 1080, 0.5f);
@@ -1417,7 +1418,7 @@ static J demoBeatSnap() {
   }
 
   Canvas c(700, 300);
-  c.fill(0.05f, 0.06f, 0.09f);
+  c.fill(kBg[0], kBg[1], kBg[2]);
   const std::vector<double> fx = linspace(0.0, double(nFrames - 1), nFrames);
   double fmax = 0.0;
   for (float v : flux) fmax = std::max(fmax, double(v));
@@ -1425,16 +1426,16 @@ static J demoBeatSnap() {
   Plot pl(c, 46, 22, 680, 250, 0.0, double(nFrames - 1), 0.0, fmax * 1.08);
   pl.grid(8, 4);
   pl.curve(fx, std::vector<double>(flux.begin(), flux.end()), 0.62f, 0.66f, 0.74f, 1);
-  pl.curve(fx, std::vector<double>(threshold.begin(), threshold.end()), kAmber[0], kAmber[1],
-           kAmber[2], 2);
+  pl.curve(fx, std::vector<double>(threshold.begin(), threshold.end()), kWarning[0], kWarning[1],
+           kWarning[2], 2);
   for (int f : onsetFrames) {
     const int px = pl.X(double(f));
-    c.vline(px, 30, 250, kGreen[0], kGreen[1], kGreen[2]);
-    pl.dot(double(f), double(flux[size_t(f)]), kGreen[0], kGreen[1], kGreen[2], 3);
+    c.vline(px, 30, 250, kSuccess[0], kSuccess[1], kSuccess[2]);
+    pl.dot(double(f), double(flux[size_t(f)]), kSuccess[0], kSuccess[1], kSuccess[2], 3);
   }
   for (double tTrue : trueMs) {
     const int px = pl.X(tTrue / (1000.0 * double(hop) / rate));
-    for (int y = 30; y < 250; y += 8) c.set(px, y, kMagenta[0], kMagenta[1], kMagenta[2]);
+    for (int y = 30; y < 250; y += 8) c.set(px, y, kAccent2[0], kAccent2[1], kAccent2[2]);
   }
   c.save("beatsnap_onsets.ppm");
 
@@ -1496,7 +1497,7 @@ static J demoBeatGrid() {
   }
 
   Canvas c(700, 300);
-  c.fill(0.05f, 0.06f, 0.09f);
+  c.fill(kBg[0], kBg[1], kBg[2]);
   Plot pl(c, 46, 22, 680, 250, 0.0, span, 0.0, 1.0);
   pl.grid(8, 4);
   for (int t = 0; t <= int(span); ++t) {
@@ -1504,15 +1505,15 @@ static J demoBeatGrid() {
     for (int y = 30; y < 250; y += 10) c.set(px, y, 0.34f, 0.38f, 0.46f);
   }
   pl.curve(ts, phases[0], kInk[0], kInk[1], kInk[2], 2);
-  pl.curve(ts, phases[1], kCyan[0], kCyan[1], kCyan[2], 2);
-  pl.curve(ts, phases[2], kAmber[0], kAmber[1], kAmber[2], 1);
+  pl.curve(ts, phases[1], kInfo[0], kInfo[1], kInfo[2], 2);
+  pl.curve(ts, phases[2], kWarning[0], kWarning[1], kWarning[2], 1);
   c.save("beatgrid_phase.ppm");
 
   Canvas ticks(700, 150);
-  ticks.fill(0.05f, 0.06f, 0.09f);
-  const float rowCols[4][3] = {{kInk[0], kInk[1], kInk[2]}, {kCyan[0], kCyan[1], kCyan[2]},
-                               {kAmber[0], kAmber[1], kAmber[2]},
-                               {kMagenta[0], kMagenta[1], kMagenta[2]}};
+  ticks.fill(kBg[0], kBg[1], kBg[2]);
+  const float rowCols[4][3] = {{kInk[0], kInk[1], kInk[2]}, {kInfo[0], kInfo[1], kInfo[2]},
+                               {kWarning[0], kWarning[1], kWarning[2]},
+                               {kAccent2[0], kAccent2[1], kAccent2[2]}};
   for (int k = 0; k < 4; ++k) {
     const int y = 26 + k * 30;
     ticks.hline(40, 680, y, 0.18f, 0.20f, 0.26f);
@@ -1582,13 +1583,13 @@ static J demoMaskFlow() {
   reveal.save("maskflow_reveal.ppm");
 
   Canvas c(600, 280);
-  c.fill(0.05f, 0.06f, 0.09f);
+  c.fill(kBg[0], kBg[1], kBg[2]);
   Plot pl(c, 46, 22, 580, 236, 0.0, 1.1, 0.0, 1.0);
   pl.grid(5, 5);
   const std::vector<double> xs = linspace(0.0, 1.1, 400);
   const float pairs[3][2] = {{0.2f, 0.4f}, {0.4f, 0.8f}, {0.0f, 1.1f}};
-  const float pairCols[3][3] = {{kAmber[0], kAmber[1], kAmber[2]}, {kCyan[0], kCyan[1], kCyan[2]},
-                                {kMagenta[0], kMagenta[1], kMagenta[2]}};
+  const float pairCols[3][3] = {{kWarning[0], kWarning[1], kWarning[2]}, {kInfo[0], kInfo[1], kInfo[2]},
+                                {kAccent2[0], kAccent2[1], kAccent2[2]}};
   for (int k = 0; k < 3; ++k) {
     std::vector<double> ys;
     for (double x : xs) ys.push_back(double(maskflow::smoothstep(pairs[k][0], pairs[k][1], float(x))));
@@ -1597,12 +1598,12 @@ static J demoMaskFlow() {
   c.save("maskflow_smoothstep.ppm");
 
   Canvas c2(600, 280);
-  c2.fill(0.05f, 0.06f, 0.09f);
+  c2.fill(kBg[0], kBg[1], kBg[2]);
   double smax = 0.0;
   for (double v : scales) smax = std::max(smax, v);
   Plot p2(c2, 46, 22, 580, 236, 0.0, 1.0, 0.0, smax * 1.08);
   p2.grid(5, 4);
-  p2.curve(tolerances, scales, kGreen[0], kGreen[1], kGreen[2], 2);
+  p2.curve(tolerances, scales, kSuccess[0], kSuccess[1], kSuccess[2], 2);
   c2.save("maskflow_edgecost.ppm");
 
   J j;
@@ -1660,7 +1661,7 @@ static J demoPathScribe() {
 
   const int W = 700, H = 300;
   Canvas c(W, H);
-  c.fill(0.05f, 0.06f, 0.09f);
+  c.fill(kBg[0], kBg[1], kBg[2]);
   const int baseY = H / 2 + 40;
   const int barW = (W - 80) / bars;
   for (int b = 0; b < bars; ++b) {
@@ -1680,7 +1681,7 @@ static J demoPathScribe() {
 
   // spanCoverage: the recovered frame-overlap helper, as a curve.
   Canvas c2(600, 280);
-  c2.fill(0.05f, 0.06f, 0.09f);
+  c2.fill(kBg[0], kBg[1], kBg[2]);
   std::vector<double> spans, cov;
   for (int i = 0; i <= 80; ++i) {
     const float span = 4.0f * float(i) / 80.0f;
@@ -1689,7 +1690,7 @@ static J demoPathScribe() {
   }
   Plot pl(c2, 46, 22, 580, 236, 0.0, 4.0, 0.0, 1.05);
   pl.grid(8, 4);
-  pl.curve(spans, cov, kCyan[0], kCyan[1], kCyan[2], 2);
+  pl.curve(spans, cov, kInfo[0], kInfo[1], kInfo[2], 2);
   c2.save("pathscribe_span.ppm");
 
   J j;
@@ -1752,13 +1753,13 @@ static J demoShakeCapture() {
   const double sortedResult = double(shake::median(base));   // already ascending
 
   Canvas c(680, 280);
-  c.fill(0.05f, 0.06f, 0.09f);
+  c.fill(kBg[0], kBg[1], kBg[2]);
   const double yLo = std::min(lo, trueMedian) - 8.0, yHi = std::max(hi, trueMedian) + 8.0;
   Plot pl(c, 46, 22, 660, 236, 0.0, double(trials), yLo, yHi);
   pl.grid(8, 4);
-  pl.dashedH(trueMedian, kGreen[0], kGreen[1], kGreen[2]);
-  for (int t = 0; t < trials; ++t) pl.dot(double(t) + 0.5, results[size_t(t)], kMagenta[0],
-                                          kMagenta[1], kMagenta[2], 2);
+  pl.dashedH(trueMedian, kSuccess[0], kSuccess[1], kSuccess[2]);
+  for (int t = 0; t < trials; ++t) pl.dot(double(t) + 0.5, results[size_t(t)], kAccent2[0],
+                                          kAccent2[1], kAccent2[2], 2);
   c.save("shake_median.ppm");
 
   J j;
@@ -1831,23 +1832,23 @@ static J demoTypeRiser() {
   }
 
   Canvas c(700, 300);
-  c.fill(0.05f, 0.06f, 0.09f);
+  c.fill(kBg[0], kBg[1], kBg[2]);
   Plot pl(c, 60, 26, 680, 250, 0.0, 4.6, -1.5, 3.5);
   pl.grid(10, 5);
-  pl.curve(ts, cueIdx, kCyan[0], kCyan[1], kCyan[2], 2);
-  pl.curve(ts, wordIdx, kAmber[0], kAmber[1], kAmber[2], 2);
+  pl.curve(ts, cueIdx, kInfo[0], kInfo[1], kInfo[2], 2);
+  pl.curve(ts, wordIdx, kWarning[0], kWarning[1], kWarning[2], 2);
   c.save("typeriser_timeline.ppm");
 
   // The cue blocks themselves, with a tick per word boundary: the geometry the
   // effect is animating over.
   Canvas blocks(700, 200);
-  blocks.fill(0.05f, 0.06f, 0.09f);
+  blocks.fill(kBg[0], kBg[1], kBg[2]);
   for (size_t ci = 0; ci < cues.size(); ++ci) {
     const int y = 30 + int(ci) * 46;
     const int x0 = 40 + int(std::lround(double(cues[ci].start) / 4600.0 * 620.0));
     const int x1 = 40 + int(std::lround(double(cues[ci].end) / 4600.0 * 620.0));
-    const float rowCols[3][3] = {{kCyan[0], kCyan[1], kCyan[2]}, {kAmber[0], kAmber[1], kAmber[2]},
-                                 {kMagenta[0], kMagenta[1], kMagenta[2]}};
+    const float rowCols[3][3] = {{kInfo[0], kInfo[1], kInfo[2]}, {kWarning[0], kWarning[1], kWarning[2]},
+                                 {kAccent2[0], kAccent2[1], kAccent2[2]}};
     const float* col = rowCols[ci % 3];
     for (int x = x0; x < x1; ++x)
       for (int dy = -10; dy <= 10; ++dy) blocks.set(x, y + dy, col[0] * 0.55f, col[1] * 0.55f,
@@ -1861,16 +1862,16 @@ static J demoTypeRiser() {
   blocks.save("typeriser_cues.ppm");
 
   Canvas c2(620, 280);
-  c2.fill(0.05f, 0.06f, 0.09f);
+  c2.fill(kBg[0], kBg[1], kBg[2]);
   Plot p2(c2, 46, 22, 600, 236, 0.0, 1.0, 0.0, 1.0);
   p2.grid(5, 5);
   const std::vector<double> xs = linspace(0.0, 1.0, 300);
   const typeriser::Easing kinds[4] = {typeriser::Easing::EaseOutQuad, typeriser::Easing::EaseOutCubic,
                                       typeriser::Easing::EaseOutBack,
                                       typeriser::Easing::EaseInOutCubic};
-  const float ec[4][3] = {{kCyan[0], kCyan[1], kCyan[2]}, {kAmber[0], kAmber[1], kAmber[2]},
-                          {kMagenta[0], kMagenta[1], kMagenta[2]},
-                          {kGreen[0], kGreen[1], kGreen[2]}};
+  const float ec[4][3] = {{kInfo[0], kInfo[1], kInfo[2]}, {kWarning[0], kWarning[1], kWarning[2]},
+                          {kAccent2[0], kAccent2[1], kAccent2[2]},
+                          {kSuccess[0], kSuccess[1], kSuccess[2]}};
   for (int k = 0; k < 4; ++k) {
     std::vector<double> ys;
     for (double x : xs) ys.push_back(double(typeriser::ease(kinds[k], float(x))));
