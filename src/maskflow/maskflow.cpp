@@ -125,4 +125,64 @@ Image downsampleBoxFilter(const Image& src, int outW, int outH) {
   return out;
 }
 
+// __ZN8maskflow16upsampleBilinearERKNSt3__16vectorIfNS0_9allocatorIfEEEEiiii, 168 instrs
+//
+// The inverse of the box filter, and not a mirror of it: this one samples the source grid at
+// fractional positions instead of averaging rectangles. The loop reads, per output pixel,
+//
+//     fx = sx * x,  fy = sy * y        sx = (srcW-1) / max(dstW-1, 1)
+//     x0 = trunc(fx), wx = fx - x0     sy = (srcH-1) / max(dstH-1, 1)
+//     x1 = min(x0+1, srcW-1)           y1 = min(y0+1, srcH-1)
+//     top = a + (b-a)*wx ; bot = c + (d-c)*wx ; out = top + (bot-top)*wy
+//
+// which is why the endpoints land exactly on the source corners (at x = dstW-1 the product is
+// srcW-1 by construction) and the `+1` neighbour is clamped down to the last column instead.
+// Note the SCALE runs src -> dst (a source-pixel step), the opposite direction to
+// computeDownsampleDims' output scale — the one number here a rewrite gets backwards.
+//
+// Three degenerate shapes have their own answer rather than a division by zero:
+//   * dstW or dstH < 1, or srcW or srcH < 1 -> dstW*dstH zeros
+//   * srcW*srcH > src.size()               -> the same zeros (a short source is not read)
+//   * a 1x1 SOURCE                          -> every output pixel is src[0], broadcast
+// and a 1-wide or 1-high source is handled by the general loop, because a zero scale leaves
+// x0 = wx = 0 and collapses the blend to a copy of column (or row) zero.
+std::vector<float> upsampleBilinear(const std::vector<float>& src, int srcW, int srcH, int dstW,
+                                    int dstH) {
+  std::vector<float> out;
+  const size_t count = static_cast<size_t>(dstW > 0 ? dstW : 0) *
+                       static_cast<size_t>(dstH > 0 ? dstH : 0);
+  out.assign(count, 0.0f);
+  if (srcW < 1 || srcH < 1 || dstW < 1 || dstH < 1) return out;
+  if (static_cast<size_t>(srcW) * static_cast<size_t>(srcH) > src.size()) return out;
+  if (srcW == 1 && srcH == 1) {                      // 1x1 source: a constant image
+    std::fill(out.begin(), out.end(), src[0]);
+    return out;
+  }
+
+  float sx = 0.0f;
+  float sy = 0.0f;
+  if (srcW >= 2) sx = static_cast<float>(srcW - 1) / static_cast<float>(dstW - 1 > 1 ? dstW - 1 : 1);
+  if (srcH >= 2) sy = static_cast<float>(srcH - 1) / static_cast<float>(dstH - 1 > 1 ? dstH - 1 : 1);
+
+  for (int y = 0; y < dstH; ++y) {
+    const float fy = sy * static_cast<float>(y);
+    const int y0 = static_cast<int>(fy);             // fcvtzs: truncate, not round
+    const float wy = fy - static_cast<float>(y0);
+    const int y1 = y0 + 1 < srcH ? y0 + 1 : srcH - 1;
+    const float* row0 = &src[static_cast<size_t>(y0) * static_cast<size_t>(srcW)];
+    const float* row1 = &src[static_cast<size_t>(y1) * static_cast<size_t>(srcW)];
+    float* dst = &out[static_cast<size_t>(y) * static_cast<size_t>(dstW)];
+    for (int x = 0; x < dstW; ++x) {
+      const float fx = sx * static_cast<float>(x);
+      const int x0 = static_cast<int>(fx);
+      const float wx = fx - static_cast<float>(x0);
+      const int x1 = x0 + 1 < srcW ? x0 + 1 : srcW - 1;
+      const float top = row0[x0] + (row0[x1] - row0[x0]) * wx;
+      const float bot = row1[x0] + (row1[x1] - row1[x0]) * wx;
+      dst[x] = top + (bot - top) * wy;
+    }
+  }
+  return out;
+}
+
 }  // namespace maskflow

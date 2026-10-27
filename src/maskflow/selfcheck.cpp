@@ -171,6 +171,64 @@ int main() {
     checkNear(emptySrc.pixels[0].r, 0.0f, 1e-6f, "and comes out black rather than NaN");
   }
 
+  std::printf("maskflow::upsampleBilinear\n");
+  {
+    // Endpoints land exactly on the source corners: the scale runs src -> dst, so at x = dstW-1
+    // the product is srcW-1 by construction. A rewrite that inverts the ratio misses by a pixel.
+    const std::vector<float> ramp = {0.0f, 1.0f, 2.0f, 3.0f};   // 4x1
+    const std::vector<float> same = maskflow::upsampleBilinear(ramp, 4, 1, 4, 1);
+    check(same.size() == 4, "the requested size comes back");
+    checkNear(same[0], 0.0f, 1e-6f, "the first sample is copied");
+    checkNear(same[3], 3.0f, 1e-6f, "and so is the last");
+
+    // Doubling in x interpolates halfway: dst x=1 -> fx = 3/3 * 1 = 1 -> exactly src 1.
+    const std::vector<float> wide = maskflow::upsampleBilinear(ramp, 4, 1, 7, 1);
+    check(wide.size() == 7, "a 7-wide output for a 4-wide source");
+    checkNear(wide[0], 0.0f, 1e-6f, "x=0 lands on src[0]");
+    checkNear(wide[6], 3.0f, 1e-6f, "x=6 lands on src[3]");
+    checkNear(wide[2], 1.0f, 1e-6f, "x=2 lands on src[1] (fx = 3/6*2 = 1)");
+    checkNear(wide[1], 0.5f, 1e-6f, "x=1 is the halfway sample between src[0] and src[1]");
+
+    // The vertical blend is applied after the horizontal one, in that order, with the same
+    // weights — a 2x2 source doubled must reproduce the corners and average the centre.
+    const std::vector<float> square = {0.0f, 1.0f, 2.0f, 3.0f};   // 2x2
+    const std::vector<float> up = maskflow::upsampleBilinear(square, 2, 2, 3, 3);
+    check(up.size() == 9, "3x3 from 2x2");
+    checkNear(up[0], 0.0f, 1e-6f, "top-left corner is src[0]");
+    checkNear(up[2], 1.0f, 1e-6f, "top-right corner is src[1]");
+    checkNear(up[6], 2.0f, 1e-6f, "bottom-left corner is src[2]");
+    checkNear(up[8], 3.0f, 1e-6f, "bottom-right corner is src[3]");
+    checkNear(up[4], 1.5f, 1e-6f, "the centre is the mean of all four");
+
+    // A 1x1 SOURCE is a broadcast, and it is a branch of its own — not the general loop.
+    const std::vector<float> single = {0.75f};
+    const std::vector<float> flat = maskflow::upsampleBilinear(single, 1, 1, 3, 2);
+    check(flat.size() == 6, "a 1x1 source still sizes the output");
+    checkNear(flat[0], 0.75f, 1e-6f, "and the value is broadcast to the first pixel");
+    checkNear(flat[5], 0.75f, 1e-6f, "and to the last");
+
+    // A 1-WIDE source goes through the general loop instead: the zero scale collapses x0, wx and
+    // x1 to zero, so the horizontal blend is a copy and only the vertical one does anything.
+    const std::vector<float> column = {1.0f, 3.0f};   // 1x2
+    const std::vector<float> tall = maskflow::upsampleBilinear(column, 1, 2, 3, 3);
+    check(tall.size() == 9, "3x3 from a 1x2 source");
+    checkNear(tall[0], 1.0f, 1e-6f, "top row is the first sample, repeated");
+    checkNear(tall[8], 3.0f, 1e-6f, "bottom row is the second");
+    checkNear(tall[4], 2.0f, 1e-6f, "the middle row is the vertical halfway sample");
+
+    // Every guard returns zeros of the requested size rather than an empty vector.
+    const std::vector<float> noDst = maskflow::upsampleBilinear(ramp, 4, 1, 0, 4);
+    check(noDst.empty(), "a zero destination width has no pixels at all");
+    const std::vector<float> shortSrc = maskflow::upsampleBilinear(ramp, 8, 8, 2, 2);
+    check(shortSrc.size() == 4, "a source shorter than srcW*srcH still sizes the output");
+    checkNear(shortSrc[3], 0.0f, 1e-6f, "and comes out zeros rather than reading past the end");
+    const std::vector<float> emptySrc = maskflow::upsampleBilinear({}, 4, 4, 2, 2);
+    check(emptySrc.size() == 4 && emptySrc[0] == 0.0f, "an empty source gives zeros");
+    const std::vector<float> negDim = maskflow::upsampleBilinear(ramp, -3, 1, 2, 2);
+    check(negDim.size() == 4, "a negative source width is a guard, not a huge allocation");
+    checkNear(negDim[0], 0.0f, 1e-6f, "and returns zeros");
+  }
+
   if (failures == 0) std::printf("ALL RECOVERED MASKFLOW MATHS VERIFIED (%d checks)\n", passes);
   else std::printf("%d FAILURES out of %d checks\n", failures, passes + failures);
   return failures == 0 ? 0 : 1;

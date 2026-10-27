@@ -91,9 +91,67 @@ Three details the self-check pins:
 extrapolating past it, which is the one place this function clamps where `smoothstep`
 above does not.
 
+## `upsampleBilinear` runs the scale BACKWARDS, and that is the whole trap
+
+`downsampleBoxFilter` (126) is an integer box average — every output pixel is the mean of a
+source rect. `upsampleBilinear` (168) is not its mirror: it samples the source at fractional
+positions, and the two use scale factors that point in opposite directions and would be easy
+to write the same way out of habit.
+
+| | factor | direction |
+|---|---|---|
+| `computeDownsampleDims` | `scale = maxDim / longest` | multiplies a source size into an output size |
+| `downsampleBoxFilter` | none — integer division per pixel | — |
+| `upsampleBilinear` | `sx = (srcW-1) / max(dstW-1, 1)` | a **source**-pixel step per **output** column |
+
+The `-1` on both sides is what makes the endpoints exact: at `x = dstW-1` the product is
+`srcW-1` by construction, so the last output column lands on the last source column rather
+than one short of it. The `max(..., 1)` guards the degenerate `dstW == 1`, where the step is
+never used anyway — the loop then starts and ends at `x0 = 0`.
+
+Read against the listing, the per-pixel body is:
+
+```
+ucvtf s3, w16 / fmul s3, s1, s3        ; fx = sx * x
+fcvtzs w1, s3 / fcvtzs s4, s3 / scvtf  ; x0 = trunc(fx), wx = fx - x0
+add w2, w1, #1 / cmp w10, w2 / csinc   ; x1 = min(x0 + 1, srcW - 1)
+ldr s4..s7                             ; a,b = row y0 at x0,x1 ; c,d = row y1 at x0,x1
+fmadd s4, s5, s3, s4                   ; top = a + (b - a) * wx
+fmadd s3, s5, s3, s6                   ; bot = c + (d - c) * wx
+fsub s3, s3, s4 / fmadd s3, s3, s2, s4 ; out = top + (bot - top) * wy
+```
+
+Three details a tidy rewrite gets wrong:
+
+- **`x0` is not clamped, only `x0 + 1` is.** The `csinc` is on the neighbour. `x0` needs no
+  clamp because the scale puts the last column exactly on `srcW-1`.
+- **The truncation is `fcvtzs`** — toward zero, not `lround`. For non-negative positions
+  that is a floor, so it agrees with `(int)` but not with the rounding used in
+  `computeDownsampleDims`.
+- **A 1x1 SOURCE is a branch of its own** — every output pixel becomes `src[0]`, broadcast in
+  a vectorised fill. The correct reading of that guard is the SOURCE being 1x1, not the
+  destination: a 1-wide-but-tall source falls through to the general loop, where the zero
+  scale collapses `x0`, `wx` and `x1` and the horizontal blend becomes a copy.
+
+Every guard returns `dstW*dstH` ZEROS rather than an empty vector — a non-positive dimension
+(which makes that product empty in turn), or a `srcW*srcH` larger than the buffer handed in.
+The vector is allocated and zeroed *before* the guards run, which is why an invalid call still
+reports the requested shape.
+
 ## What is next
 
-`downsampleBoxFilter` (126) and `upsampleBilinear` (168) are the two geometric primitives
-the matte is built on, and recovering them means recovering `Image` first. `buildMatte`
-(169) and `computeArrivalField` (290) are the effect's actual algorithm: an arrival-time
-field propagated from the mask edges and thresholded into a matte.
+Both geometric primitives are now recovered, so the remaining three functions are the
+effect's algorithm rather than its plumbing:
+
+```
+buildMatte(const ArrivalField&, float, float, bool)         169 instrs
+computeArrivalField(const Image&, float, float, float, bool) 290 instrs
+computeMatteFullRes(const Image&, const Params&)            151 instrs
+```
+
+`computeArrivalField` builds an arrival-time field from the image (it has two file-scope
+tables, `dx8` and `dy8`, at 0x3f64 and 0x3f84 — eight-entry int tables, so eight
+neighbour directions rather than nine); `buildMatte` thresholds that field into a matte;
+`computeMatteFullRes` is the entry point that runs the downsample → field → matte → upsample
+chain. Recovering them means modelling `Params` and `ArrivalField` first, which is why they
+are absent rather than stubbed.

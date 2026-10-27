@@ -6,13 +6,17 @@
 //
 // INCOMPLETE — the geometry helpers are here and the matte is not.
 //   recovered: clampf, edgeCostScaleFromTolerance, smoothstep, computeDownsampleDims,
-//              downsampleBoxFilter (+ the Image/RGB layout it pinned)
-//   outstanding: upsampleBilinear (168), buildMatte (169), computeMatteFullRes (151),
-//              computeArrivalField (290)
+//              downsampleBoxFilter (+ the Image/RGB layout it pinned), upsampleBilinear
+//   outstanding: buildMatte (169), computeMatteFullRes (151), computeArrivalField (290)
 //
-// The five outstanding functions all take `Image`, `Params` or `ArrivalField`, none of
-// which is recovered yet — which is why they are absent rather than stubbed. The four
-// here take nothing but ints and floats.
+// The three outstanding functions all take or return `Params` or `ArrivalField`, neither of
+// which is recovered yet — which is why they are absent rather than stubbed:
+//
+//   buildMatte(const ArrivalField&, float, float, bool)
+//   computeArrivalField(const Image&, float, float, float, bool)
+//   computeMatteFullRes(const Image&, const Params&)
+//
+// The six here take nothing but ints, floats and a std::vector.
 
 #pragma once
 #include <vector>
@@ -129,5 +133,29 @@ static_assert(sizeof(RGB) == 12, "the box filter strides rows by 12 bytes per pi
  * at 1 (`csinc`), so the pixel comes out BLACK rather than NaN.
  */
 Image downsampleBoxFilter(const Image& src, int outW, int outH);
+
+/**
+ * [exact] The bilinear inverse of the box filter: `dstW x dstH` floats sampled from a
+ * `srcW x srcH` plane at fractional positions. 168 instructions, read in full
+ * (row AE-05, 2026-10-27).
+ *
+ *     sx = srcW >= 2 ? (srcW-1) / max(dstW-1, 1) : 0        ; a SOURCE-space step, not an
+ *     sy = srcH >= 2 ? (srcH-1) / max(dstH-1, 1) : 0        ; output-space scale
+ *     fx = sx * x; x0 = trunc(fx); wx = fx - x0; x1 = min(x0+1, srcW-1)
+ *     top = a + (b-a)*wx        a,b = row y0 at x0,x1
+ *     bot = c + (d-c)*wx        c,d = row y1 at x0,x1
+ *     out = top + (bot - top)*wy
+ *
+ * The truncation is `fcvtzs` (toward zero), and only the `+1` neighbour is clamped — `x0`
+ * itself is not, because the scale is built so the last output column lands exactly on
+ * `srcW-1`. A 1x1 SOURCE broadcasts `src[0]`; a 1-wide or 1-high source falls through the
+ * general loop, where the zero scale collapses the blend to a copy.
+ *
+ * Every guard returns `dstW*dstH` ZEROS rather than an empty vector: a non-positive
+ * dimension (which also makes that product empty), or a source too short for the declared
+ * `srcW*srcH`.
+ */
+std::vector<float> upsampleBilinear(const std::vector<float>& src, int srcW, int srcH, int dstW,
+                                    int dstH);
 
 }  // namespace maskflow
