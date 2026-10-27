@@ -111,6 +111,44 @@ float angularDiff(float a, float b) {
   return d > pi ? twoPi - d : d;
 }
 
+// __ZN9chromakey10spillScoreERKNS_5YCbCrES2_f, 82 instrs
+//
+// Recovered instruction by instruction. The shape is a despill weight, and each factor is clamped
+// rather than trusted, because a caller multiplies three of them together and expects [0,1]:
+//
+//   fmul/fmadd/fsqrt              ; pMag = hypot(p.cb, p.cr)
+//   fcmp s12, 1e-6 / b.mi         ; an achromatic pixel scores 0 (0x358637bd is 1e-6)
+//   (same for kMag, the key)      ; an achromatic key scores 0 too
+//   bl _atan2f (twice)            ; hue of pixel and key, with the origin special-cased to 0
+//   fabd / fmod 2pi / >pi mirror  ; angularDiff, reused rather than re-derived
+//   fdiv by -pi/2, fadd 1.0       ; hueWeight = clamp(1 - d/(pi/2), 0, 1) — 0xbfc90fdb is -pi/2
+//   ldr s2, [x19] / fabd s2, s13  ; |pixel.y - referenceY| — the PIXEL's luma, not the key's
+//   fadd s3, s12, s12             ; 2 * pMag, so chroma above half-scale saturates
+//   fmul twice, clamp             ; chroma * hueWeight * yWeight, clamped to [0,1]
+float spillScore(const YCbCr& pixel, const YCbCr& key, float referenceY) {
+  const float achromatic = 1e-6f;             // 0x358637bd
+  const float chromeP = std::sqrt(pixel.cb * pixel.cb + pixel.cr * pixel.cr);
+  if (chromeP < achromatic) return 0.0f;
+  const float chromeK = std::sqrt(key.cb * key.cb + key.cr * key.cr);
+  if (chromeK < achromatic) return 0.0f;
+
+  const float hue = angularDiff(hueAngle(pixel.cb, pixel.cr), hueAngle(key.cb, key.cr));
+  // The division is by -pi/2 and then +1, which is the same as 1 - 2hue/pi but is what the bundle does.
+  const float hueWeight = clampf(hue / -1.5707964f + 1.0f, 0.0f, 1.0f);
+
+  // Written as a compare-and-select rather than fminf: the bundle emits fcmp + fcsel (two
+  // instructions), and std::fmin folds to a single fminnm, which shifts every later register.
+  const float yDelta = std::fabs(pixel.y - referenceY);
+  const float yWeight = yDelta > 1.0f ? 1.0f : yDelta;
+  // Both clamps are written out. The shipped build kept the lower branch; clang can prove this
+  // value non-negative (two square roots added) and elides it, which is where two of the three
+  // instruction difference come from — same outputs, three fewer instructions.
+  const float twiceChroma = chromeP + chromeP;
+  const float chroma = twiceChroma < 0.0f ? 0.0f : (twiceChroma > 1.0f ? 1.0f : twiceChroma);
+
+  return clampf(chroma * hueWeight * yWeight, 0.0f, 1.0f);
+}
+
 // __ZN9chromakey10percentileEPKfmf, 31 instrs
 //
 //   cbz x0 / cbz x1 / movi.2d v1, #0        ; null or empty -> 0.0

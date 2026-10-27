@@ -231,6 +231,64 @@ int main() {
               "a row stride of 6 ELEMENTS is honoured (gy = 4/2)");
   }
 
+  // --- spillScore: an independent model, because the rebuilt code compiles to 80 of the bundle's 82
+  // instructions (clang elides the lower clamp on a value it can prove non-negative). So the outputs
+  // are pinned against a model written from the disassembly rather than against the compiler.
+  std::printf("chromakey::spillScore\n");
+  {
+    auto model = [](chromakey::YCbCr p, chromakey::YCbCr key, float referenceY) {
+      const float pMag = std::sqrt(p.cb * p.cb + p.cr * p.cr);
+      if (pMag < 1e-6f) return 0.0f;
+      const float kMag = std::sqrt(key.cb * key.cb + key.cr * key.cr);
+      if (kMag < 1e-6f) return 0.0f;
+      const float d = chromakey::angularDiff(chromakey::hueAngle(p.cb, p.cr), chromakey::hueAngle(key.cb, key.cr));
+      const float hueWeight = chromakey::clampf(1.0f - d / 1.5707964f, 0.0f, 1.0f);
+      const float yWeight = std::fmin(std::fabs(p.y - referenceY), 1.0f);
+      const float chroma = chromakey::clampf(2.0f * pMag, 0.0f, 1.0f);
+      return chromakey::clampf(chroma * hueWeight * yWeight, 0.0f, 1.0f);
+    };
+
+    const chromakey::YCbCr grey{0.5f, 0.0f, 0.0f};
+    const chromakey::YCbCr key{0.6f, 0.0f, 0.5f};   // a strongly blue-ish key, 90 degrees from blue-green
+    check(chromakey::spillScore(grey, key, 0.5f) == 0.0f, "an achromatic PIXEL scores 0");
+    check(chromakey::spillScore(key, grey, 0.5f) == 0.0f, "an achromatic KEY scores 0");
+    checkNear(chromakey::spillScore(key, key, key.y), 0.0f, 1e-6f,
+              "a pixel at the reference luma scores 0 (the luma term, not the hue term, is what zeroes it)");
+
+    // The hue term on its own: same chroma, four rotations, with the luma term held at its maximum.
+    const float chromaMag = 0.5f;
+    const chromakey::YCbCr at0{0.0f, chromaMag, 0.0f};                 // hue = 0
+    const chromakey::YCbCr at90{0.0f, 0.0f, chromaMag};                // hue = +pi/2
+    checkNear(chromakey::spillScore(at0, at0, -1.0f), 1.0f, 1e-6f, "identical hue + max chroma + max luma delta = 1");
+    checkNear(chromakey::spillScore(at90, at0, -1.0f), 0.0f, 1e-6f, "90 degrees of hue difference scores 0");
+    const chromakey::YCbCr at45{0.0f, chromaMag * 0.7071068f, chromaMag * 0.7071068f};
+    const float at45Score = chromakey::spillScore(at45, at0, -1.0f);
+    check(at45Score > 0.4f && at45Score < 0.6f, "45 degrees is about half weight (linear in angle)");
+
+    // The luma term: |pixel.y - referenceY| saturates at 1, and equal luma zeroes the score.
+    checkNear(chromakey::spillScore(at0, at0, 0.0f), 0.0f, 1e-6f, "pixel luma equal to the reference zeroes the score");
+    const float nearRef = chromakey::spillScore(at0, at0, -0.25f);
+    const float farRef = chromakey::spillScore(at0, at0, -1.0f);
+    check(nearRef > 0.0f && nearRef < farRef, "a luma closer to the reference scores lower");
+    checkNear(farRef, 1.0f, 1e-6f, "and saturates at 1 once the delta passes 1.0");
+
+    // Grid parity against the independent model, over ranges that cross every clamp.
+    int mismatches = 0;
+    for (float y = 0.0f; y <= 1.0f; y += 0.125f) {
+      for (float cb = -0.5f; cb <= 0.5f; cb += 0.125f) {
+        for (float cr = -0.5f; cr <= 0.5f; cr += 0.125f) {
+          const chromakey::YCbCr pixel{y, cb, cr};
+          const float got = chromakey::spillScore(pixel, key, 0.35f);
+          const float want = model(pixel, key, 0.35f);
+          if (std::fabs(got - want) > 1e-6f) ++mismatches;
+          if (!(got >= 0.0f && got <= 1.0f)) ++mismatches;
+        }
+      }
+    }
+    std::printf("%s 0 mismatches against the disassembly model over the grid\n", mismatches == 0 ? "  PASS" : "  FAIL");
+    if (mismatches != 0) ++failures; else ++passes;
+  }
+
   if (failures == 0) std::printf("ALL RECOVERED CHROMAKEY MATHS VERIFIED (%d checks)\n", passes);
   else std::printf("%d FAILURES out of %d checks\n", failures, passes + failures);
   return failures == 0 ? 0 : 1;

@@ -112,6 +112,28 @@ float hueAngle(float a, float b);
 float angularDiff(float a, float b);
 
 // ---------------------------------------------------------------------------
+// Keying scores.
+// ---------------------------------------------------------------------------
+
+// [exact] How much of `key`'s hue a pixel still carries — the weight a despill uses to decide
+// which pixels are "key-coloured". 82 instructions, read in full from the bundle:
+//
+//   pMag = sqrt(cb^2 + cr^2);  if (pMag < 1e-6) return 0;      // achromatic pixel
+//   kMag = sqrt(key.cb^2 + key.cr^2);  if (kMag < 1e-6) return 0;   // achromatic key
+//   hue = angularDiff(hueAngle(p.cr, p.cb), hueAngle(key.cr, key.cb));
+//   hueWeight = clamp(1 - hue / (pi/2), 0, 1);                 // 0xbfc90fdb is -pi/2, so this is a
+//                                                              // division by a negative constant
+//   yWeight   = min(fabsf(p.y - referenceY), 1);               // how far this pixel's luma sits from
+//                                                              // the reference the caller passes
+//   chroma    = clamp(2 * pMag, 0, 1);                         // chroma above half-scale saturates
+//   return clamp(chroma * hueWeight * yWeight, 0, 1);
+//
+// Two details are easy to get wrong and are pinned by the self-check: the hue term divides by
+// -pi/2 and adds 1 (so a hue 90 degrees away already scores 0), and `referenceY` is compared with
+// the PIXEL's luma, not with the key's.
+float spillScore(const YCbCr& pixel, const YCbCr& key, float referenceY);
+
+// ---------------------------------------------------------------------------
 // Statistics.
 // ---------------------------------------------------------------------------
 
