@@ -18,10 +18,11 @@ const SRC = path.join(ROOT, "src", "shake");
 const BUNDLE = "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media"
   + "/ShakeCapture.plugin/Contents/MacOS/ShakeCapture";
 
-const RECOVERED = ["clampf", "median"];
-const OUTSTANDING = ["trackTranslation", "accumulate", "movingAverage", "highPass",
-                     "extractJitter", "normalizeUnitAmplitude", "sampleLooped",
-                     "resampleProfile", "ShakeProfile"];
+// movingAverage, highPass, extractJitter and the ShakeProfile destructor joined on 2026-10-27
+// (row AE-05): modelling the struct first is what unblocked the other three.
+const RECOVERED = ["clampf", "median", "ShakeProfile", "extractJitter", "movingAverage", "highPass"];
+const OUTSTANDING = ["trackTranslation", "accumulate", "normalizeUnitAmplitude", "sampleLooped",
+                     "resampleProfile"];
 
 function bundlesInstalled() {
   return existsSync(BUNDLE);
@@ -85,6 +86,6 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
     "median should report the elided-call difference");
 
   const summary = out.trim().split("\n").pop();
-  assert.match(summary, /1 identical, 1 differing, 9 not implemented/,
+  assert.match(summary, /3 identical, 3 differing, 5 not implemented/,
     `the differ's tally moved: ${summary}`);
 });

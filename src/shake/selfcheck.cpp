@@ -89,6 +89,72 @@ int main() {
           "and it is BELOW the true median, which is the shipped second nth_element\'s one-element range showing");
   }
 
+  // --- the filter chain (recovered 2026-10-27): movingAverage -> highPass -> extractJitter.
+  std::printf("shake::movingAverage\n");
+  {
+    const std::vector<float> flat(8, 0.25f);
+    const std::vector<float> average = shake::movingAverage(flat, 5);
+    check(average.size() == flat.size(), "the output is the same length as the input, including at the ends");
+    bool allQuarter = true;
+    for (float v : average) if (std::fabs(v - 0.25f) > 1e-6f) allQuarter = false;
+    check(allQuarter, "a constant series average to that constant everywhere (the divisor is the real count)");
+
+    const std::vector<float> copy = shake::movingAverage(flat, 1);
+    check(copy == flat, "a window of 1 is a copy (half = 0)");
+    check(shake::movingAverage({}, 5).empty(), "an empty series gives an empty answer");
+
+    // A step: the sample either side of the edge blends, and the far samples do not.
+    std::vector<float> step(9, 0.0f);
+    for (size_t i = 5; i < step.size(); ++i) step[i] = 1.0f;
+    const std::vector<float> smoothed = shake::movingAverage(step, 3);
+    checkNear(smoothed[0], 0.0f, 1e-6f, "away from the step the average is untouched");
+    checkNear(smoothed[8], 1.0f, 1e-6f, "and so is the far side");
+    check(smoothed[4] > 0.0f && smoothed[4] < 1.0f, "at the step it blends");
+
+    // The sum is accumulated in DOUBLE: 2^24 + 1 is not representable in float, so a float
+    // accumulator loses the ones and a double one does not.
+    std::vector<float> wide{16777216.0f, 1.0f, 1.0f, 1.0f};
+    const float mean = shake::movingAverage(wide, 4)[1];
+    // 16777216 + 3 in a float accumulator rounds each 1.0 away and lands on 4194304.0 exactly;
+    // the double sum is 16777219 / 4 = 4194304.75, whose nearest float is 4194305.
+    checkNear(mean, static_cast<float>((16777216.0 + 3.0) / 4.0), 1.0f,
+              "the window sum is accumulated in double (a float accumulator would land on 4194304)");
+    check(mean != 16777216.0f / 4.0f, "and that is demonstrably not what a float accumulator gives");
+  }
+
+  std::printf("shake::highPass\n");
+  {
+    const std::vector<float> flat(6, 0.75f);
+    bool allZero = true;
+    for (float v : shake::highPass(flat, 3)) if (std::fabs(v) > 1e-6f) allZero = false;
+    check(allZero, "a constant series has no residual");
+    check(shake::highPass({}, 3).empty(), "an empty series gives an empty residual");
+
+    std::vector<float> ramp(10);
+    for (size_t i = 0; i < ramp.size(); ++i) ramp[i] = static_cast<float>(i);
+    const std::vector<float> residual = shake::highPass(ramp, 5);
+    check(residual.size() == ramp.size(), "the residual covers every sample");
+    // A straight ramp is reproduced exactly by a centred average, so its residual is ~0 in the
+    // interior and non-zero only where the window is clipped at the ends.
+    check(std::fabs(residual[5]) < 1e-6f, "the interior of a ramp has no residual");
+    check(std::fabs(residual[0]) > 0.0f, "the clipped end does");
+  }
+
+  std::printf("shake::extractJitter\n");
+  {
+    shake::ShakeProfile profile;
+    profile.horizontal = {0.0f, 0.0f, 0.0f, 10.0f, 0.0f, 0.0f};
+    profile.vertical = {1.0f, 2.0f, 3.0f, 4.0f};
+    const shake::ShakeProfile jitter = shake::extractJitter(profile, 3);
+    check(jitter.horizontal.size() == profile.horizontal.size(), "the horizontal track keeps its length");
+    check(jitter.vertical.size() == profile.vertical.size(), "and so does the vertical one");
+    check(jitter.horizontal == shake::highPass(profile.horizontal, 3), "horizontal is the high-passed track");
+    check(jitter.vertical == shake::highPass(profile.vertical, 3), "vertical likewise, in that order");
+    checkNear(jitter.horizontal[3], 10.0f - shake::movingAverage(profile.horizontal, 3)[3], 1e-6f,
+              "and both are the residual of their own series");
+    check(sizeof(shake::ShakeProfile) == 48, "the struct is two vectors, 24 bytes apart");
+  }
+
   if (failures == 0) std::printf("ALL RECOVERED SHAKE MATHS VERIFIED (%d checks)\n", passes);
   else std::printf("%d FAILURES out of %d checks\n", failures, passes + failures);
   return failures == 0 ? 0 : 1;
