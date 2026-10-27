@@ -5,8 +5,27 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <queue>
+#include <utility>
 
 namespace maskflow {
+
+// The three constants the flood is built from, each read out of the listing as a bit pattern
+// rather than guessed: 0x3fb504f3 (sqrt2), 0x3f13cd3a (1/sqrt3), 0x3ee66666 (the edge threshold
+// of 0.45 the `fcmp s1, s13` uses).
+const float kSqrtTwo = 1.41421354f;
+const float kInvSqrtThree = 0.57735026f;
+const float kEdgeJump = 0.45f;
+
+// The seed snap: `min(position, extent-1)`, then `max(position, 0)`, then `fcvtas` — nearest with
+// ties away from zero, i.e. lround. A position past the far edge is pulled back to the LAST index,
+// not past it, and both comparisons let a NaN fall through to the cast.
+static int nearestIndex(float position, int extent) {
+  const float last = static_cast<float>(extent - 1);
+  const float capped = position > last ? last : position;
+  const float floored = position < 0.0f ? 0.0f : capped;
+  return static_cast<int>(std::lround(floored));
+}
 
 // The shared copy, machine-code-identical to the fleet's other four carriers.
 //
@@ -251,6 +270,120 @@ std::vector<float> buildMatte(const ArrivalField& field, float tolerance, float 
     out[i] = invert ? 1.0f - inverted : inverted;
   }
   return out;
+}
+
+// The field's "unreached" sentinel. `assign` is handed the ADDRESS of a file-scope float
+// (`adrp x2, 3 / add x2, x2, #0xf60`), and 0x3f60 holds 0x7f800000: this is +infinity, and it is
+// also what any unreachable pixel keeps.
+const float kInfinity = std::numeric_limits<float>::infinity();
+
+// __ZN8maskflow19computeArrivalFieldERKNS_5ImageEfffb, 268 instrs
+//
+// A Dijkstra flood from one seed pixel over the 8-neighbourhood, where the cost of crossing an
+// edge is the COLOUR DISTANCE between the two pixels. Read out of the listing:
+//
+//   cmp w25,#1 / ccmp w26,#1,#8,ge / b.lt     ; width < 1 or height < 1: return, span 0
+//   umull x24, w26, w25                       ; count = height * width
+//   bl vector<float>::assign(count, &kInfinity)
+//   bl edgeCostScaleFromTolerance(tolerance)  ; 0.4*(100-min(tol,100)) — 0 means "trust colour"
+//   bl operator new(count) + memset           ; a char[] of settled flags, not a bool[]
+//   fcvtas x19, s0                            ; the seed row = lround(clamped row), ditto column
+//   udiv x22, x19, x25 / msub w28, w22, w25   ; index -> (row, column)
+//   ldr w8, [x27, x21, lsl #2]                ; dx8, then dy8, for k = 0..7
+//   fmadd / fsqrt / fmul s1, s1, s11          ; |dr,dg,db| * (1/sqrt3) — normalised to 0..1
+//   fcmp s1, s13 / cset w9, gt                ; s13 = 0.45: an "edge"
+//   fmadd s1, s10, s1, s12                    ; 1 + edgeScale * colour distance
+//   fmul s0, s0, s1                           ; * the step length (1 or sqrt2)
+//   tst w10, w9 / fcsel s0, s14, s0, ne       ; block flag AND an edge -> +infinity
+//   fcmp s0, s14 / b.eq ; b.vs                ; that infinity, and NaN, both abandon the edge
+//   fadd s0, s15, s0                          ; candidate = here + cost
+//   fcmp s0, s1 / b.pl                        ; not strictly better -> abandon
+//
+// The two file-scope tables are eight-entry, and the four 4-connected offsets come FIRST, which
+// is what makes the step length a `k < 4` test rather than a diagonal test:
+//
+//   k   0   1   2   3    4    5    6    7
+//   dx +1  -1   0   0   +1   +1   -1   -1
+//   dy  0   0  +1  -1   +1   -1   +1   -1
+//   len 1   1   1   1  sqrt2 sqrt2 sqrt2 sqrt2
+ArrivalField computeArrivalField(const Image& image, float column, float row, float tolerance,
+                                 bool blockAcrossEdges) {
+  ArrivalField field;
+  field.width = image.width;
+  field.height = image.height;
+  if (image.width < 1 || image.height < 1) return field;   // span stays 0.0f
+
+  const size_t count = static_cast<size_t>(image.height) * static_cast<size_t>(image.width);
+  field.values.assign(count, kInfinity);
+  const float edgeScale = edgeCostScaleFromTolerance(tolerance);
+  std::vector<char> settled(count, 0);
+
+  const size_t seed = static_cast<size_t>(nearestIndex(row, image.height)) *
+                          static_cast<size_t>(image.width) +
+                      static_cast<size_t>(nearestIndex(column, image.width));
+  field.values[seed] = 0.0f;
+
+  // A MIN-heap on (arrival, index). The pair's index breaks ties, which is why the frontier is a
+  // pair rather than a bare float: two pixels at the same arrival must come out in a fixed order.
+  std::priority_queue<std::pair<float, size_t>, std::vector<std::pair<float, size_t>>,
+                      std::greater<std::pair<float, size_t>>>
+      frontier;
+  frontier.push(std::make_pair(0.0f, seed));
+
+  static const int dx8[8] = {1, -1, 0, 0, 1, 1, -1, -1};
+  static const int dy8[8] = {0, 0, 1, -1, 1, -1, 1, -1};
+
+  float arrival = 0.0f;
+  while (!frontier.empty()) {
+    const std::pair<float, size_t> node = frontier.top();
+    frontier.pop();
+    const float here = node.first;
+    const size_t index = node.second;
+    // TWO guards, and both are needed: `settled` rejects a pixel that was already reached by a
+    // better route, `here > values[index]` rejects a QUEUE ENTRY that a later, cheaper push has
+    // made stale. Dropping either one lets a pixel be expanded twice.
+    if (settled[index]) continue;
+    if (here > field.values[index]) continue;
+    settled[index] = 1;
+    arrival = here > arrival ? here : arrival;
+
+    const size_t currentRow = index / static_cast<size_t>(image.width);
+    const int currentColumn = static_cast<int>(index % static_cast<size_t>(image.width));
+    for (int k = 0; k < 8; ++k) {
+      const int nextColumn = currentColumn + dx8[k];
+      if (nextColumn < 0 || nextColumn >= image.width) continue;
+      const int nextRow = static_cast<int>(currentRow) + dy8[k];
+      if (nextRow < 0 || nextRow >= image.height) continue;
+      const size_t next = static_cast<size_t>(nextRow) * static_cast<size_t>(image.width) +
+                          static_cast<size_t>(nextColumn);
+      if (settled[next]) continue;
+
+      const RGB& from = image.pixels[index];
+      const RGB& to = image.pixels[next];
+      const float dr = from.r - to.r;
+      const float dg = from.g - to.g;
+      const float db = from.b - to.b;
+      // Normalised so a full black-to-white jump is 1.0, which is the units the 0.45 threshold and
+      // the edge scale are both expressed in.
+      const float colour = std::sqrt(dr * dr + dg * dg + db * db) * kInvSqrtThree;
+      const float step = k < 4 ? 1.0f : kSqrtTwo;
+      float cost = step * (edgeScale * colour + 1.0f);
+      // The barrier REPLACES the cost with infinity rather than scaling it, and it is applied
+      // after the multiply — so a block is a block regardless of step length or edge scale.
+      if (blockAcrossEdges && colour > kEdgeJump) cost = kInfinity;
+      // One test covers both abandonments: +infinity costs nothing to reject, and a NaN cost
+      // (from a NaN colour) fails `cost < infinity` too.
+      if (!(cost < kInfinity)) continue;
+
+      const float candidate = here + cost;
+      if (!(candidate < field.values[next])) continue;   // strictly better, or leave it alone
+      field.values[next] = candidate;
+      frontier.push(std::make_pair(candidate, next));
+    }
+  }
+
+  field.span = arrival;
+  return field;
 }
 
 }  // namespace maskflow

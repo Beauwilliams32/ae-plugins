@@ -4,21 +4,18 @@
 // MaskFlow.plugin, not from source: the original C++ was destroyed on 2026-10-13 with no
 // remote and no backup.
 //
-// INCOMPLETE — the geometry helpers and the matte threshold are here; the field builder and
-// the entry point are not.
+// INCOMPLETE — everything but the entry point is here.
 //   recovered: clampf, edgeCostScaleFromTolerance, smoothstep, computeDownsampleDims,
 //              downsampleBoxFilter (+ the Image/RGB layout it pinned), upsampleBilinear,
-//              buildMatte (+ the ArrivalField layout it pinned)
-//   outstanding: computeArrivalField (290), computeMatteFullRes (151)
+//              buildMatte (+ the ArrivalField layout it pinned), computeArrivalField
+//   outstanding: computeMatteFullRes (151)
 //
-// Those two need `Params`, which is not recovered yet — which is why they are absent rather
-// than stubbed:
+// The one left needs `Params`, which nothing in the recovered code touches:
 //
-//   computeArrivalField(const Image&, float, float, float, bool)
 //   computeMatteFullRes(const Image&, const Params&)
 //
-// Everything declared here takes nothing but ints, floats, a std::vector and the two structs
-// whose layout the code itself pins.
+// Everything declared here takes ints, floats, a std::vector and the two structs whose layout
+// the code itself pins.
 
 #pragma once
 #include <vector>
@@ -220,5 +217,39 @@ std::vector<float> upsampleBilinear(const std::vector<float>& src, int srcW, int
  */
 std::vector<float> buildMatte(const ArrivalField& field, float tolerance, float halfWidth,
                               bool invert);
+
+/**
+ * [exact] The arrival-time field: a Dijkstra flood from one seed pixel over the 8-neighbourhood,
+ * where crossing an edge costs the COLOUR DISTANCE between the two pixels. 290 instructions, read
+ * in full (row AE-05, 2026-10-27).
+ *
+ *     seedRow = lround(clamp(row,    0, height-1))      ; fcvtas: ties AWAY from zero
+ *     seedCol = lround(clamp(column, 0, width-1))
+ *     values.assign(width*height, +infinity) ; values[seed] = 0 ; span = 0
+ *
+ *     colour = |from.rgb - to.rgb| * (1/sqrt3)          ; normalised, so 1.0 is a full-scale jump
+ *     step   = k < 4 ? 1 : sqrt2                        ; the four 4-connected offsets come first
+ *     cost   = step * (edgeCostScaleFromTolerance(tolerance) * colour + 1)
+ *     if (blockAcrossEdges && colour > 0.45f) cost = +infinity
+ *     candidate = here + cost ; keep it only if candidate < values[neighbour]
+ *
+ * `span` is the largest arrival the flood actually SETTLED, not the largest in the array — an
+ * unreachable pixel keeps +infinity forever and is excluded, so `span` stays finite and is the
+ * number `buildMatte` multiplies a tolerance by.
+ *
+ * The two guards that make the flood correct are the two that look redundant:
+ *
+ *   * `settled[i]` rejects a pixel reached by a better route after it was queued.
+ *   * `here > values[i]` rejects a QUEUE ENTRY a later, cheaper push has made stale.
+ *
+ * Dropping either one expands pixels twice; dropping them together is a different algorithm.
+ *
+ * `blockAcrossEdges` REPLACES the cost with infinity rather than scaling it, and it is applied
+ * after the multiply — so a block does not depend on the step length or the edge scale. +infinity
+ * and NaN both fail the same `cost < infinity` test, which is how a NaN colour (rather than a
+ * barrier) also abandons the edge.
+ */
+ArrivalField computeArrivalField(const Image& image, float column, float row, float tolerance,
+                                 bool blockAcrossEdges);
 
 }  // namespace maskflow

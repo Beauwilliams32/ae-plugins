@@ -349,6 +349,118 @@ int main() {
     }
   }
 
+  std::printf("maskflow::computeArrivalField\n");
+  {
+    auto strip = [](std::vector<maskflow::RGB> pixels) {
+      maskflow::Image img;
+      img.width = static_cast<int>(pixels.size());
+      img.height = 1;
+      img.pixels = std::move(pixels);
+      return img;
+    };
+    auto square = [](int side, maskflow::RGB colour) {
+      maskflow::Image img;
+      img.width = side;
+      img.height = side;
+      img.pixels.assign(static_cast<size_t>(side) * static_cast<size_t>(side), colour);
+      return img;
+    };
+    const maskflow::RGB black{0.0f, 0.0f, 0.0f};
+    const maskflow::RGB white{1.0f, 1.0f, 1.0f};
+
+    // A uniform image: cost is purely geometric. tolerance 100 zeroes the edge scale, so every
+    // edge costs its own LENGTH — 1 orthogonally, sqrt2 diagonally — and the flood is a true
+    // Euclidean-ish distance transform from the seed.
+    {
+      const auto f = maskflow::computeArrivalField(square(3, black), 1.0f, 1.0f, 100.0f, false);
+      check(f.width == 3 && f.height == 3, "the field takes the image's shape");
+      check(f.values.size() == 9, "one arrival per pixel");
+      checkNear(f.values[4], 0.0, 1e-6, "the seed itself is 0");
+      checkNear(f.values[1], 1.0, 1e-6, "an orthogonal neighbour is 1");
+      checkNear(f.values[3], 1.0, 1e-6, "in both directions");
+      checkNear(f.values[0], 1.4142135, 1e-6, "a diagonal neighbour is sqrt2 — the 8-neighbourhood");
+      checkNear(f.values[8], 1.4142135, 1e-6, "including the far corner");
+      checkNear(f.values[5], 1.0, 1e-6, "an edge-reached pixel is still orthogonal, so 1");
+      checkNear(f.values[7], 1.0, 1e-6, "in either direction");
+      // With a seed at the centre of a 3x3 the furthest pixel is a corner, so the largest arrival
+      // the flood settles is sqrt2 — NOT 2. Span is a measurement of the flood, not of the box.
+      checkNear(f.span, 1.4142135, 1e-6, "span is the largest arrival the flood settled");
+    }
+
+    // The seed snaps with fcvtas — round to NEAREST, ties away from zero — and clamps to the last
+    // index rather than running past it.
+    {
+      const auto mid = maskflow::computeArrivalField(strip({black, black, black, black, black}), 0.6f, 0.0f, 100.0f, false);
+      checkNear(mid.values[1], 0.0, 1e-6, "column 0.6 rounds to index 1");
+      const auto low = maskflow::computeArrivalField(strip({black, black, black, black, black}), 0.4f, 0.0f, 100.0f, false);
+      checkNear(low.values[0], 0.0, 1e-6, "column 0.4 rounds to index 0");
+      const auto tie = maskflow::computeArrivalField(strip({black, black, black, black, black}), 1.5f, 0.0f, 100.0f, false);
+      checkNear(tie.values[2], 0.0, 1e-6, "a tie (1.5) goes AWAY from zero, to 2");
+      const auto past = maskflow::computeArrivalField(strip({black, black, black, black, black}), 99.0f, -99.0f, 100.0f, false);
+      checkNear(past.values[4], 0.0, 1e-6, "a position past the edge clamps to the LAST index");
+      checkNear(past.span, 4.0, 1e-6, "and the flood still walks the whole strip");
+    }
+
+    // The barrier flag. A black/white/black strip: the two colour jumps are full-scale edges
+    // (a normalised distance of 1.0, well over the 0.45 threshold), so the flood cannot cross them.
+    {
+      const auto blocked = maskflow::computeArrivalField(
+          strip({black, black, white, black, black}), 0.0f, 0.0f, 100.0f, true);
+      checkNear(blocked.values[0], 0.0, 1e-6, "the reachable side is flooded");
+      checkNear(blocked.values[1], 1.0, 1e-6, "up to the edge");
+      const float inf = std::numeric_limits<float>::infinity();
+      check(blocked.values[2] == inf, "the far side is UNREACHED, and stays at infinity");
+      check(blocked.values[4] == inf, "all of it");
+      checkNear(blocked.span, 1.0, 1e-6, "span only counts what was settled");
+
+      // Same image, flag off: the flood crosses, and now the edge scale is what the crossing costs.
+      const auto open = maskflow::computeArrivalField(
+          strip({black, black, white, black, black}), 0.0f, 0.0f, 100.0f, false);
+      checkNear(open.values[4], 4.0, 1e-6, "with the barrier off the whole strip is reachable");
+      checkNear(open.span, 4.0, 1e-6, "and span is the far end");
+
+      // tolerance 0 is the MAXIMUM edge scale (40), so crossing a full-scale edge costs 1 + 40.
+      const auto steep = maskflow::computeArrivalField(
+          strip({black, black, white, black, black}), 0.0f, 0.0f, 0.0f, false);
+      checkNear(steep.values[1], 1.0, 1e-4, "a flat edge still costs 1");
+      checkNear(steep.values[2], 42.0, 1e-3, "a full-scale colour jump costs 1 + 40, not 1");
+      checkNear(steep.values[3], 83.0, 1e-3, "crossing BACK is another full-scale edge");
+      checkNear(steep.span, 84.0, 1e-3, "so both jumps are paid, and span carries the second");
+
+      // Half-way between the two tolerances: scale 20.
+      const auto half = maskflow::computeArrivalField(
+          strip({black, black, white, black, black}), 0.0f, 0.0f, 50.0f, false);
+      checkNear(half.values[2], 22.0, 1e-3, "a middle tolerance pays a middle price");
+    }
+
+    // The colour distance is NORMALISED by sqrt3, so the scale is the same for one channel as for
+    // three: a pure red step of 1.0 costs the same as black -> white.
+    {
+      const maskflow::RGB red{1.0f, 0.0f, 0.0f};
+      const auto one = maskflow::computeArrivalField(strip({black, red}), 0.0f, 0.0f, 0.0f, false);
+      const auto three = maskflow::computeArrivalField(strip({black, white}), 0.0f, 0.0f, 0.0f, false);
+      check(one.values[1] != three.values[1], "one channel and three channels are NOT the same");
+      checkNear(one.values[1], 1.0 + 40.0 / 1.7320508, 1e-3,
+                "a single-channel jump is normalised by sqrt3, not by 1");
+    }
+
+    // Guards: a degenerate image keeps its declared shape, an empty field and a zero span.
+    {
+      maskflow::Image none;
+      none.width = 0;
+      none.height = 5;
+      const auto f = maskflow::computeArrivalField(none, 0.0f, 0.0f, 50.0f, false);
+      check(f.width == 0 && f.height == 5, "the declared shape is copied before the guard");
+      check(f.values.empty(), "and no values are produced");
+      checkNear(f.span, 0.0, 1e-9, "span stays 0, not infinity");
+      maskflow::Image neg;
+      neg.width = -3;
+      neg.height = -4;
+      const auto g = maskflow::computeArrivalField(neg, 0.0f, 0.0f, 50.0f, false);
+      check(g.values.empty() && g.span == 0.0f, "negative dimensions are a guard, not an allocation");
+    }
+  }
+
   if (failures == 0) std::printf("ALL RECOVERED MASKFLOW MATHS VERIFIED (%d checks)\n", passes);
   else std::printf("%d FAILURES out of %d checks\n", failures, passes + failures);
   return failures == 0 ? 0 : 1;

@@ -6,9 +6,9 @@ destroyed on 2026-10-13; the binary is the only copy and it is unstripped.
 
 ## State
 
-Seven of the nine authored functions are recovered. **Three came out instruction-identical
-on the first transcription**; the other four are each one instruction off, which is the
-closest result short of identity and is recorded rather than chased.
+Eight of the nine authored functions are recovered. **Three came out instruction-identical
+on the first transcription**; four are one instruction off and `computeArrivalField` three,
+which is the closest result short of identity and is recorded rather than chased.
 
 | Function | Instrs | State |
 |---|---|---|
@@ -19,12 +19,8 @@ closest result short of identity and is recorded rather than chased.
 | `downsampleBoxFilter` | 126 | Recovered — 125 here (one callee-saved register short) |
 | `upsampleBilinear` | 168 | Recovered — 167 here (same cause) |
 | `buildMatte` | 169 | Recovered — 168 here; the scalar tail fuses a compare the bundle repeats |
-| `computeMatteFullRes` | 151 | Identified only |
-| `computeArrivalField` | 290 | Identified only |
-
-The two outstanding functions both take `Params`, which is not recovered, which is why they
-are absent rather than stubbed. Everything here takes ints, floats, a `std::vector` and
-either `Image` or `ArrivalField` — the two structs the recovered code itself pins.
+| `computeArrivalField` | 290 | Recovered — 293 here; the index multiply is `mul`+`add` where the bundle has `umaddl` |
+| `computeMatteFullRes` | 151 | Identified only — the only one that needs `Params` |
 
 ## Mapping this namespace closed a hole in the duplication check
 
@@ -203,18 +199,76 @@ branch is for, and the self-check reproduces it.
 A NaN arriving in that branch is not a special case of its own: `t` is NaN, both selects pass it
 through unchanged, and the polynomial hands the NaN back.
 
+## `computeArrivalField` is a Dijkstra flood, and `span` is what it settled
+
+The field `buildMatte` consumes is built here: one seed pixel, an 8-neighbour flood, and an edge
+cost measured in COLOUR.
+
+```
+seedRow = lround(clamp(row, 0, height-1))        ; fcvtas — ties AWAY from zero
+values.assign(width*height, +infinity) ; values[seed] = 0
+colour  = |from.rgb - to.rgb| * (1/sqrt3)        ; normalised, so 1.0 is a full-scale jump
+step    = k < 4 ? 1 : sqrt2                      ; the 4-connected offsets come FIRST
+cost    = step * (edgeCostScaleFromTolerance(tolerance) * colour + 1)
+if (blockAcrossEdges && colour > 0.45) cost = +infinity
+candidate = here + cost
+```
+
+Both file-scope tables are eight-entry — `dx8` and `dy8` at 0x3f64 and 0x3f84 — and the ORDER of
+the first four is load-bearing, because the step length is chosen from the index rather than from
+the offsets:
+
+| k | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|---|
+| dx | +1 | −1 | 0 | 0 | +1 | +1 | −1 | −1 |
+| dy | 0 | 0 | +1 | −1 | +1 | −1 | +1 | −1 |
+| step | 1 | 1 | 1 | 1 | √2 | √2 | √2 | √2 |
+
+Read out of the listing, that length is two selects — `fcsel s0, sqrt2, 1.0, hi` on `k > 1` then
+`fcsel s0, 1.0, s0, eq` on `(k & 6) == 2` — which is why the recovered source tests `k < 4` and
+still matches: the two predicates agree on all eight indices.
+
+Four things a rewrite loses:
+
+- **The colour distance is normalised by √3, not left raw.** `|Δrgb|` ranges 0..√3, so dividing by
+  √3 puts the edge scale and the 0.45 threshold in the same units: a full black-to-white jump is
+  1.0. Without it a three-channel jump costs √3 times what a one-channel jump does *and* the
+  barrier threshold means something different depending on how many channels moved.
+- **`blockAcrossEdges` REPLACES the cost with infinity**, after the multiply. It is not a big
+  number and not a scaled penalty — so a block does not depend on the step length, and a blocked
+  diagonal is as blocked as a blocked orthogonal.
+- **Infinity and NaN abandon the edge through the same test.** `fcmp s0, s14 / b.eq` handles the
+  barrier and `b.vs` handles an unordered product; writing `!(cost < infinity)` covers both, and
+  that is what makes a NaN colour (not just a barrier) refuse to propagate.
+- **There are TWO staleness guards and both are needed.** `settled[i]` rejects a pixel reached by a
+  better route after it was queued; `here > values[i]` rejects a QUEUE ENTRY that a later, cheaper
+  push has made stale. A binary heap has no decrease-key, so the second check is the only thing
+  keeping a stale entry from expanding.
+
+### `span` is a measurement, not a bound
+
+`span` is the largest arrival the flood actually POPPED, tracked as `s9 = max(s9, s15)` as each
+entry is settled — not the largest value in the array. Unreachable pixels keep `+infinity`
+forever, so a `max` over the buffer would be infinity and `buildMatte` would compute a window at
+infinity. The self-check pins this: a strip cut in half by a colour jump reports `span` 1, not
+infinity.
+
+### The seed snaps with `fcvtas`
+
+`lround`, not truncation and not `floor`: column 0.6 seeds at index 1, column 0.4 at 0, and a
+0.5 tie goes AWAY from zero to 1. The clamp is on both sides and pulls a position past the far
+edge back to the LAST index — a seed of 99 on a 5-pixel strip is pixel 4, not out of range and
+not clamped to 0.
+
 ## What is next
 
-The last two functions need `Params` modelled, which nothing has pinned yet:
+One function left, and it is the only one in the whole fleet still blocked on a struct nothing
+has pinned:
 
 ```
-computeArrivalField(const Image&, float, float, float, bool)  290 instrs
-computeMatteFullRes(const Image&, const Params&)              151 instrs
+computeMatteFullRes(const Image&, const Params&)   151 instrs
 ```
 
-`computeArrivalField` builds the field `buildMatte` consumes: it keeps a
-`std::vector<std::pair<float, size_t>>` of (arrival, index) pairs — a front to settle in arrival
-order — and has two file-scope eight-entry tables, `dx8` and `dy8` at 0x3f64 and 0x3f84, which
-are **eight** neighbour offsets rather than nine. It writes the largest arrival it sees to
-`field.span`, which is the float `buildMatte` multiplies the tolerance by.
-`computeMatteFullRes` is the entry point that runs downsample → field → matte → upsample.
+It is the entry point that runs downsample → field → matte → upsample. `Params` has to be
+modelled from its own accesses before it can be written; every other function in MaskFlow now
+takes only types that are recovered.
