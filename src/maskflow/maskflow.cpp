@@ -81,4 +81,48 @@ DownsampleDims computeDownsampleDims(int width, int height, int maxDim) {
   };
 }
 
+
+// __ZN8maskflow19downsampleBoxFilterERKNS_5ImageEii, 126 instrs
+//
+// The rect arithmetic is integer division per output pixel (not a running accumulator), which is
+// why the mapping is exact for any output size rather than only for integer ratios.
+Image downsampleBoxFilter(const Image& src, int outW, int outH) {
+  Image out;
+  const int ow = outW > 1 ? outW : 1;
+  const int oh = outH > 1 ? outH : 1;
+  out.width = ow;
+  out.height = oh;
+  out.pixels.assign(static_cast<size_t>(ow) * static_cast<size_t>(oh), RGB{0.0f, 0.0f, 0.0f});
+  if (src.width < 1 || src.height < 1) return out;
+
+  for (int oy = 0; oy < oh; ++oy) {
+    const int iy0 = (src.height * oy) / oh;
+    const int iy1 = (src.height * (oy + 1)) / oh;
+    int iyEnd = iy0 + 1 > iy1 ? iy0 + 1 : iy1;      // csinc: at least one source row
+    if (iyEnd > src.height) iyEnd = src.height;
+    for (int ox = 0; ox < ow; ++ox) {
+      const int ix0 = (src.width * ox) / ow;
+      const int ix1 = (src.width * (ox + 1)) / ow;
+      int ixEnd = ix0 + 1 > ix1 ? ix0 + 1 : ix1;
+      if (ixEnd > src.width) ixEnd = src.width;
+
+      float r = 0.0f, g = 0.0f, b = 0.0f;
+      int count = 0;
+      for (int y = iy0; y < iyEnd; ++y) {
+        const RGB* row = &src.pixels[static_cast<size_t>(y) * static_cast<size_t>(src.width)];
+        for (int x = ix0; x < ixEnd; ++x) {
+          r += row[x].r;
+          g += row[x].g;
+          b += row[x].b;
+          ++count;
+        }
+      }
+      const float divisor = static_cast<float>(count > 1 ? count : 1);   // an empty rect is black
+      out.pixels[static_cast<size_t>(oy) * static_cast<size_t>(ow) + static_cast<size_t>(ox)] =
+          RGB{r / divisor, g / divisor, b / divisor};
+    }
+  }
+  return out;
+}
+
 }  // namespace maskflow

@@ -125,6 +125,52 @@ int main() {
     check(true, "the 12-byte shape holds (checked at compile time)");
   }
 
+  // --- downsampleBoxFilter (recovered 2026-10-27): an integer box average with a total mapping.
+  std::printf("maskflow::downsampleBoxFilter\n");
+  {
+    auto makeImage = [](int w, int h, float value) {
+      maskflow::Image img;
+      img.width = w;
+      img.height = h;
+      img.pixels.assign(static_cast<size_t>(w) * static_cast<size_t>(h), maskflow::RGB{value, value * 2.0f, value * 3.0f});
+      return img;
+    };
+
+    const maskflow::Image flat = makeImage(8, 8, 0.25f);
+    const maskflow::Image half = maskflow::downsampleBoxFilter(flat, 4, 4);
+    check(half.width == 4 && half.height == 4, "the output is the requested size");
+    check(half.pixels.size() == 16, "with one pixel per cell");
+    checkNear(half.pixels[0].r, 0.25f, 1e-6f, "a constant image averages to itself");
+    checkNear(half.pixels[7].b, 0.75f, 1e-6f, "on every channel (b = 3r here)");
+
+    // A 2x2 block average, checked by hand on a ramp: source row 0..1, col 0..1 = 0,1,2,3 -> 1.5
+    maskflow::Image ramp;
+    ramp.width = 4;
+    ramp.height = 4;
+    ramp.pixels.resize(16);
+    for (int y = 0; y < 4; ++y)
+      for (int x = 0; x < 4; ++x) {
+        const float v = static_cast<float>(y * 4 + x);
+        ramp.pixels[static_cast<size_t>(y) * 4 + static_cast<size_t>(x)] = maskflow::RGB{v, v, v};
+      }
+    const maskflow::Image quarters = maskflow::downsampleBoxFilter(ramp, 2, 2);
+    checkNear(quarters.pixels[0].r, 2.5f, 1e-6f, "the top-left block averages its four samples");
+    checkNear(quarters.pixels[3].r, 12.5f, 1e-6f, "and so does the bottom-right");
+
+    // Upsampling is a NEAREST-neighbour copy through the same code path: a rect can only be one
+    // pixel wide, never empty, which is what the max(i0 + 1, i1) exists for.
+    const maskflow::Image wider = maskflow::downsampleBoxFilter(ramp, 8, 8);
+    check(wider.width == 8 && wider.height == 8, "a larger output is produced");
+    checkNear(wider.pixels[0].r, 0.0f, 1e-6f, "the first sample is copied, not averaged away");
+    checkNear(wider.pixels[8 * 7 + 7].r, 15.0f, 1e-6f, "and so is the last");
+
+    const maskflow::Image degW = maskflow::downsampleBoxFilter(ramp, 0, 3);
+    check(degW.width == 1 && degW.height == 3, "a zero dimension is floored at 1");
+    const maskflow::Image emptySrc = maskflow::downsampleBoxFilter(maskflow::Image{}, 2, 2);
+    check(emptySrc.width == 2 && emptySrc.height == 2, "an empty source still sizes the output");
+    checkNear(emptySrc.pixels[0].r, 0.0f, 1e-6f, "and comes out black rather than NaN");
+  }
+
   if (failures == 0) std::printf("ALL RECOVERED MASKFLOW MATHS VERIFIED (%d checks)\n", passes);
   else std::printf("%d FAILURES out of %d checks\n", failures, passes + failures);
   return failures == 0 ? 0 : 1;

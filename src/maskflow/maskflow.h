@@ -5,15 +5,17 @@
 // remote and no backup.
 //
 // INCOMPLETE — the geometry helpers are here and the matte is not.
-//   recovered: clampf, edgeCostScaleFromTolerance, smoothstep, computeDownsampleDims
-//   outstanding: downsampleBoxFilter (126), upsampleBilinear (168), buildMatte (169),
-//              computeMatteFullRes (151), computeArrivalField (290)
+//   recovered: clampf, edgeCostScaleFromTolerance, smoothstep, computeDownsampleDims,
+//              downsampleBoxFilter (+ the Image/RGB layout it pinned)
+//   outstanding: upsampleBilinear (168), buildMatte (169), computeMatteFullRes (151),
+//              computeArrivalField (290)
 //
 // The five outstanding functions all take `Image`, `Params` or `ArrivalField`, none of
 // which is recovered yet — which is why they are absent rather than stubbed. The four
 // here take nothing but ints and floats.
 
 #pragma once
+#include <vector>
 #include <cstddef>
 
 namespace maskflow {
@@ -90,5 +92,42 @@ float smoothstep(float edge0, float edge1, float x);
  * a very small `maxDim` still names a real image.
  */
 DownsampleDims computeDownsampleDims(int width, int height, int maxDim);
+
+// ---------------------------------------------------------------------------
+// [inferred names, recovered layout] A colour image: two ints then a vector.
+//
+// `downsampleBoxFilter` pins it: the width is at +0x0, the height at +0x4, the pixel buffer
+// pointer at +0x8, and each RGB is 12 bytes (`mov w13, #0xc` is the stride multiplier). A row is
+// therefore `width * 12` bytes, which the listing computes as `(w + w*2) * 4`.
+// ---------------------------------------------------------------------------
+struct RGB {
+  float r;
+  float g;
+  float b;
+};
+
+struct Image {
+  int width = 0;
+  int height = 0;
+  std::vector<RGB> pixels;
+};
+
+static_assert(sizeof(RGB) == 12, "the box filter strides rows by 12 bytes per pixel");
+
+/**
+ * [exact] Downsample by an integer box average: each output pixel is the mean of the source
+ * rectangle that maps onto it. 126 instructions, read in full (row AE-05, 2026-10-27).
+ *
+ *     ow = max(outW, 1);  oh = max(outH, 1)
+ *     out.resize(ow * oh, black)
+ *     for oy: iy0 = (height * oy) / oh;  iy1 = (height * (oy+1)) / oh
+ *             iyEnd = min(height, max(iy0 + 1, iy1))        ; so every row maps to >= 1 pixel
+ *     for ox: the same in x, then the mean of src[ix0..ixEnd) x [iy0..iyEnd)
+ *
+ * The `+ 1` in the max is what makes the mapping TOTAL: with more output pixels than source ones a
+ * rect can only be one pixel wide, never empty — and if it somehow is empty the divisor is floored
+ * at 1 (`csinc`), so the pixel comes out BLACK rather than NaN.
+ */
+Image downsampleBoxFilter(const Image& src, int outW, int outH);
 
 }  // namespace maskflow

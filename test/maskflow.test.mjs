@@ -21,8 +21,9 @@ const SRC = path.join(ROOT, "src", "maskflow");
 const BUNDLE = "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media"
   + "/MaskFlow.plugin/Contents/MacOS/MaskFlow";
 
-const RECOVERED = ["clampf", "edgeCostScaleFromTolerance", "smoothstep", "computeDownsampleDims"];
-const OUTSTANDING = ["downsampleBoxFilter", "upsampleBilinear", "buildMatte",
+// downsampleBoxFilter joined on 2026-10-27 (row AE-05), once Image/RGB were modelled.
+const RECOVERED = ["clampf", "edgeCostScaleFromTolerance", "smoothstep", "computeDownsampleDims", "downsampleBoxFilter"];
+const OUTSTANDING = ["upsampleBilinear", "buildMatte",
                      "computeMatteFullRes", "computeArrivalField"];
 
 function bundlesInstalled() {
@@ -91,7 +92,7 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
     "smoothstep should compile to within one instruction of the bundle's 19");
 
   const summary = out.trim().split("\n").pop();
-  assert.match(summary, /3 identical, 1 differing, 5 not implemented/,
+  assert.match(summary, /3 identical, 2 differing, 4 not implemented/,
     `the differ's tally moved: ${summary}`);
 });
 
