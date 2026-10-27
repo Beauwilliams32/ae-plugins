@@ -31,6 +31,7 @@ export const BUNDLES = {
   beatgrid: "BeatGridRuler",
   maskflow: "MaskFlow",
   shake: "ShakeCapture",
+  motioncurvex: "MotionCurveX",
 };
 
 /** Recovered namespace directories, discovered from the tree. */

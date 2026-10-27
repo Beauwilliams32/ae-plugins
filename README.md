@@ -82,14 +82,16 @@ npm run status                  # regenerate RECOVERY-STATUS.md
 
 Be clear-eyed about this:
 
-- **Most function bodies.** Fifteen namespaces are recovered (see below); the other
+- **Most function bodies.** Sixteen namespaces exist under `src/` (see below); the other
   effects' DSP is still machine code. Names and signatures are free, behaviour needs
   per-function disassembly, and that is the bulk of the remaining work.
-- **`lutblend::parseCube`** (1924 instructions) is identified but unread, along with
-  `echo`'s host integration and 12 effects' bodies — BeatSnap is the most recent
-  namespace opened, and four of its eleven functions are still unread. Where a body is unread it is
-  **absent rather than stubbed**, and a test asserts it stays absent, so a stub cannot
-  quietly make a namespace look complete.
+- **Several function bodies.** `echo`'s host integration, twelve effects' bodies, and four of
+  BeatSnap's eleven functions are still unread. Where a body is unread it is **absent rather than
+  stubbed**, and a test asserts it stays absent, so a stub cannot quietly make a namespace look
+  complete. `lutblend::parseCube` (the fleet's largest function) was reconstructed from its recovered
+  specification on 2026-10-27, and `motioncurve::` is **built from scratch** — the bundle keeps only
+  its symbol list, which is why that namespace has no transcription to compare against and is
+  verified by property checks instead.
 - **The original build system.** No Makefile, no CMake. The SDK version is known and
   verified (`0x000d001d` — AE SDK 25.6); the original flags are not.
 - **The original DSP test suite.** Gone.
@@ -120,8 +122,9 @@ Two findings already worth acting on:
 
 ## Recovered source
 
-Fifteen recovered namespaces, all transcribed from the disassembly with per-function commentary
-citing the instructions that establish each behaviour:
+Sixteen namespaces under `src/`. Fifteen are transcribed from the disassembly with per-function commentary citing the
+instructions that establish each behaviour; `motioncurve::` is the exception — built from scratch from its surviving
+symbol list, and marked as such in its own row:
 
 | Module | Contents | State |
 |---|---|---|
@@ -133,6 +136,7 @@ citing the instructions that establish each behaviour:
 | `colorpulse::` | The whole analyser: `clampf`, `smoothScalar`, `luma709`, `smoothColor`, `saturationBoost`, `regionBounds`, `averageColor`, `brightestRegionColor`, `dominantColor`, `sampleColor`, plus the `RGB`/`Rect` layouts and the `Region`/`Mode` selectors | **complete — all 10 functions, 1123 instructions**, and five are INSTRUCTION-IDENTICAL. The host integration is unread |
 | `aff::` | The AutoFlickerFix DSP: `clampf`, `dbToGainClamp`, `computeGain`, `centerRegion`, `meanOf`, `medianOf`, `trimmedMean` (both overloads), `medianFilter`, `temporalTarget`, plus the `GainClamp` and `RegionBounds` layouts | **complete — all 10 functions, 719 instructions, 7 of them INSTRUCTION-IDENTICAL**. The host integration (`EffectMain`, `SampleWorldStat`, `DrawStatsBar`) is unread |
 | `spectra::` | FFT, Hann window, STFT, band analysis, falloff envelope, `downmixToMono`, plus `Spectrogram` | **complete — all 13 functions, shared by 4 effects**, and 7 of them INSTRUCTION-IDENTICAL. The host integration is unread |
+| `motioncurve::` | **Built from scratch, not transcribed (2026-10-27, row AE-06):** the eleven signatures the bundle still names — `clampf`, `quadraticPeakOffset`, `medianOfWindow`, `downsample2x`, `buildPyramid`, `sadAt`, `cropCenter`, `accumulate`, `smoothMovingAverage`, `temporalMedianFilter`, `estimateTranslation` — implemented as the translation-only stabilisation pipeline they describe (2x box downsample → SAD search → sub-pixel parabolic peak → coarse-to-fine pyramid walk → path accumulation → moving-average or median smoothing). `Image` and `Vec2` are MODELLED, since no surviving symbol carries their layout | **10 of 11** — 1 identical (`clampf`), 9 differing (expected: the bodies are new, so matching codegen is not the goal). The one absent symbol is `motioncurve::_GLOBAL__N_1`, the bundle's 80-instruction anonymous-namespace static *initialiser*, not a domain function. Verified by `selfcheck.cpp` instead of by the differ: known integer shifts are recovered to within 1 px at four magnitudes, a static scene reports exactly zero, a one-frame outlier is discarded by the median but not by the average, and every documented edge case is asserted |
 | `beatsnap::` | The onset-detection core: `clampf`, `isPowerOfTwo`, `medianOfWindow`, `adaptiveThreshold`, `hannWindow`, `fftRadix2`, `downmixToMono` | **7 of 11** — `computeFlux` (416), `renderValues` (190), `pickOnsets` (136) and `detectOnsets` (47) are outstanding. `medianOfWindow` is **instruction-identical** (58/58), and the five shared-DSP copies are checked by divergence parity against the `spectra::` originals rather than by assuming a copy of a copy is faithful |
 | `chromakey::` | The colour and statistics layer: `clampf`, `rgbToYCbCr` (Rec.601), `sensitivityToThreshold`, `chromaDistance`, `hueAngle`, `angularDiff`, `percentile`, `percentileUnsorted`, `gradientMagnitude` | **9 of 15** namespace symbols — the denominator is the differ's own count, which sees one symbol per template instantiation, so `analyzeFrame<T>` and `renderView<T>` account for two each. Outstanding: `spillScore` (82), `uniformityScore` (203) and those four instantiations. `StoreReadout` is outside the namespace and takes a `PF_InData*`, so it stays out of `src/`. Six of the nine are **instruction-identical**, `rgbToYCbCr` among them at 25 of 25 |
 | `noisefield::` | The noise core: `clampf`, `clampi`, `fbmAmplitudeSum`, `PermTable::build`, `noise3`, `fbm3`, and `kGrad3` — the twelve edge gradients of Perlin's improved noise, read out of the bundle's `__TEXT,__const` | **6 of 10** — three instruction-identical (`clampf`, `clampi`, `fbmAmplitudeSum`); `noise3` (183) and `fbm3` (51) compile to the bundle's instruction COUNT with a different register schedule, and are verified instead against an independently written textbook oracle — 4000 points agreeing to 7.8e-07. `PermTable::build` is Fisher-Yates over xorshift32 into a permutation written TWICE, which is what keeps `p[AA + 1]` in range. `fieldAt` (226), `curlField` (163) and the two `apply<T>` loops (408/412) are outstanding |
