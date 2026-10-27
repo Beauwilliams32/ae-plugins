@@ -175,6 +175,50 @@ int main() {
     check(hz > 900.0 && hz < 1100.0, label);
   }
 
+  // --- waveformColumns (recovered 2026-10-27): peak-hold per column, clamped to [-1, 1].
+  std::printf("pathscribe::waveformColumns\n");
+  {
+    const float track[8] = {0.0f, 0.5f, -0.9f, 0.2f, 1.5f, -2.0f, 0.1f, 0.0f};
+    check(pathscribe::waveformColumns(track, 8, 0, 8, 0).empty(), "columns < 1 gives an empty vector");
+    const std::vector<float> nullTrack = pathscribe::waveformColumns(nullptr, 8, 0, 8, 4);
+    check(nullTrack.size() == 4 && nullTrack[0] == 0.0f, "a null track gives the zero-filled array");
+    const std::vector<float> noEnd = pathscribe::waveformColumns(track, 8, 0, 0, 4);
+    check(noEnd.size() == 4 && noEnd[3] == 0.0f, "end < 1 likewise");
+
+    // `start` is the window's CENTRE, not its first sample: base = start - (end >> 1). So a
+    // centred read of an 8-sample track passes start = 4, and only then does column c inspect
+    // sample c. (Passing start = 0 shifts every column four samples left, which is the behaviour
+    // the first version of this check got wrong.)
+    const std::vector<float> shifted = pathscribe::waveformColumns(track, 8, 0, 8, 8);
+    checkNear(shifted[0], 0.0f, 1e-6f, "start = 0 inspects samples before the track and clamps to nothing");
+    checkNear(shifted[5], 0.5f, 1e-6f, "so column 5 lands on sample 1 (base = -4)");
+
+    // One column per sample: each column is that sample, clamped to [-1, 1] — the 1.5 and -2.0
+    // are clipped, and the SIGN is kept (the reducer compares magnitudes but stores the sample).
+    const std::vector<float> perSample = pathscribe::waveformColumns(track, 8, 4, 8, 8);
+    check(perSample.size() == 8, "one column per sample when columns == end");
+    checkNear(perSample[1], 0.5f, 1e-6f, "an in-range sample passes through");
+    checkNear(perSample[2], -0.9f, 1e-6f, "including its sign");
+    checkNear(perSample[4], 1.0f, 1e-6f, "a sample above 1 clips to 1");
+    checkNear(perSample[5], -1.0f, 1e-6f, "and one below -1 clips to -1");
+
+    // Two columns over the same track: each is the largest-magnitude sample of its half, so the
+    // -0.9 in the first half and the -2.0 (clipped) in the second win over their neighbours.
+    const std::vector<float> halves = pathscribe::waveformColumns(track, 8, 4, 8, 2);
+    checkNear(halves[0], -0.9f, 1e-6f, "the first half's peak is the largest magnitude, signed");
+    checkNear(halves[1], -1.0f, 1e-6f, "the second half's peak clips");
+
+    // Every answer is inside [-1, 1] and the output length is always `columns`.
+    bool bounded = true, sized = true;
+    for (int columns = 1; columns <= 16; ++columns) {
+      const std::vector<float> out = pathscribe::waveformColumns(track, 8, 4, 8, columns);
+      if (out.size() != static_cast<size_t>(columns)) sized = false;
+      for (float v : out) if (!(v >= -1.0f && v <= 1.0f)) bounded = false;
+    }
+    check(sized, "the output is always exactly `columns` long");
+    check(bounded, "and never leaves [-1, 1], whatever the column count");
+  }
+
   if (failures == 0) std::printf("ALL RECOVERED PATHSCRIBE MATHS VERIFIED (%d checks)\n", passes);
   else std::printf("%d FAILURES out of %d checks\n", failures, passes + failures);
   return failures == 0 ? 0 : 1;

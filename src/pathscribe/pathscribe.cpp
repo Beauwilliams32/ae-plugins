@@ -293,4 +293,34 @@ double binEdgeHz(int index, int count, double minHz, double maxHz) {
   return lo * std::pow(ratio, t);
 }
 
+
+// __ZN10pathscribe15waveformColumnsEPKfmlli, 80 instrs
+//
+// A peak-hold reducer. Every constant in it is a recovered immediate: `end >> 1` centres the
+// window on `start`, `fcvtms` floors the fractional span, and the final clamp is [-1, 1] because
+// the samples are already normalised audio.
+std::vector<float> waveformColumns(const float* samples, size_t count, long start, long end, int columns) {
+  std::vector<float> out;
+  if (columns < 1) return out;
+  out.assign(static_cast<size_t>(columns), 0.0f);
+  if (!samples || count == 0 || end < 1) return out;
+
+  const double span = static_cast<double>(end) / static_cast<double>(columns);
+  const long base = start - (end >> 1);
+  for (int column = 0; column < columns; ++column) {
+    const long a = static_cast<long>(std::floor(span * static_cast<double>(column)));
+    const long b = static_cast<long>(std::floor(span * static_cast<double>(column + 1)));
+    const long lo = base + a;
+    const long hi = b > a ? base + b : lo + 1;      // csinc: never an empty slice
+    float peak = 0.0f;
+    for (long j = lo; j < hi; ++j) {
+      if (j < 0 || static_cast<size_t>(j) >= count) continue;   // both bounds are tested in the listing
+      const float value = samples[static_cast<size_t>(j)];
+      if (std::fabs(value) > std::fabs(peak)) peak = value;     // the SIGNED sample, not the magnitude
+    }
+    out[static_cast<size_t>(column)] = peak > 1.0f ? 1.0f : (peak < -1.0f ? -1.0f : peak);
+  }
+  return out;
+}
+
 }  // namespace pathscribe

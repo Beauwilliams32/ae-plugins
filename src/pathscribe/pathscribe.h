@@ -118,4 +118,23 @@ double binEdgeHz(int index, int count, double minHz, double maxHz);
 // wrong reading produced a `max` where the bundle has a `min`.
 float spanCoverage(float frameIndex, float edge0, float edge1);
 
+/**
+ * [exact] A peak-hold waveform: `columns` values, each the sample of LARGEST MAGNITUDE in its own
+ * slice of the track, clamped to [-1, 1]. 80 instructions, read in full (row AE-05, 2026-10-27).
+ *
+ *   out.resize(columns, 0)
+ *   span = (double)end / columns                      ; samples per column, fractional
+ *   base = start - (end >> 1)                         ; the window is centred on `start`
+ *   for col i:
+ *       a  = floor(span * i);  b = floor(span * (i + 1))
+ *       lo = base + a;         hi = (b > a) ? base + b : lo + 1     ; always at least one sample
+ *       peak = 0
+ *       for j in lo .. hi-1: if j in range and |samples[j]| > |peak|: peak = samples[j]
+ *       out[i] = clamp(peak, -1, 1)
+ *
+ * Note it keeps the SIGNED sample with the largest magnitude (not the magnitude), the range is
+ * half-open, and `columns < 1`, a null/empty track or `end < 1` all return the zero-filled array.
+ */
+std::vector<float> waveformColumns(const float* samples, size_t count, long start, long end, int columns);
+
 }  // namespace pathscribe
