@@ -461,6 +461,115 @@ int main() {
     }
   }
 
+  std::printf("maskflow::computeMatteFullRes\n");
+  {
+    auto square = [](int side, maskflow::RGB colour) {
+      maskflow::Image img;
+      img.width = side;
+      img.height = side;
+      img.pixels.assign(static_cast<size_t>(side) * static_cast<size_t>(side), colour);
+      return img;
+    };
+    auto strip = [](int width, maskflow::RGB colour) {
+      maskflow::Image img;
+      img.width = width;
+      img.height = 1;
+      img.pixels.assign(static_cast<size_t>(width), colour);
+      return img;
+    };
+    const maskflow::RGB black{0.0f, 0.0f, 0.0f};
+
+    // A 5x5: the seed is at the centre, the field is pure geometry (tolerance 100), span is the
+    // diagonal 2*sqrt2, and the threshold sits at half of it — which is EXACTLY sqrt2, the distance
+    // of the eight diagonal neighbours. So those eight come out at 0.5 and nothing else does.
+    {
+      maskflow::Params p;
+      p.seedColumn = 2.0f;
+      p.seedRow = 2.0f;
+      p.edgeTolerance = 100.0f;
+      p.threshold = 50.0f;
+      p.band = 0.01f;
+      const auto m = maskflow::computeMatteFullRes(square(5, black), p);
+      check(m.size() == 25, "a 5x5 is under the 640 cap, so no downscale and no resize");
+      checkNear(m[12], 1.0, 1e-6, "the seed (distance 0) is below the window, so the matte is 1");
+      checkNear(m[6], 0.5, 1e-6, "a diagonal neighbour sits exactly ON the window centre");
+      checkNear(m[0], 0.0, 1e-6, "the far corner is past the window, so 0");
+      checkNear(m[1], 0.0, 1e-6, "and so is an orthogonal distance of 2");
+
+      maskflow::Params inv = p;
+      inv.invert = true;
+      const auto flipped = maskflow::computeMatteFullRes(square(5, black), inv);
+      checkNear(flipped[12], 0.0, 1e-6, "invert flips the seed to 0");
+      checkNear(flipped[0], 1.0, 1e-6, "and the corner to 1");
+
+      maskflow::Params flat = p;
+      flat.threshold = 0.0f;
+      const auto ones = maskflow::computeMatteFullRes(square(5, black), flat);
+      check(ones[0] == 1.0f && ones[12] == 1.0f && ones[24] == 1.0f,
+            "a threshold of 0 degenerates to an all-ones matte, seed included");
+
+      // The band is floored at 0.01f HERE, before buildMatte's own 1e-4 floor can matter.
+      maskflow::Params thin = p;
+      thin.band = 0.0f;
+      const auto floored = maskflow::computeMatteFullRes(square(5, black), thin);
+      checkNear(floored[6], m[6], 1e-6, "band 0 is floored to the same 0.01 window");
+    }
+
+    // The 640 cap is a CONSTANT: 640 stays at full resolution, 641 does not. The difference is
+    // visible — a full-resolution matte of a uniform strip steps 0/1, while the downscaled one is
+    // interpolated back up and has values strictly between them.
+    {
+      maskflow::Params p;
+      p.seedColumn = 0.0f;
+      p.seedRow = 0.0f;
+      p.edgeTolerance = 100.0f;
+      p.threshold = 50.0f;
+      p.band = 0.01f;
+      auto countBetween = [](const std::vector<float>& m) {
+        int n = 0;
+        for (float v : m)
+          if (v > 0.01f && v < 0.99f) ++n;
+        return n;
+      };
+      const auto exact = maskflow::computeMatteFullRes(strip(640, black), p);
+      check(exact.size() == 640, "a 640-wide image is left alone");
+      check(countBetween(exact) == 0, "and its matte is a hard 0/1 step");
+      checkNear(exact[0], 1.0, 1e-6, "seeded at 0, so the near end is 1");
+      checkNear(exact[639], 0.0, 1e-6, "and the far end is 0");
+
+      const auto resized = maskflow::computeMatteFullRes(strip(641, black), p);
+      check(resized.size() == 641, "a 641-wide image comes back at its ORIGINAL width");
+      check(countBetween(resized) >= 1,
+            "but it went through downscale+upsample, so its matte has interpolated values");
+    }
+
+    // A tall image crosses the cap on height and keeps its width: the whole matte is rebuilt at the
+    // original size, so the caller never sees the coarse one.
+    {
+      maskflow::Image tall;
+      tall.width = 4;
+      tall.height = 700;
+      tall.pixels.assign(4 * 700, black);
+      maskflow::Params p;
+      p.seedColumn = 0.0f;
+      p.seedRow = 0.0f;
+      p.edgeTolerance = 100.0f;
+      p.threshold = 50.0f;
+      const auto m = maskflow::computeMatteFullRes(tall, p);
+      check(m.size() == 2800, "4x700 is scaled on its LONGEST side and restored in full");
+      checkNear(m[0], 1.0, 1e-6, "the seed still reads 1 after the round trip");
+      check(!std::isnan(m[2799]), "and the far corner is a number, not NaN");
+    }
+
+    // Degenerate images fall out of the guard in computeDownsampleDims and an empty field.
+    {
+      maskflow::Image empty;
+      maskflow::Params p;
+      const auto m = maskflow::computeMatteFullRes(empty, p);
+      check(m.empty(), "an empty image produces an empty matte rather than a resize of nothing");
+    }
+  }
+
   if (failures == 0) std::printf("ALL RECOVERED MASKFLOW MATHS VERIFIED (%d checks)\n", passes);
   else std::printf("%d FAILURES out of %d checks\n", failures, passes + failures);
   return failures == 0 ? 0 : 1;

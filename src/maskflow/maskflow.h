@@ -4,18 +4,12 @@
 // MaskFlow.plugin, not from source: the original C++ was destroyed on 2026-10-13 with no
 // remote and no backup.
 //
-// INCOMPLETE — everything but the entry point is here.
-//   recovered: clampf, edgeCostScaleFromTolerance, smoothstep, computeDownsampleDims,
-//              downsampleBoxFilter (+ the Image/RGB layout it pinned), upsampleBilinear,
-//              buildMatte (+ the ArrivalField layout it pinned), computeArrivalField
-//   outstanding: computeMatteFullRes (151)
-//
-// The one left needs `Params`, which nothing in the recovered code touches:
-//
-//   computeMatteFullRes(const Image&, const Params&)
-//
-// Everything declared here takes ints, floats, a std::vector and the two structs whose layout
-// the code itself pins.
+// NAMESPACE-COMPLETE: every `maskflow::` symbol in the bundle is transcribed, so this header is a
+// full reconstruction rather than a partial one. The last one to land was `computeMatteFullRes`
+// (151 instructions, 2026-10-27), which also pinned `Params` — the third and last struct. All nine
+// are here; three compile instruction-identical to the bundle and the other six are one to three
+// instructions off, so treat the BEHAVIOUR (pinned by 162 self-check assertions) as the recovered
+// fact rather than the instruction stream.
 
 #pragma once
 #include <vector>
@@ -116,6 +110,43 @@ struct ArrivalField {
 static_assert(sizeof(ArrivalField) == 40, "two ints, a 24-byte vector, then one float");
 static_assert(offsetof(ArrivalField, values) == 8, "the buffer pointer the listing loads at +0x8");
 static_assert(offsetof(ArrivalField, span) == 0x20, "the float the listing loads at +0x20");
+
+// ---------------------------------------------------------------------------
+// [inferred names, recovered layout] The effect's parameters, as `computeMatteFullRes` reads
+// them. Every offset below is a load or store in that function; none is a guess about ORDER.
+//
+//   ldp s0, s1, [x22]        ; +0x00, +0x04 — the seed point, SCALED by the downsample factor
+//   ldr s2,    [x22, #0x8]   ; +0x08 — the arrival tolerance, a percentage of the field's span
+//   ldp s0, s1, [x22, #0xc]  ; +0x0c, +0x10 — the matte's threshold and its band's half width
+//   ldrb w1,   [x22, #0x14]  ; +0x14 — invert
+//   ldrb w1,   [x22, #0x15]  ; +0x15 — block across colour edges
+//
+// Only the first half width is scaled by the downsample factor, and only the band has a floor
+// (0.01f, applied here on top of `buildMatte`'s own 1e-4): the two percentages are scale-free.
+//
+// The NAMES are not in the binary and the TAIL is not readable from this function — nothing
+// touches +0x16 or beyond, so the model stops at 0x16 and pads to an 8-byte multiple. Sizes and
+// order below 0x16 are exact.
+// ---------------------------------------------------------------------------
+struct Params {
+  float seedColumn = 0.0f;        // +0x00
+  float seedRow = 0.0f;           // +0x04
+  float edgeTolerance = 100.0f;   // +0x08 — percentage; 100 is "ignore colour"
+  float threshold = 50.0f;        // +0x0c — percentage of the field's span
+  float band = 0.01f;             // +0x10 — scaled by the downsample factor, floored at 0.01
+  bool invert = false;            // +0x14
+  bool blockAcrossEdges = false;  // +0x15
+  char reserved[2] = {0, 0};      // +0x16 — [inferred] padding to 0x18
+};
+
+static_assert(offsetof(Params, seedColumn) == 0x00, "the first float pair the listing loads");
+static_assert(offsetof(Params, seedRow) == 0x04, "`ldp s0, s1, [x22]`");
+static_assert(offsetof(Params, edgeTolerance) == 0x08, "`ldr s2, [x22, #0x8]`");
+static_assert(offsetof(Params, threshold) == 0x0c, "the low half of `ldp s0, s1, [x22, #0xc]`");
+static_assert(offsetof(Params, band) == 0x10, "the high half of the same pair");
+static_assert(offsetof(Params, invert) == 0x14, "`ldrb w1, [x22, #0x14]`");
+static_assert(offsetof(Params, blockAcrossEdges) == 0x15, "`ldrb w1, [x22, #0x15]`");
+static_assert(sizeof(Params) == 0x18, "[inferred] 0x16 bytes of fields, padded to 8");
 
 // ---------------------------------------------------------------------------
 // [inferred names, recovered layout] A colour image: two ints then a vector.
@@ -251,5 +282,34 @@ std::vector<float> buildMatte(const ArrivalField& field, float tolerance, float 
  */
 ArrivalField computeArrivalField(const Image& image, float column, float row, float tolerance,
                                  bool blockAcrossEdges);
+
+/**
+ * [exact] The entry point: downsample → arrival field → matte → upsample. 151 instructions, read
+ * in full (row AE-05, 2026-10-27).
+ *
+ *     dims   = computeDownsampleDims(width, height, 640)      ; 640 is the cap, inlined
+ *     small  = dims.width != width || dims.height != height
+ *     src    = small ? downsampleBoxFilter(image, dims.width, dims.height) : image
+ *     field  = computeArrivalField(src, scale * seedColumn, scale * seedRow,
+ *                                  edgeTolerance, blockAcrossEdges)
+ *     matte  = buildMatte(field, threshold, max(scale * band, 0.01f), invert)
+ *     return small ? upsampleBilinear(matte, dims.width, dims.height, width, height) : matte
+ *
+ * Three things the scalings hide:
+ *
+ *   * The downscale cap is a CONSTANT 640, not a parameter — so a 641-pixel side is the threshold
+ *     at which this function starts doing three extra passes.
+ *   * The seed point is in FULL-RESOLUTION coordinates and is multiplied by the scale, so on a
+ *     downscaled image it lands on the corresponding coarse pixel rather than being reinterpreted.
+ *   * The band's half width is scaled but its 0.01f floor is applied AFTER the scale, so a
+ *     downscaled matte has a relatively wider band than the full-resolution one it upsamples to.
+ *     The threshold percentage is NOT scaled — it is a fraction of the field's own span, which
+ *     the field already carries.
+ *
+ * The two percentages change meaning between the two calls: `edgeTolerance` scales the COLOUR
+ * cost inside the flood (100 = free movement, 0 = edges cost 40× their length), while `threshold`
+ * positions the matte's window inside the field (0 and ≥100 both collapse it — see `buildMatte`).
+ */
+std::vector<float> computeMatteFullRes(const Image& image, const Params& params);
 
 }  // namespace maskflow

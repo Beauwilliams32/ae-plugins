@@ -1,8 +1,8 @@
 // Gate for the recovered maskflow:: namespace.
 //
-// Three of the eight recovered functions are instruction-identical, which is the strongest
-// result in this file. The other five are each a few instructions off and are checked in the
-// self-check instead.
+// Three of the nine recovered functions are instruction-identical, which is the strongest result
+// in this file. The other six are each a few instructions off and are checked in the self-check
+// instead. The namespace is COMPLETE: there is nothing absent for the differ to report.
 //
 // Mapping this namespace also put MaskFlow into tools/dsp-duplication.mjs, whose carrier
 // list is hardcoded by design — it compares BUNDLES, so a bundle missing from the list is
@@ -23,11 +23,14 @@ const BUNDLE = "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media"
 
 // downsampleBoxFilter joined on 2026-10-27 (row AE-05), once Image/RGB were modelled; then
 // upsampleBilinear the same day, which needed no new types at all — only a std::vector.
-// buildMatte joined on 2026-10-27 too, and pinned the ArrivalField layout computeArrivalField
-// then fills; that one landed the same day and leaves only the Params-taking entry point.
+// buildMatte joined on 2026-10-27 too, and pinned the ArrivalField layout computeArrivalField then
+// fills; that one landed the same day, and computeMatteFullRes closed the namespace by pinning
+// Params. All nine authored functions are here — OUTSTANDING is empty on purpose, so a regression
+// that drops one is a failing set comparison rather than a quietly shorter list.
 const RECOVERED = ["clampf", "edgeCostScaleFromTolerance", "smoothstep", "computeDownsampleDims",
-                   "downsampleBoxFilter", "upsampleBilinear", "buildMatte", "computeArrivalField"];
-const OUTSTANDING = ["computeMatteFullRes"];
+                   "downsampleBoxFilter", "upsampleBilinear", "buildMatte", "computeArrivalField",
+                   "computeMatteFullRes"];
+const OUTSTANDING = [];
 
 function bundlesInstalled() {
   return existsSync(BUNDLE);
@@ -64,7 +67,7 @@ test("recovered maskflow source compiles and its maths verifies", (t) => {
     assert.match(out, /ALL RECOVERED MASKFLOW MATHS VERIFIED/, `self-check failed:\n${out}`);
     assert.doesNotMatch(out, /\bFAIL\b/, out);
     const passes = (out.match(/^  PASS/gm) ?? []).length;
-    assert.ok(passes >= 143, `expected >= 143 checks, saw ${passes}`);
+    assert.ok(passes >= 162, `expected >= 162 checks, saw ${passes}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -95,13 +98,14 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
   //   prologue differs; the loop bodies line up instruction for instruction.
   for (const [fn, shipped, mine] of [["smoothstep", 19, 18], ["downsampleBoxFilter", 126, 125],
                                      ["upsampleBilinear", 168, 167], ["buildMatte", 169, 168],
-                                     ["computeArrivalField", 290, 293]]) {
+                                     ["computeArrivalField", 290, 293],
+                                     ["computeMatteFullRes", 151, 151]]) {
     assert.match(out, new RegExp(`DIFFER\\s+maskflow::${fn}\\s+shipped=${shipped} mine=${mine}`),
       `${fn} moved away from its pinned ${shipped}/${mine} instruction counts`);
   }
 
   const summary = out.trim().split("\n").pop();
-  assert.match(summary, /3 identical, 5 differing, 1 not implemented/,
+  assert.match(summary, /3 identical, 6 differing, 0 not implemented/,
     `the differ's tally moved: ${summary}`);
 });
 

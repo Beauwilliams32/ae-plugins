@@ -4,11 +4,12 @@ Source: `MaskFlow.plugin` (bundle id `com.williamsmedia.aftereffects.MaskFlow`) 
 at `/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/`. The original C++ was
 destroyed on 2026-10-13; the binary is the only copy and it is unstripped.
 
-## State
+## State — complete
 
-Eight of the nine authored functions are recovered. **Three came out instruction-identical
-on the first transcription**; four are one instruction off and `computeArrivalField` three,
-which is the closest result short of identity and is recorded rather than chased.
+All nine authored functions are recovered and the namespace carries its `NAMESPACE-COMPLETE`
+marker. **Three came out instruction-identical on the first transcription**; four are one
+instruction off, `computeArrivalField` three, and `computeMatteFullRes` is 151 for the bundle's
+151 with only register numbering between them. Nothing is absent.
 
 | Function | Instrs | State |
 |---|---|---|
@@ -19,8 +20,8 @@ which is the closest result short of identity and is recorded rather than chased
 | `downsampleBoxFilter` | 126 | Recovered — 125 here (one callee-saved register short) |
 | `upsampleBilinear` | 168 | Recovered — 167 here (same cause) |
 | `buildMatte` | 169 | Recovered — 168 here; the scalar tail fuses a compare the bundle repeats |
-| `computeArrivalField` | 290 | Recovered — 293 here; the index multiply is `mul`+`add` where the bundle has `umaddl` |
-| `computeMatteFullRes` | 151 | Identified only — the only one that needs `Params` |
+| `computeArrivalField` | 290 | Recovered — 293 here; `mul`+`add` where the bundle has `umaddl` |
+| `computeMatteFullRes` | 151 | Recovered — 151 here |
 
 ## Mapping this namespace closed a hole in the duplication check
 
@@ -260,15 +261,46 @@ infinity.
 edge back to the LAST index — a seed of 99 on a 5-pixel strip is pixel 4, not out of range and
 not clamped to 0.
 
+## `computeMatteFullRes` is four lines of wiring and three scalings
+
+The entry point, and the only place a size is hard-coded:
+
+```
+dims  = computeDownsampleDims(width, height, 640)     ; 640 is a CONSTANT, not a parameter
+small = dims.width != width || dims.height != height
+src   = small ? downsampleBoxFilter(image, dims.width, dims.height) : image
+field = computeArrivalField(src, scale*seedColumn, scale*seedRow, edgeTolerance, block)
+matte = buildMatte(field, threshold, max(scale*band, 0.01f), invert)
+return small ? upsampleBilinear(matte, dims.width, dims.height, width, height) : matte
+```
+
+That is the whole matte: downsample to fit 640, flood from the seed, threshold, upsample back.
+The three scalings are each a decision, not housekeeping:
+
+- **The seed point is in full-resolution coordinates** and is multiplied by the scale. Without
+  that, a point given for a 4000-pixel image would seed the 640-pixel one at the same *number*
+  instead of the same *place* — off by the ratio, which is a different pixel entirely.
+- **The band's half width is scaled but floored AFTER the scale** (`max(scale*band, 0.01f)`), on
+  top of `buildMatte`'s own 1e-4 floor. A full-resolution band would shrink below one coarse
+  pixel on a downscaled image, and the matte would be nothing but edge.
+- **The two percentages are NOT scaled.** They are fractions of the field's own span, which the
+  field already carries in `span` — scaling them too would divide by the ratio twice.
+
+The 640 cap is where the cost jumps: a 640-pixel side takes four passes over the image and a
+641-pixel side takes six, because `small` goes true and the downsample and upsample both happen.
+The self-check pins exactly that boundary by counting interpolated values in the result — a
+full-resolution matte of a uniform strip is a hard 0/1 step, and the downscaled one is not.
+
+### Why the tail is a ternary
+
+The passthrough arm returns a COPY of the matte (allocate, then `memmove`) while the upsample arm
+is constructed straight into the return slot. That asymmetry is what a conditional expression on
+a named local produces: the prvalue arm elides into the sret, the lvalue arm must copy. Two
+`return` statements give two elisions instead. The listing shows the copy — `bl operator new`,
+`bl memmove` — and the recovered source reproduces it by keeping the ternary.
+
 ## What is next
 
-One function left, and it is the only one in the whole fleet still blocked on a struct nothing
-has pinned:
-
-```
-computeMatteFullRes(const Image&, const Params&)   151 instrs
-```
-
-It is the entry point that runs downsample → field → matte → upsample. `Params` has to be
-modelled from its own accesses before it can be written; every other function in MaskFlow now
-takes only types that are recovered.
+Nothing in this namespace. The next-largest gaps in the fleet are GlitchKit (4 of 6, but its two
+absent functions are 2436 instructions between them), MaskFlow is done, and the rest of the
+outstanding work is `beatgrid`, `beatsnap`, `noisefield` and `chromakey` — see `RECOVERY-STATUS.md`.

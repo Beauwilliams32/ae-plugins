@@ -386,4 +386,57 @@ ArrivalField computeArrivalField(const Image& image, float column, float row, fl
   return field;
 }
 
+// __ZN8maskflow19computeMatteFullResERKNS_5ImageERKNS_6ParamsE, 151 instrs
+//
+// The chain, and the two constants that decide which passes run at all:
+//
+//   ldp w9, w8, [x0] / cmp w9,#1 / ccmp w8,#0,#4,ge / b.gt   ; width >= 1 && height >= 1
+//   cmp w9, w8 / csel w10, w9, w8, hi                        ; longest
+//   cmp w10, #0x281 / b.lo                                   ; 641 — the cap is 640, a constant
+//   mov w10, #0x44200000 / fmov s1, w10                      ; 640.0f
+//   fcvtas x10, s0 / cmp w10,#1 / csinc                      ; ROUND, then floor at 1
+//   cmp w9, w23 / ccmp w8, w24, #0, eq / cset w25, ne        ; did anything change?
+//   bl downsampleBoxFilter(image, smallW, smallH, sp+0x18)   ; only when it did
+//   ldp s0, s1, [x22] / fmul s0, s8, s0 / fmul s1, s8, s1    ; the seed, scaled
+//   ldr s2, [x22,#0x8] / ldrb w1, [x22,#0x15]                ; tolerance, block flag
+//   bl computeArrivalField(src, column, row, tolerance, block)
+//   ldp s0, s1, [x22,#0xc] / fmul s1, s8, s1                 ; threshold, band * scale
+//   mov w8, #0xd70a / movk w8, #0x3c23                       ; 0.01f
+//   fcsel s1, s2, s1, mi                                     ; the band is floored at 0.01
+//   ldrb w1, [x22,#0x14]                                     ; invert
+//   bl buildMatte(field, threshold, band, invert)
+//   tbz w25, #0x0 <copy>                                     ; no downscale: return a COPY
+//   bl upsampleBilinear(matte, smallW, smallH, image.w, image.h)
+//
+// The tail is a ternary, not an if/else: the upsample arm is constructed straight into the return
+// slot (x8 = the sret) while the passthrough arm has to COPY, which is exactly what a conditional
+// expression on a named local produces and what two `return` statements would not.
+std::vector<float> computeMatteFullRes(const Image& image, const Params& params) {
+  // 640 is a constant here, not a parameter — the namespace's only hard-coded size.
+  const DownsampleDims dims = computeDownsampleDims(image.width, image.height, 640);
+  const float scale = dims.scale;
+  const bool downscaled = dims.width != image.width || dims.height != image.height;
+
+  Image small;
+  const Image* source = &image;
+  if (downscaled) {
+    small = downsampleBoxFilter(image, dims.width, dims.height);
+    source = &small;
+  }
+
+  // The seed arrives in full-resolution coordinates and is scaled with everything else, so on a
+  // downscaled image it lands on the coarse pixel that covers the same point.
+  const ArrivalField field = computeArrivalField(
+      *source, scale * params.seedColumn, scale * params.seedRow, params.edgeTolerance,
+      params.blockAcrossEdges);
+
+  // The band is scaled AND floored, here rather than inside buildMatte: on a downscaled image a
+  // full-resolution band would shrink below a coarse pixel and the matte would be all edge.
+  const float band = scale * params.band < 0.01f ? 0.01f : scale * params.band;
+  const std::vector<float> matte = buildMatte(field, params.threshold, band, params.invert);
+
+  return downscaled ? upsampleBilinear(matte, dims.width, dims.height, image.width, image.height)
+                    : matte;
+}
+
 }  // namespace maskflow
