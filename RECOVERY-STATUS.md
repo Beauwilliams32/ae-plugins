@@ -21,7 +21,7 @@ a function can be recovered and still differ from the binary in its instruction 
 | — instruction-identical to the shipped binary | 61 |
 | — recovered but differing in codegen | 77 |
 | Authored instructions recovered | 13024 of 23246 (56.0%) |
-| Lines of recovered source | 15816 |
+| Lines of recovered source | 15817 |
 
 ## Per effect
 
