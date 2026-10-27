@@ -17,10 +17,11 @@ const SRC = path.join(ROOT, "src", "chromakey");
 const BUNDLE = "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media"
   + "/ChromaKeyAssist.plugin/Contents/MacOS/ChromaKeyAssist";
 
-/** The ten functions transcribed here (spillScore joined on 2026-10-27, row AE-05). */
+/** The eleven functions transcribed here (spillScore and uniformityScore joined on 2026-10-27, AE-05). */
 const RECOVERED = [
   "clampf", "rgbToYCbCr", "sensitivityToThreshold", "chromaDistance", "hueAngle",
   "angularDiff", "percentile", "percentileUnsorted", "gradientMagnitude", "spillScore",
+  "uniformityScore",
 ];
 
 /**
@@ -30,7 +31,6 @@ const RECOVERED = [
  * instantiation: four symbols for two functions.
  */
 const OUTSTANDING = [
-  "uniformityScore",
   "analyzeFrame(IhEENS_5StatsERKNS_4ViewIKT_EEfRKNS_6ParamsEPfSB_)",
   "analyzeFrame(ItEENS_5StatsERKNS_4ViewIKT_EEfRKNS_6ParamsEPfSB_)",
   "renderView(IhEEvRKNS_4ViewIKT_EERNS1_IS2_EEfRKNS_6ParamsENS_8ViewMod",
@@ -137,7 +137,7 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
   }
 
   const summary = out.trim().split("\n").pop();
-  assert.match(summary, /6 identical, 4 differing, 5 not implemented/,
+  assert.match(summary, /6 identical, 5 differing, 4 not implemented/,
     `the differ's tally moved: ${summary}`);
 });
 

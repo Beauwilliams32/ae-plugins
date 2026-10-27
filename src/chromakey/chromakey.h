@@ -147,6 +147,21 @@ float spillScore(const YCbCr& pixel, const YCbCr& key, float referenceY);
 // below takes the other branch of the same comparison and clamps to 0 instead.
 float percentile(const float* samples, size_t count, float p);
 
+// [exact] How evenly a set of samples is spread, as a 0-100 percentage: 100 is perfectly uniform,
+// 0 is "so spread out that twice the standard deviation already reaches 1.0". 203 instructions, read
+// in full from the bundle:
+//
+//   if (!samples || count == 0) return 0;              // both null checks are cbz before anything else
+//   mean = sum(x as double) / count                    // accumulated in d-registers, i.e. double
+//   var  = sum((x - mean)^2) / count
+//   sd   = sqrt(var)
+//   t    = min(2 * sd, 1.0)                            // no lower clamp: 2*sd cannot be negative
+//   v    = (1.0 - t) * 100.0
+//   return clamp(v, 0, 100)                            // 0x4059.. is 100.0 and 0x42c80000 is 100.0f
+//
+// The vectorised prologue is clang unrolling four lanes; the arithmetic above is what it computes.
+float uniformityScore(const float* samples, size_t count);
+
 // [exact] The same statistic for a caller who has not sorted anything: takes the
 // vector BY VALUE and sorts its own copy, which is why the name says "unsorted".
 //

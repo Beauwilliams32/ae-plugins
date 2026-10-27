@@ -231,6 +231,43 @@ int main() {
               "a row stride of 6 ELEMENTS is honoured (gy = 4/2)");
   }
 
+  // --- uniformityScore: a 0-100 spread percentage.
+  std::printf("chromakey::uniformityScore\n");
+  {
+    std::vector<float> flat(64, 0.42f);
+    checkNear(chromakey::uniformityScore(flat.data(), flat.size()), 100.0f, 1e-4f,
+              "a uniform set scores 100");
+    checkNear(chromakey::uniformityScore(nullptr, 4), 0.0f, 0.0f, "a null pointer scores 0");
+    checkNear(chromakey::uniformityScore(flat.data(), 0), 0.0f, 0.0f, "a zero count scores 0");
+
+    // Two samples at 0.25 and 0.75: mean 0.5, sd 0.25, so 1 - 2(0.25) = 0.5 -> 50.
+    const float pair[2] = {0.25f, 0.75f};
+    checkNear(chromakey::uniformityScore(pair, 2), 50.0f, 1e-4f, "sd of 0.25 scores 50 (1 - 2*sd, times 100)");
+
+    // A set that spans the whole range: sd 0.5 -> 2*sd = 1.0 -> 0, and the clamp keeps it at 0.
+    std::vector<float> bipolar(1000);
+    for (size_t i = 0; i < bipolar.size(); ++i) bipolar[i] = (i % 2 == 0) ? 0.0f : 1.0f;
+    checkNear(chromakey::uniformityScore(bipolar.data(), bipolar.size()), 0.0f, 1e-4f,
+              "a 0/1 population scores 0");
+
+    // The score is monotone in spread, and never leaves [0,100], over a sweep.
+    bool monotone = true, inRange = true;
+    std::vector<float> samples(32);
+    float previous = 101.0f;
+    for (int step = 0; step < 12; ++step) {
+      const float amplitude = static_cast<float>(step) * 0.02f;   // 0 .. 0.22
+      for (size_t i = 0; i < samples.size(); ++i) {
+        samples[i] = 0.5f + ((i % 2 == 0) ? amplitude : -amplitude);
+      }
+      const float score = chromakey::uniformityScore(samples.data(), samples.size());
+      if (!(score >= 0.0f && score <= 100.0f)) inRange = false;
+      if (score > previous + 1e-3f) monotone = false;
+      previous = score;
+    }
+    check(inRange, "every score is inside [0, 100]");
+    check(monotone, "and the score is monotone in the spread of the samples");
+  }
+
   // --- spillScore: an independent model, because the rebuilt code compiles to 80 of the bundle's 82
   // instructions (clang elides the lower clamp on a value it can prove non-negative). So the outputs
   // are pinned against a model written from the disassembly rather than against the compiler.

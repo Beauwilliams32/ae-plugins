@@ -149,6 +149,37 @@ float spillScore(const YCbCr& pixel, const YCbCr& key, float referenceY) {
   return clampf(chroma * hueWeight * yWeight, 0.0f, 1.0f);
 }
 
+// __ZN9chromakey15uniformityScoreEPKfm, 203 instrs
+//
+// Recovered from the full listing. The instruction count is large only because clang vectorises both
+// loops four lanes at a time (fcvtl/fcvtl2 pairs feeding fadd chains); the arithmetic is the eight
+// lines below. Both passes accumulate in DOUBLE, which matters for a long sample set — a float
+// accumulator drifts and this score is multiplied by 100 afterwards.
+float uniformityScore(const float* samples, size_t count) {
+  if (!samples || count == 0) return 0.0f;
+
+  double total = 0.0;
+  for (size_t i = 0; i < count; ++i) total += static_cast<double>(samples[i]);
+  const double mean = total / static_cast<double>(count);
+
+  double squares = 0.0;
+  for (size_t i = 0; i < count; ++i) {
+    const double delta = static_cast<double>(samples[i]) - mean;
+    squares += delta * delta;
+  }
+  const double variance = squares / static_cast<double>(count);
+  const double sd = std::sqrt(variance);
+
+  const double spread = sd + sd;                       // 2 * sd
+  const double capped = spread > 1.0 ? 1.0 : spread;   // the bundle clamps HIGH only
+  const double percent = (1.0 - capped) * 100.0;
+  const float value = static_cast<float>(percent);     // narrowed to float, then clamped as float
+  // The bundle tests the HIGH bound first (fcmp s0, 100.0f then fcsel gt), and only then zero
+  // (fcmp s0, #0.0 then fcsel mi). Written in that order it reproduces the listing exactly.
+  const float hi = value > 100.0f ? 100.0f : value;
+  return hi < 0.0f ? 0.0f : hi;
+}
+
 // __ZN9chromakey10percentileEPKfmf, 31 instrs
 //
 //   cbz x0 / cbz x1 / movi.2d v1, #0        ; null or empty -> 0.0

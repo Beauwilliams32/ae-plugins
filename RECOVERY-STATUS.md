@@ -17,11 +17,11 @@ a function can be recovered and still differ from the binary in its instruction 
 | Effects in the fleet | 16 |
 | With a recovered source namespace | 16 |
 | Without one | 0 |
-| Named symbols recovered | 126 of 166 |
+| Named symbols recovered | 127 of 166 |
 | — instruction-identical to the shipped binary | 57 |
-| — recovered but differing in codegen | 69 |
-| Authored instructions recovered | 11789 of 23246 (50.7%) |
-| Lines of recovered source | 14962 |
+| — recovered but differing in codegen | 70 |
+| Authored instructions recovered | 11992 of 23246 (51.6%) |
+| Lines of recovered source | 15045 |
 
 ## Per effect
 
@@ -34,7 +34,7 @@ a class member is named after its class.
 | AutoFlickerFix | `autoflickerfix::` | 10/10 | 7 | 3 | 0 | 719/719 | 100.0% |
 | BeatGridRuler | `beatgrid::` | 7/12 | 2 | 5 | 5 | 203/1506 | 13.5% |
 | BeatSnap | `beatsnap::` | 7/11 | 3 | 4 | 4 | 475/1264 | 37.6% |
-| ChromaKeyAssist | `chromakey::` | 10/15 | 6 | 4 | 5 | 299/2721 | 11.0% |
+| ChromaKeyAssist | `chromakey::` | 11/15 | 6 | 5 | 4 | 502/2721 | 18.4% |
 | ColorPulse | `colorpulse::` | 10/10 | 5 | 5 | 0 | 1032/1032 | 100.0% |
 | EchoTrails | `echo::` | 6/6 | 1 | 5 | 0 | 481/481 | 100.0% |
 | GlitchKit | `glitch::` | 4/6 | 4 | 0 | 2 | 51/2436 | 2.1% |
