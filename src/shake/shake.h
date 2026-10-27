@@ -104,4 +104,83 @@ static_assert(sizeof(ShakeProfile) == 48, "two std::vector<float> members, 0x00 
  */
 ShakeProfile extractJitter(const ShakeProfile& profile, int window);
 
+// ---------------------------------------------------------------------------
+// [inferred] The track point. Only the name survives; the layout is pinned by every
+// function that walks a `vector<Vec2>`: the vectors are counted with `asr x8, x8, #3`, so a
+// Vec2 is 8 bytes, and `accumulate` reads `+0x0` and `+0x4` as the two channels.
+// ---------------------------------------------------------------------------
+struct Vec2 {
+  float x;
+  float y;
+};
+
+static_assert(sizeof(Vec2) == 8, "a vector<Vec2> is counted by dividing its byte size by 8");
+
+/**
+ * [exact] The camera path: cumulative sums of the per-frame deltas, WITH a leading zero.
+ *
+ *     out.horizontal.resize(count + 1, 0);  out.vertical.resize(count + 1, 0);
+ *     for i in 0..count-1:
+ *         out.horizontal[i + 1] = out.horizontal[i] + path[i].x
+ *         out.vertical[i + 1]   = out.vertical[i]   + path[i].y
+ *
+ * So an N-frame track yields N+1 samples and `out[0]` is the origin, which is why the two
+ * vectors are one longer than the input. Both resizes are visible in the listing as calls to
+ * `vector<float>::resize(n + 1, 0.0f)`.
+ */
+ShakeProfile accumulate(const std::vector<Vec2>& path);
+
+/**
+ * [exact] Scale a profile in place so its LARGEST absolute sample — across both channels — is
+ * exactly 1.0.
+ *
+ *     peak = max(|horizontal[i]|, |vertical[j]|) over every sample of both channels
+ *     if (peak <= 1e-12f) return;                 // 0x2b8cbccc, i.e. "nothing to normalise"
+ *     scale = 1.0f / peak;
+ *     every sample of both channels *= scale
+ *
+ * The guard matters: an all-zero profile (a perfectly still camera) would otherwise divide by
+ * zero and fill the track with NaNs. The threshold is 1e-12, not 1e-5 — the immediate decodes
+ * to 9.99999996e-13.
+ */
+void normalizeUnitAmplitude(ShakeProfile& profile);
+
+/**
+ * [inferred names, recovered values] How a sample index that runs off either end of a series is
+ * handled. The VALUES are read off two `cmp`/`b` chains — `sampleLooped` tests 3 then 2 then 1 and
+ * falls through to 0, and 0 returns 0.0 without reading the series at all.
+ */
+enum class LoopMode : int {
+  None = 0,      ///< no sampling; the function returns 0.0f
+  Clamp = 1,     ///< hold the end sample outside the range
+  Loop = 2,      ///< wrap with fmod, so the series repeats
+  PingPong = 3,  ///< reflect: fmod over 2*(n-1), then mirror the second half
+};
+
+/**
+ * [exact] One sample of `values` at fractional position `t`, by LINEAR interpolation between the two
+ * neighbouring samples, with the out-of-range behaviour chosen by `mode`.
+ *
+ * Recovered edge cases, each of which is a `cmp` in the listing rather than an inference:
+ *   * an empty series returns 0.0f;
+ *   * a ONE-sample series returns values[0] for t == 0 (and for NaN), returns **0.0f** in Clamp mode
+ *     for any other t, and values[0] otherwise — the 0.0f is a quirk of the shipped code, kept;
+ *   * Clamp: t < 0 -> 0.0f (not values[0]), t > last -> values[last];
+ *   * Loop: fmod(t, n) with the negative result brought back into range, then the index wraps;
+ *   * PingPong: fmod(t, 2*(n-1)), then `period - w` for the mirrored half, then the same
+ *     truncate-and-lerp as Clamp;
+ *   * in every interpolating path, `t <= 0` returns values[0] and `t >= last` returns values[last]
+ *     before any index arithmetic happens.
+ */
+float sampleLooped(const std::vector<float>& values, double t, LoopMode mode);
+
+/**
+ * [exact] `count` samples of `values` taken `step` apart: `out[i] = sampleLooped(values, i*step, mode)`.
+ *
+ * The output is resized to `count` and ZERO-FILLED first, so a `count` below 1 gives an empty
+ * vector, and a non-positive `step` or an empty source returns the zero-filled vector without
+ * sampling anything.
+ */
+std::vector<float> resampleProfile(const std::vector<float>& values, double step, int count, LoopMode mode);
+
 }  // namespace shake

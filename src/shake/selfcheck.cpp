@@ -155,6 +155,79 @@ int main() {
     check(sizeof(shake::ShakeProfile) == 48, "the struct is two vectors, 24 bytes apart");
   }
 
+  // --- accumulate / normalizeUnitAmplitude (recovered 2026-10-27).
+  std::printf("shake::accumulate\n");
+  {
+    const std::vector<shake::Vec2> path{{1.0f, 0.0f}, {0.0f, 2.0f}, {-1.0f, -1.0f}};
+    const shake::ShakeProfile track = shake::accumulate(path);
+    check(track.horizontal.size() == path.size() + 1, "one more sample than the input (the origin)");
+    checkNear(track.horizontal[0], 0.0f, 0.0f, "out[0] is the origin, not the first delta");
+    checkNear(track.horizontal[1], 1.0f, 0.0f, "then each delta accumulates");
+    checkNear(track.vertical[1], 0.0f, 0.0f, "the other channel accumulates independently");
+    checkNear(track.horizontal[3], 0.0f, 0.0f, "and a positive delta can bring the path back");
+    checkNear(track.vertical[3], 1.0f, 0.0f, "on both channels");
+    const shake::ShakeProfile empty = shake::accumulate({});
+    check(empty.horizontal.size() == 1 && empty.vertical.size() == 1, "an empty path is just the origin");
+    checkNear(empty.horizontal[0], 0.0f, 0.0f, "at zero");
+  }
+
+  std::printf("shake::normalizeUnitAmplitude\n");
+  {
+    shake::ShakeProfile profile;
+    profile.horizontal = {0.5f, -2.0f, 1.0f};
+    profile.vertical = {0.25f, 0.0f};
+    shake::normalizeUnitAmplitude(profile);
+    checkNear(profile.horizontal[1], -1.0f, 1e-6f, "the largest absolute sample across BOTH channels becomes -1");
+    checkNear(profile.horizontal[0], 0.25f, 1e-6f, "and everything else scales with it");
+    checkNear(profile.vertical[0], 0.125f, 1e-6f, "including the other channel");
+
+    shake::ShakeProfile still;                       // all zeros: the guard must not divide
+    still.horizontal = {0.0f, 0.0f};
+    still.vertical = {0.0f, 0.0f};
+    shake::normalizeUnitAmplitude(still);
+    bool finiteAndZero = true;
+    for (float v : still.horizontal) if (!(v == 0.0f)) finiteAndZero = false;
+    for (float v : still.vertical) if (!(v == 0.0f)) finiteAndZero = false;
+    check(finiteAndZero, "an all-zero profile is left alone rather than filled with NaN");
+  }
+
+  std::printf("shake::sampleLooped\n");
+  {
+    const std::vector<float> ramp{0.0f, 10.0f, 20.0f, 30.0f};
+    checkNear(shake::sampleLooped({}, 1.5, shake::LoopMode::Clamp), 0.0f, 0.0f, "an empty series samples as 0");
+    checkNear(shake::sampleLooped({5.0f}, 0.0, shake::LoopMode::Clamp), 5.0f, 0.0f, "a one-sample series at t=0 is that sample");
+    checkNear(shake::sampleLooped({5.0f}, 3.0, shake::LoopMode::Clamp), 0.0f, 0.0f,
+              "and answers 0 in Clamp mode otherwise (a shipped quirk, kept)");
+    checkNear(shake::sampleLooped({5.0f}, 3.0, shake::LoopMode::Loop), 5.0f, 0.0f, "but the sample in Loop mode");
+
+    checkNear(shake::sampleLooped(ramp, 1.5, shake::LoopMode::Clamp), 15.0f, 1e-5f, "Clamp interpolates between neighbours");
+    checkNear(shake::sampleLooped(ramp, -2.0, shake::LoopMode::Clamp), 0.0f, 0.0f, "Clamp below the range is 0, not the first sample");
+    checkNear(shake::sampleLooped(ramp, 99.0, shake::LoopMode::Clamp), 30.0f, 1e-5f, "Clamp above the range holds the last sample");
+    checkNear(shake::sampleLooped(ramp, 3.0, shake::LoopMode::Clamp), 30.0f, 1e-5f, "and so does the exact end");
+
+    checkNear(shake::sampleLooped(ramp, 4.5, shake::LoopMode::Loop), 5.0f, 1e-5f, "Loop wraps past the end (4.5 -> 0.5)");
+    checkNear(shake::sampleLooped(ramp, -1.5, shake::LoopMode::Loop), 25.0f, 1e-5f, "and below zero (-1.5 -> 2.5)");
+    checkNear(shake::sampleLooped(ramp, 2.5, shake::LoopMode::PingPong), 25.0f, 1e-5f, "PingPong mirrors the second half");
+    checkNear(shake::sampleLooped(ramp, 4.5, shake::LoopMode::PingPong), 15.0f, 1e-5f, "and continues mirrored");
+    checkNear(shake::sampleLooped(ramp, 1.0, shake::LoopMode::None), 0.0f, 0.0f, "None never reads the series");
+    checkNear(shake::sampleLooped(ramp, 1.0, static_cast<shake::LoopMode>(99)), 0.0f, 0.0f,
+              "and an out-of-enum mode falls through to the same place");
+  }
+
+  std::printf("shake::resampleProfile\n");
+  {
+    const std::vector<float> ramp{0.0f, 10.0f, 20.0f, 30.0f};
+    const std::vector<float> even = shake::resampleProfile(ramp, 1.0, 4, shake::LoopMode::Clamp);
+    check(even == ramp, "a step of 1 over the whole series reproduces it");
+    const std::vector<float> half = shake::resampleProfile(ramp, 0.5, 3, shake::LoopMode::Clamp);
+    checkNear(half[1], 5.0f, 1e-5f, "a step of 0.5 samples between the stored ones");
+    check(shake::resampleProfile(ramp, 1.0, 0, shake::LoopMode::Clamp).empty(), "a count below 1 gives nothing");
+    const std::vector<float> zeroStep = shake::resampleProfile(ramp, 0.0, 3, shake::LoopMode::Clamp);
+    check(zeroStep.size() == 3 && zeroStep[0] == 0.0f && zeroStep[2] == 0.0f,
+          "a non-positive step returns the zero-filled array without sampling");
+    check(shake::resampleProfile({}, 1.0, 3, shake::LoopMode::Clamp).size() == 3, "an empty source still sizes the output");
+  }
+
   if (failures == 0) std::printf("ALL RECOVERED SHAKE MATHS VERIFIED (%d checks)\n", passes);
   else std::printf("%d FAILURES out of %d checks\n", failures, passes + failures);
   return failures == 0 ? 0 : 1;

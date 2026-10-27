@@ -105,4 +105,119 @@ ShakeProfile extractJitter(const ShakeProfile& profile, int window) {
   return jitter;
 }
 
+
+// __ZN5shake10accumulateERKNSt3__16vectorINS_4Vec2ENS_9allocatorIS2_EEEE, 135 instrs
+//
+// The listing unrolls five at a time and precomputes a modulo-5 index, but the scalar tail
+// (0x17d0) is the whole story: two resize(n + 1, 0.0f) calls, then
+//     out.x[i + 1] = out.x[i] + path[i].x
+//     out.y[i + 1] = out.y[i] + path[i].y
+// which is a cumulative sum with a leading origin sample.
+ShakeProfile accumulate(const std::vector<Vec2>& path) {
+  ShakeProfile out;
+  out.horizontal.resize(path.size() + 1, 0.0f);
+  out.vertical.resize(path.size() + 1, 0.0f);
+  for (size_t i = 0; i < path.size(); ++i) {
+    out.horizontal[i + 1] = out.horizontal[i] + path[i].x;
+    out.vertical[i + 1] = out.vertical[i] + path[i].y;
+  }
+  return out;
+}
+
+// __ZN5shake22normalizeUnitAmplitudeERNS_12ShakeProfileE, 125 instrs
+//
+//   peak = 0; for both channels: peak = max(peak, fabs(sample))
+//   if (peak <= 1e-12f) return            ; 0x2b8cbccc == 9.99999996e-13
+//   scale = 1.0f / peak; multiply every sample of both channels by it
+//
+// The threshold is what keeps a perfectly still camera (an all-zero profile) from turning the
+// whole track into NaNs.
+void normalizeUnitAmplitude(ShakeProfile& profile) {
+  float peak = 0.0f;
+  for (float value : profile.horizontal) peak = std::max(peak, std::fabs(value));
+  for (float value : profile.vertical) peak = std::max(peak, std::fabs(value));
+  if (peak <= 9.99999996e-13f) return;
+  const float scale = 1.0f / peak;
+  for (float& value : profile.horizontal) value *= scale;
+  for (float& value : profile.vertical) value *= scale;
+}
+
+
+// __ZN5shake12sampleLoopedERKNSt3__16vectorIfNS_9allocatorIfEEEEdNS_8LoopModeE, 92 instrs
+//
+// Read in full. The three mode branches share one tail: bring the position into [0, last],
+// truncate it, and lerp between values[i] and values[i+1] (a single fmadd). Loop is the only
+// branch that takes its indices modulo the length; Clamp and PingPong have already folded the
+// position into range, so their i+1 is always a valid index.
+float sampleLooped(const std::vector<float>& values, double t, LoopMode mode) {
+  const size_t n = values.size();
+  if (n == 0) return 0.0f;
+  const size_t last = n - 1;
+  if (n == 1) {
+    // Recovered quirk: a single-sample series answers 0.0f in Clamp mode for any non-zero t.
+    if (t == 0.0 || std::isnan(t)) return values[0];
+    if (mode == LoopMode::Clamp) return 0.0f;
+    return values[0];
+  }
+
+  double w = t;
+  switch (mode) {
+    case LoopMode::PingPong: {
+      const double period = 2.0 * static_cast<double>(last);
+      double folded = std::fmod(t, period);
+      if (folded < 0.0) folded += period;
+      if (folded > static_cast<double>(last)) folded = period - folded;
+      w = folded;
+      break;
+    }
+    case LoopMode::Loop: {
+      const double period = static_cast<double>(n);
+      double folded = std::fmod(t, period);
+      if (folded < 0.0) folded += period;
+      w = folded;
+      break;
+    }
+    case LoopMode::Clamp:
+      if (t < 0.0) return 0.0f;
+      if (t > static_cast<double>(last)) return values[last];
+      w = t;
+      break;
+    default:
+      return 0.0f;                                  // LoopMode::None, and anything outside the enum
+  }
+
+  // Loop mode reaches the lerp without the endpoint tests: its index arithmetic wraps instead.
+  if (mode != LoopMode::Loop) {
+    if (w <= 0.0) return values[0];
+    if (w >= static_cast<double>(last)) return values[last];
+  }
+
+  size_t index = static_cast<size_t>(w);            // truncation, matching fcvtzu
+  const float frac = static_cast<float>(w - static_cast<double>(index));
+  size_t next = index + 1;
+  if (mode == LoopMode::Loop) {
+    index %= n;
+    next %= n;
+  }
+  const float a = values[index];
+  const float b = values[next];
+  return a + frac * (b - a);                        // one fmadd in the listing
+}
+
+// __ZN5shake15resampleProfileERKNSt3__16vectorIfNS_9allocatorIfEEEEdiNS_8LoopModeE, 50 instrs
+//
+//   out.resize(count, 0.0f)
+//   if (step <= 0.0 || values.empty()) return out          ; the zero array, unsampled
+//   for i: out[i] = sampleLooped(values, (double)i * step, mode)
+std::vector<float> resampleProfile(const std::vector<float>& values, double step, int count, LoopMode mode) {
+  std::vector<float> out;
+  if (count < 1) return out;
+  out.resize(static_cast<size_t>(count), 0.0f);
+  if (step <= 0.0 || values.empty()) return out;
+  for (int i = 0; i < count; ++i) {
+    out[static_cast<size_t>(i)] = sampleLooped(values, static_cast<double>(i) * step, mode);
+  }
+  return out;
+}
+
 }  // namespace shake

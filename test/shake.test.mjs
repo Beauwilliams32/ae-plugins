@@ -20,9 +20,9 @@ const BUNDLE = "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media"
 
 // movingAverage, highPass, extractJitter and the ShakeProfile destructor joined on 2026-10-27
 // (row AE-05): modelling the struct first is what unblocked the other three.
-const RECOVERED = ["clampf", "median", "ShakeProfile", "extractJitter", "movingAverage", "highPass"];
-const OUTSTANDING = ["trackTranslation", "accumulate", "normalizeUnitAmplitude", "sampleLooped",
-                     "resampleProfile"];
+const RECOVERED = ["clampf", "median", "ShakeProfile", "extractJitter", "movingAverage", "highPass",
+                   "accumulate", "normalizeUnitAmplitude", "sampleLooped", "resampleProfile"];
+const OUTSTANDING = ["trackTranslation"];
 
 function bundlesInstalled() {
   return existsSync(BUNDLE);
@@ -86,6 +86,6 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
     "median should report the elided-call difference");
 
   const summary = out.trim().split("\n").pop();
-  assert.match(summary, /3 identical, 3 differing, 5 not implemented/,
+  assert.match(summary, /5 identical, 5 differing, 1 not implemented/,
     `the differ's tally moved: ${summary}`);
 });
