@@ -323,4 +323,44 @@ std::vector<float> waveformColumns(const float* samples, size_t count, long star
   return out;
 }
 
+
+// __ZN10pathscribe9barLevelsERKNSt3__16vectorIfNS_9allocatorIfEEEEdidd, 112 instrs
+//
+// Read in full. The two frequency arguments are order-independent (the body takes min and max and
+// floors both at 1.0), the column index is ROUNDED rather than truncated (fcvtas), and the level is
+// a 60 dB conversion floored at 1e-9 so log10 never sees zero.
+std::vector<float> barLevels(const std::vector<float>& values, double duration, int barCount,
+                             double a, double b) {
+  std::vector<float> out;
+  if (barCount < 1) return out;
+  out.assign(static_cast<size_t>(barCount), 0.0f);
+  if (!(duration > 0.0) || values.empty()) return out;
+
+  const double low = std::max(std::min(a, b), 1.0);
+  const double high = std::max(std::max(a, b), low);
+  const double ratio = high / low;
+  const long last = static_cast<long>(values.size()) - 1;
+
+  auto indexAt = [&](double step) {
+    const double shaped = std::pow(ratio, step / static_cast<double>(barCount));
+    const double scaled = high * shaped / duration;
+    long index = static_cast<long>(std::nearbyint(scaled));   // fcvtas: round, not truncate
+    if (index > last) index = last;
+    if (index < 0) index = 0;
+    return index;
+  };
+
+  for (int bar = 0; bar < barCount; ++bar) {
+    const long begin = indexAt(bar);
+    long end = indexAt(bar + 1);
+    if (end < begin) end = begin;                             // csel: never an empty slice
+    float peak = 0.0f;
+    for (long j = begin; j <= end; ++j) peak = std::max(peak, values[static_cast<size_t>(j)]);
+    peak = std::max(peak, 9.9999997e-10f);                    // 0x3089705f, so log10 is finite
+    const float level = (20.0f * std::log10(peak) + 60.0f) / 60.0f;
+    out[static_cast<size_t>(bar)] = level > 1.0f ? 1.0f : (level < 0.0f ? 0.0f : level);
+  }
+  return out;
+}
+
 }  // namespace pathscribe

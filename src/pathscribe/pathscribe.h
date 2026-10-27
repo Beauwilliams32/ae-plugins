@@ -137,4 +137,25 @@ float spanCoverage(float frameIndex, float edge0, float edge1);
  */
 std::vector<float> waveformColumns(const float* samples, size_t count, long start, long end, int columns);
 
+/**
+ * [exact] The spectrum strip's bar reducer: `barCount` levels in [0, 1], each the loudest sample in
+ * its frequency slice, converted to a level over a 60 dB range. 112 instructions, read in full
+ * (row AE-05, 2026-10-27).
+ *
+ *   out.resize(barCount, 0);   if (barCount < 1 || duration <= 0 || values.empty()) return out
+ *   lo = max(min(a, b), 1.0);  hi = max(a, b);  ratio = hi / lo
+ *   for bar i:  e    = pow(ratio, i / barCount)
+ *               idx  = round(hi * e / duration)      ; fcvtas, NOT truncation
+ *               begin = clamp(idx, 0, count - 1);  end = max(begin, min(round at i+1, count - 1))
+ *               peak = max(values[begin .. end])
+ *               level = clamp((20*log10(max(peak, 1e-9)) + 60) / 60, 0, 1)
+ *
+ * The frequency axis is LOGARITHMIC: `pow(ratio, i/barCount)` is what makes equal columns cover
+ * increasingly wide bands. `duration` converts the frequency back to a sample index, so a caller
+ * passing the wrong duration compresses or stretches the whole strip rather than erroring. The
+ * 1e-9 floor exists so `log10` never sees zero — it renders as the bottom of the strip.
+ */
+std::vector<float> barLevels(const std::vector<float>& values, double duration, int barCount,
+                             double a, double b);
+
 }  // namespace pathscribe

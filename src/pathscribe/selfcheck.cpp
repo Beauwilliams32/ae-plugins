@@ -219,6 +219,48 @@ int main() {
     check(bounded, "and never leaves [-1, 1], whatever the column count");
   }
 
+  // --- barLevels (recovered 2026-10-27): log-spaced peak-hold bars over a 60 dB range.
+  std::printf("pathscribe::barLevels\n");
+  {
+    std::vector<float> track(64, 0.0f);
+    for (size_t i = 0; i < track.size(); ++i) track[i] = 0.001f * static_cast<float>(i + 1);
+    check(pathscribe::barLevels(track, 1.0, 0, 20.0, 20000.0).empty(), "barCount < 1 gives an empty vector");
+    const std::vector<float> noDuration = pathscribe::barLevels(track, 0.0, 8, 20.0, 20000.0);
+    check(noDuration.size() == 8 && noDuration[0] == 0.0f, "a non-positive duration gives the zero array");
+    check(pathscribe::barLevels({}, 1.0, 8, 20.0, 20000.0).size() == 8, "an empty track still sizes the output");
+
+    // The frequency pair is order-independent: swapping the arguments must not change the answer.
+    const std::vector<float> ascending = pathscribe::barLevels(track, 1.0, 6, 20.0, 20000.0);
+    const std::vector<float> descending = pathscribe::barLevels(track, 1.0, 6, 20000.0, 20.0);
+    check(ascending == descending, "swapping the two frequency arguments changes nothing");
+
+    // A 60 dB conversion: a full-scale (1.0) peak is 0 dB, which is the top of the strip.
+    std::vector<float> hot(track.size(), 0.03f);
+    hot[0] = 1.0f;
+    const std::vector<float> hotBars = pathscribe::barLevels(hot, 1.0, 4, 20.0, 20000.0);
+    check(hotBars.size() == 4, "one level per bar");
+    bool inRange = true;
+    for (float v : hotBars) if (!(v >= 0.0f && v <= 1.0f)) inRange = false;
+    check(inRange, "every level is inside [0, 1]");
+
+    // Silence renders at the BOTTOM of the strip, not NaN: the 1e-9 floor is what makes that true.
+    std::vector<float> silence(track.size(), 0.0f);
+    const std::vector<float> quiet = pathscribe::barLevels(silence, 1.0, 4, 20.0, 20000.0);
+    bool allZero = true, finite = true;
+    for (float v : quiet) {
+      if (v != 0.0f) allZero = false;
+      if (!(v == v)) finite = false;
+    }
+    check(allZero, "an all-silent track renders every bar at 0");
+    check(finite, "and produces no NaN (the log10 floor)");
+
+    // The axis is logarithmic: doubling the frequency range does not double a bar's index, so the
+    // level of a monotonically rising track is monotone too.
+    bool monotone = true;
+    for (size_t i = 1; i < hotBars.size(); ++i) if (hotBars[i] + 1e-6f < hotBars[i - 1]) monotone = false;
+    check(monotone, "a rising track gives non-decreasing bars");
+  }
+
   if (failures == 0) std::printf("ALL RECOVERED PATHSCRIBE MATHS VERIFIED (%d checks)\n", passes);
   else std::printf("%d FAILURES out of %d checks\n", failures, passes + failures);
   return failures == 0 ? 0 : 1;
