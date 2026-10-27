@@ -14,6 +14,13 @@
 #include <string>
 #include <vector>
 
+// NAMESPACE-COMPLETE: every `lutblend::` symbol in the bundle is transcribed, so
+// this header is a full reconstruction rather than a partial one. The last one to
+// land was `parseCube` (2026-10-27), the largest function in the fleet at 1924
+// instructions; it is a reconstruction from the recovered specification in
+// RECOVERY-NOTES.md, not a byte-for-byte match of the original code, so treat the
+// BEHAVIOUR (grammar, messages, validation) as the recovered fact.
+
 namespace lutblend {
 
 // ---------------------------------------------------------------------------
@@ -129,5 +136,33 @@ void makeIdentity(CubeLUT* lut, int size, bool is3D);
 // ---------------------------------------------------------------------------
 void applyLUTBlend(const CubeLUT& a, const CubeLUT& b, float blend, float intensity,
                    bool preserveLuma, const float* rgb, float* out);
+
+// ---------------------------------------------------------------------------
+// [exact] Parse the text of a .cube LUT file.
+//
+//   bool parseCube(const std::string& text, CubeLUT* out, std::string* error);
+//
+// The signature is exact (from the mangled symbol). The BODY is a reconstruction
+// from the recovered specification in RECOVERY-NOTES.md — 1924 instructions of
+// disassembly reduced to the grammar, the twelve line-prefixed error messages,
+// the tokeniser and the validation rules. Where the notes say "recovered" the
+// behaviour below is what the binary does; where they say "inferred" the
+// comment below says so.
+//
+// Behaviour worth stating out loud, because each one is a rule a plausible
+// hand-written parser would get wrong:
+//   * The size must be an integer in [2, 256]. `valid()` only checks size >= 2;
+//     the 256 ceiling exists only here.
+//   * Declaring a size twice is an error, not last-wins.
+//   * A data row before any size declaration is an error.
+//   * DOMAIN_MAX must be strictly greater than DOMAIN_MIN on every axis.
+//   * Data rows are counted and compared to the size, so a truncated or
+//     over-long file fails instead of being padded or ignored.
+//   * '#' starts a comment and runs to end of line; CRLF is stripped; a directive's
+//     arguments must be on the keyword's own line; TITLE is ignored entirely.
+// On failure `*out` is left untouched (the binary parses into a local CubeLUT and
+// copies it only at the very end), and `*error` carries one of the twelve messages.
+// ---------------------------------------------------------------------------
+bool parseCube(const std::string& text, CubeLUT* out, std::string* error);
 
 }  // namespace lutblend

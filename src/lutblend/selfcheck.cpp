@@ -377,6 +377,81 @@ int main() {
   }
 
 
+  // ---------------------------------------------------------------- parseCube
+  // The grammar, the twelve messages and the validation rules are recovered facts
+  // (RECOVERY-NOTES.md); these checks hold the reconstruction to them.
+  std::printf("lutblend::parseCube\n");
+  {
+    auto run = [](const char* text, lutblend::CubeLUT* lut, std::string* err) {
+      if (err) err->clear();
+      return lutblend::parseCube(std::string(text), lut, err);
+    };
+    lutblend::CubeLUT lut;
+    std::string err;
+
+    // A minimal valid 2x2x2 identity-ish LUT.
+    const char* good =
+        "TITLE \"a title with spaces\"\n"
+        "LUT_3D_SIZE 2\n"
+        "DOMAIN_MIN 0 0 0\n"
+        "DOMAIN_MAX 1 1 1\n"
+        "0 0 0\n1 0 0\n0 1 0\n1 1 0\n"
+        "0 0 1\n1 0 1\n0 1 1\n1 1 1\n";
+    check(run(good, &lut, &err), "a valid 2x2x2 .cube parses");
+    check(lut.is3D && lut.size == 2, "the size and dimensionality land on the LUT");
+    check(lut.data.size() == 24, "24 floats: 8 rows x 3 channels");
+    check(err.empty(), "no error message on success");
+    checkNear(lut.data[0], 0.f, 0.f, "the first data row is stored verbatim");
+    checkNear(lut.data[23], 1.f, 0.f, "and so is the last");
+
+    // TITLE is ignored: the same file with no TITLE parses identically.
+    lutblend::CubeLUT noTitle;
+    check(run("LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n", &noTitle, &err),
+          "a file with no TITLE parses");
+    check(noTitle.data == lut.data, "so TITLE really is ignored");
+
+    // A 1D LUT takes `size` rows, not size^3.
+    lutblend::CubeLUT oneD;
+    check(run("LUT_1D_SIZE 3\n0 0 0\n0.5 0.5 0.5\n1 1 1\n", &oneD, &err), "a 3-entry 1D LUT parses");
+    check(!oneD.is3D && oneD.size == 3 && oneD.data.size() == 9, "1D size and payload");
+
+    // Comments and CRLF.
+    lutblend::CubeLUT commented;
+    check(run("LUT_3D_SIZE 2 # trailing comment\r\n# whole-line comment\r\n0 0 0\r\n1 0 0\r\n0 1 0\r\n1 1 0\r\n0 0 1\r\n1 0 1\r\n0 1 1\r\n1 1 1\r\n",
+              &commented, &err),
+          "comments and CRLF line endings parse");
+    check(commented.data == lut.data, "and the payload matches the same file without them");
+
+    // Each rejection rule, with the message it must produce.
+    struct Case { const char* text; const char* needle; const char* what; };
+    const Case cases[] = {
+      {"LUT_3D_SIZE 2\nLUT_3D_SIZE 2\n", "duplicate LUT size declaration", "a second size declaration is an error"},
+      {"LUT_3D_SIZE 2 2\n", "needs exactly one value", "a size with two values is an error"},
+      {"LUT_3D_SIZE two\n", "is not an integer", "a non-integer size is an error"},
+      {"LUT_3D_SIZE 1\n", "out of range [2,256]", "size 1 is rejected (valid() alone would accept it)"},
+      {"LUT_3D_SIZE 257\n", "out of range [2,256]", "size 257 is rejected: the 256 ceiling exists only here"},
+      {"DOMAIN_MIN 0 0\n", "needs 3 values", "DOMAIN_MIN wants three values"},
+      {"DOMAIN_MIN 0 0 x\n", "has a non-numeric value", "a non-numeric domain value is an error"},
+      {"LUT_3D_INPUT_RANGE 0\n", "needs 2 values", "the input-range directives want two values"},
+      {"0 0 0\n", "data before LUT_1D_SIZE/LUT_3D_SIZE", "data before a size declaration is an error"},
+      {"LUT_3D_SIZE 2\nnonsense\n", "unrecognised keyword or malformed data row", "a stray word is an error"},
+      {"LUT_3D_SIZE 2\n0 0 zero\n", "non-numeric data value 'zero'", "a non-numeric data value names itself"},
+      {"LUT_3D_SIZE 2\n0 0 0\n", "expected 8 data rows, got 1", "a truncated file reports the row count"},
+      {"", "missing LUT_1D_SIZE/LUT_3D_SIZE", "an empty file has no size"},
+      {"LUT_3D_SIZE 2\nDOMAIN_MIN 1 1 1\nDOMAIN_MAX 1 1 1\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n",
+       "degenerate domain: DOMAIN_MAX must exceed DOMAIN_MIN", "equal domain bounds are degenerate"},
+    };
+    for (const Case& c : cases) {
+      lutblend::CubeLUT scratch;
+      scratch.size = 99;  // a sentinel: a failed parse must not touch the caller's LUT
+      std::string message;
+      const bool ok = lutblend::parseCube(c.text, &scratch, &message);
+      check(!ok, c.what);
+      check(message.find(c.needle) != std::string::npos, (std::string("  ...message: ") + message).c_str());
+      check(scratch.size == 99, "  ...and the caller's LUT is left untouched");
+    }
+  }
+
   std::printf("\n%s\n", failures == 0 ? "ALL RECOVERED LUTBLEND MATHS VERIFIED"
                                       : "TRANSCRIPTION ERRORS PRESENT");
   return failures == 0 ? 0 : 1;

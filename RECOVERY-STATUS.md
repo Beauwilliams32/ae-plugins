@@ -17,11 +17,11 @@ a function can be recovered and still differ from the binary in its instruction 
 | Effects in the fleet | 16 |
 | With a recovered source namespace | 15 |
 | Without one | 1 |
-| Named symbols recovered | 114 of 155 |
+| Named symbols recovered | 115 of 155 |
 | — instruction-identical to the shipped binary | 56 |
-| — recovered but differing in codegen | 58 |
-| Authored instructions recovered | 7500 of 20883 (35.9%) |
-| Lines of recovered source | 13897 |
+| — recovered but differing in codegen | 59 |
+| Authored instructions recovered | 9424 of 20883 (45.1%) |
+| Lines of recovered source | 14194 |
 
 ## Per effect
 
@@ -38,7 +38,7 @@ a class member is named after its class.
 | ColorPulse | `colorpulse::` | 10/10 | 5 | 5 | 0 | 1032/1032 | 100.0% |
 | EchoTrails | `echo::` | 6/6 | 1 | 5 | 0 | 481/481 | 100.0% |
 | GlitchKit | `glitch::` | 4/6 | 4 | 0 | 2 | 51/2436 | 2.1% |
-| LUTBlend | `lutblend::` | 7/8 | 3 | 4 | 1 | 624/2548 | 24.5% |
+| LUTBlend | `lutblend::` | 8/8 | 3 | 5 | 0 | 2548/2548 | 100.0% |
 | MaskFlow | `maskflow::` | 4/9 | 3 | 1 | 5 | 68/972 | 7.0% |
 | MotionCurveX | — | 0/0 | 0 | 0 | 0 | — | — |
 | NoiseField | `noisefield::` | 6/10 | 3 | 3 | 4 | 368/1577 | 23.3% |

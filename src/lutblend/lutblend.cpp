@@ -7,7 +7,11 @@
 
 #include "lutblend.h"
 
+#include <cctype>
+#include <cstdlib>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace lutblend {
 
@@ -393,6 +397,189 @@ void applyLUTBlend(const CubeLUT& a, const CubeLUT& b, float blend, float intens
   out[0] = r + (m0 - r) * amount;
   out[1] = g + (m1 - g) * amount;
   out[2] = bl + (m2 - bl) * amount;
+}
+
+
+
+
+// ---------------------------------------------------------------------------
+// parseCube — RECONSTRUCTION of the 1924-instruction original, written from the
+// recovered specification (RECOVERY-NOTES.md). Every rule and every error string
+// below is a recovered fact; the code structure is this reconstruction's own.
+//
+// The original builds a local CubeLUT and copies it to *out only after the whole
+// file validates, which is why a failed parse leaves the caller's LUT untouched.
+// ---------------------------------------------------------------------------
+namespace {
+
+bool isIntegerToken(const std::string& token) {
+  if (token.empty()) return false;
+  size_t i = (token[0] == '+' || token[0] == '-') ? 1 : 0;
+  if (i >= token.size()) return false;
+  for (; i < token.size(); ++i) {
+    if (token[i] < '0' || token[i] > '9') return false;
+  }
+  return true;
+}
+
+// strtod with the same "consumed the whole token" test the extractor implies.
+bool toNumber(const std::string& token, double* value) {
+  if (token.empty()) return false;
+  const char* begin = token.c_str();
+  char* end = nullptr;
+  const double parsed = std::strtod(begin, &end);
+  if (end == begin) return false;
+  while (end && *end != '\0' && std::isspace(static_cast<unsigned char>(*end))) ++end;
+  if (end && *end != '\0') return false;
+  *value = parsed;
+  return true;
+}
+
+std::string linePrefix(long line) { return "line " + std::to_string(line) + ": "; }
+
+}  // namespace
+
+bool parseCube(const std::string& text, CubeLUT* out, std::string* error) {
+  auto fail = [error](const std::string& message) {
+    if (error) *error = message;
+    return false;
+  };
+
+  CubeLUT local{};            // default-constructed: is3D = true, min 0, max 1
+  bool haveSize = false;
+  int size = 0;
+
+  long lineNo = 0;
+  size_t pos = 0;
+  std::vector<std::string> tokens;
+
+  while (pos <= text.size()) {
+    const size_t nl = text.find('\n', pos);
+    std::string line = text.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
+    pos = (nl == std::string::npos) ? text.size() + 1 : nl + 1;
+
+    // CRLF: the CR is stripped BEFORE the comment strip, so "\r" after a comment
+    // still disappears with the comment.
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    const size_t hash = line.find('#');
+    if (hash != std::string::npos) line.erase(hash);
+    ++lineNo;
+
+    tokens.clear();
+    {
+      const char* begin = line.c_str();
+      while (*begin != '\0') {
+        while (*begin != '\0' && std::isspace(static_cast<unsigned char>(*begin))) ++begin;
+        if (*begin == '\0') break;
+        const char* start = begin;
+        while (*begin != '\0' && !std::isspace(static_cast<unsigned char>(*begin))) ++begin;
+        tokens.emplace_back(start, static_cast<size_t>(begin - start));
+      }
+    }
+    if (tokens.empty()) continue;   // blank line, or a line that was only a comment
+
+    const std::string prefix = linePrefix(lineNo);
+    const std::string& keyword = tokens[0];
+    const size_t argc = tokens.size() - 1;
+
+    // TITLE is accepted and ignored: no arity check, no validation. Recovered.
+    if (keyword == "TITLE") continue;
+
+    auto parseTriple = [&](float* r, float* g, float* b) -> bool {
+      if (argc != 3) return fail(prefix + keyword + " needs 3 values");
+      double v[3];
+      for (int i = 0; i < 3; ++i) {
+        if (!toNumber(tokens[static_cast<size_t>(i) + 1], &v[i])) {
+          return fail(prefix + keyword + " has a non-numeric value");
+        }
+      }
+      *r = static_cast<float>(v[0]);
+      *g = static_cast<float>(v[1]);
+      *b = static_cast<float>(v[2]);
+      return true;
+    };
+
+    auto parsePair = [&](float* lo, float* hi) -> bool {
+      if (argc != 2) return fail(prefix + keyword + " needs 2 values");
+      double v[2];
+      for (int i = 0; i < 2; ++i) {
+        if (!toNumber(tokens[static_cast<size_t>(i) + 1], &v[i])) {
+          return fail(prefix + keyword + " has a non-numeric value");
+        }
+      }
+      *lo = static_cast<float>(v[0]);
+      *hi = static_cast<float>(v[1]);
+      return true;
+    };
+
+    auto parseSize = [&](bool is3D) -> bool {
+      if (haveSize) return fail(prefix + "duplicate LUT size declaration");
+      if (argc != 1) return fail(prefix + keyword + " needs exactly one value");
+      if (!isIntegerToken(tokens[1])) return fail(prefix + keyword + " is not an integer");
+      const double parsed = std::strtod(tokens[1].c_str(), nullptr);
+      // (unsigned)(size - 2) < 255 — the recovered range test, i.e. size in [2, 256].
+      const int candidate = static_cast<int>(parsed);
+      if (static_cast<unsigned>(candidate - 2) >= 255u) {
+        return fail(prefix + "LUT size " + std::to_string(candidate) + " out of range [2,256]");
+      }
+      size = candidate;
+      local.is3D = is3D;
+      local.size = candidate;
+      haveSize = true;
+      return true;
+    };
+
+    if (keyword == "LUT_3D_SIZE") {
+      if (!parseSize(true)) return false;
+      continue;
+    }
+    if (keyword == "LUT_1D_SIZE") {
+      if (!parseSize(false)) return false;
+      continue;
+    }
+    if (keyword == "DOMAIN_MIN") {
+      if (!parseTriple(&local.minR, &local.minG, &local.minB)) return false;
+      continue;
+    }
+    if (keyword == "DOMAIN_MAX") {
+      if (!parseTriple(&local.maxR, &local.maxG, &local.maxB)) return false;
+      continue;
+    }
+    if (keyword == "LUT_3D_INPUT_RANGE" || keyword == "LUT_1D_INPUT_RANGE") {
+      float lo = 0.0f, hi = 1.0f;
+      if (!parsePair(&lo, &hi)) return false;
+      local.minR = local.minG = local.minB = lo;
+      local.maxR = local.maxG = local.maxB = hi;
+      continue;
+    }
+
+    // Not a directive: it must be a data row, and only after a size is known.
+    if (!haveSize) return fail(prefix + "data before LUT_1D_SIZE/LUT_3D_SIZE");
+    // A data row is three tokens — the first token is the first number, not a keyword.
+    if (tokens.size() != 3) return fail(prefix + "unrecognised keyword or malformed data row '" + keyword + "'");
+    for (size_t i = 0; i < 3; ++i) {
+      double v = 0;
+      if (!toNumber(tokens[i], &v)) {
+        return fail(prefix + "non-numeric data value '" + tokens[i] + "'");
+      }
+      local.data.push_back(static_cast<float>(v));
+    }
+  }
+
+  // Whole-file checks, which is why these two messages carry no line prefix.
+  if (!haveSize) return fail("missing LUT_1D_SIZE/LUT_3D_SIZE");
+  const long expected = local.is3D ? static_cast<long>(size) * size * size : static_cast<long>(size);
+  const long got = static_cast<long>(local.data.size()) / 3;
+  if (got != expected) {
+    return fail("expected " + std::to_string(expected) + " data rows, got " + std::to_string(got));
+  }
+  if (!(local.maxR > local.minR && local.maxG > local.minG && local.maxB > local.minB)) {
+    return fail("degenerate domain: DOMAIN_MAX must exceed DOMAIN_MIN");
+  }
+
+  if (out) *out = local;
+  if (error) error->clear();
+  return true;
 }
 
 
