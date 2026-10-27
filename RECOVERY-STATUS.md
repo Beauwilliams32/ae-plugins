@@ -17,11 +17,11 @@ a function can be recovered and still differ from the binary in its instruction 
 | Effects in the fleet | 16 |
 | With a recovered source namespace | 16 |
 | Without one | 0 |
-| Named symbols recovered | 139 of 166 |
+| Named symbols recovered | 140 of 166 |
 | — instruction-identical to the shipped binary | 61 |
-| — recovered but differing in codegen | 78 |
-| Authored instructions recovered | 13192 of 23246 (56.7%) |
-| Lines of recovered source | 16021 |
+| — recovered but differing in codegen | 79 |
+| Authored instructions recovered | 13361 of 23246 (57.5%) |
+| Lines of recovered source | 16335 |
 
 ## Per effect
 
@@ -39,7 +39,7 @@ a class member is named after its class.
 | EchoTrails | `echo::` | 6/6 | 1 | 5 | 0 | 481/481 | 100.0% |
 | GlitchKit | `glitch::` | 4/6 | 4 | 0 | 2 | 51/2436 | 2.1% |
 | LUTBlend | `lutblend::` | 8/8 | 3 | 5 | 0 | 2548/2548 | 100.0% |
-| MaskFlow | `maskflow::` | 6/9 | 3 | 3 | 3 | 362/972 | 37.2% |
+| MaskFlow | `maskflow::` | 7/9 | 3 | 4 | 2 | 531/972 | 54.6% |
 | MotionCurveX | `motioncurvex::` | 10/11 | 1 | 9 | 1 | 2283/2363 | 96.6% |
 | NoiseField | `noisefield::` | 6/10 | 3 | 3 | 4 | 368/1577 | 23.3% |
 | PathScribe | `pathscribe::` | 15/18 | 8 | 7 | 3 | 978/1477 | 66.2% |

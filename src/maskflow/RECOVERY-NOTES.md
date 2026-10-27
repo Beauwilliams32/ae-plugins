@@ -6,8 +6,9 @@ destroyed on 2026-10-13; the binary is the only copy and it is unstripped.
 
 ## State
 
-Four of the nine authored functions are recovered, and **three of the four came out
-instruction-identical on the first transcription**.
+Seven of the nine authored functions are recovered. **Three came out instruction-identical
+on the first transcription**; the other four are each one instruction off, which is the
+closest result short of identity and is recorded rather than chased.
 
 | Function | Instrs | State |
 |---|---|---|
@@ -15,15 +16,15 @@ instruction-identical on the first transcription**.
 | `edgeCostScaleFromTolerance` | 12 | Recovered — **identical** |
 | `computeDownsampleDims` | 32 | Recovered — **identical** |
 | `smoothstep` | 19 | Recovered — 18 here; a branch where the bundle has a select |
-| `downsampleBoxFilter` | 126 | Identified only |
-| `upsampleBilinear` | 168 | Identified only |
-| `buildMatte` | 169 | Identified only |
+| `downsampleBoxFilter` | 126 | Recovered — 125 here (one callee-saved register short) |
+| `upsampleBilinear` | 168 | Recovered — 167 here (same cause) |
+| `buildMatte` | 169 | Recovered — 168 here; the scalar tail fuses a compare the bundle repeats |
 | `computeMatteFullRes` | 151 | Identified only |
 | `computeArrivalField` | 290 | Identified only |
 
-The five outstanding functions all take `Image`, `Params` or `ArrivalField`, none of which
-is recovered, which is why they are absent rather than stubbed. The four here take nothing
-but ints and floats.
+The two outstanding functions both take `Params`, which is not recovered, which is why they
+are absent rather than stubbed. Everything here takes ints, floats, a `std::vector` and
+either `Image` or `ArrivalField` — the two structs the recovered code itself pins.
 
 ## Mapping this namespace closed a hole in the duplication check
 
@@ -138,20 +139,82 @@ Every guard returns `dstW*dstH` ZEROS rather than an empty vector — a non-posi
 The vector is allocated and zeroed *before* the guards run, which is why an invalid call still
 reports the requested shape.
 
+## `buildMatte` is an inverted smoothstep with three degenerate paths
+
+Wrapper first, because it is where the surprises are:
+
+```
+tol    = min(tolerance, 100) / 100          ; but a NEGATIVE tolerance becomes 100.0f
+halfW  = max(halfWidth, 1e-4)               ; floored, so `den` cannot be zero by accident
+centre = tol * field.span
+lo     = centre - halfW ; hi = centre + halfW ; den = hi - lo
+degenerate = tol <= 0 || tol >= 1
+```
+
+`tol` is a FRACTION of the field's own `span`, not an absolute arrival time: tolerance 50 on a
+span of 100 puts the window at 50, and on a span of 3 it puts it at 1.5. That is the one
+relationship a reader of the parameter name gets wrong.
+
+### A negative tolerance is not the bottom of the range — it is past the top
+
+`fcsel s1, s0, s1, mi` selects **100.0f**, not 1.0f, when the argument is negative. Because
+`degenerate` tests `tol >= 1`, that lands the call in the degenerate branch and every pixel
+takes the fill. So `tolerance = 0` produces an all-ones matte and `tolerance = -1` produces an
+all-zeros one — the two ends of the range, from arguments that a clamp would have collapsed
+into each other.
+
+### `+inf` and NaN are special. `-inf` is not.
+
+```asm
+fcmp s17, s6            ; v against +infinity
+cset w12, eq            ; v == +inf
+csinc w12, w12, wzr, vc ; ...or the comparison was unordered, i.e. NaN
+```
+
+A `-inf` therefore goes through the ramp like any other small value and clamps to the bottom of
+the window. The source almost certainly read `!(v < kInfinity)` — the vectorised block computes
+it as `mvn(fcmgt(v, inf) | fcmgt(inf, v))`, which is the same predicate — and writing it as
+`v == INFINITY || isnan(v)` compiles to a different (also correct) instruction mix a few
+instructions longer. The predicate, not the spelling, is what the self-check pins.
+
+### The `invert` arm is `1 - (1 - x)`, and that is not `x`
+
+```asm
+fsub s18, s2, s17       ; y = 1 - value
+fsub s17, s2, s18       ; and 1 - y
+cmp  w19, #0x0
+fcsel s17, s17, s18, ne ; invert ? 1 - y : y
+```
+
+The double subtraction is in the binary, so it is in the recovered source. It is **not** the
+identity: when `value` is small enough that `1 - value` rounds to 1, `1 - (1 - value)` is
+exactly 0. A `t` of 1e-5 gives a polynomial of about 3e-10, and the inverted arm renders that as
+a hard 0. The self-check asserts the 0.
+
+### `lo == hi` guards cancellation, not division
+
+`halfW` cannot be zero — it is floored at 1e-4 — so `den` is positive by construction and the
+step branch at `fcmp s3, s4 / b.ne` looks dead. It is not dead **for a large enough span**: with
+`span = 1e30` the centre is 5e29 and `centre ± 1e-4` round to the same float, so `den` really is
+zero and the code returns a hard step instead of dividing by it. That needs a span around 1e25
+times the half width, which a matte over pixel counts will never reach — but it is what the
+branch is for, and the self-check reproduces it.
+
+A NaN arriving in that branch is not a special case of its own: `t` is NaN, both selects pass it
+through unchanged, and the polynomial hands the NaN back.
+
 ## What is next
 
-Both geometric primitives are now recovered, so the remaining three functions are the
-effect's algorithm rather than its plumbing:
+The last two functions need `Params` modelled, which nothing has pinned yet:
 
 ```
-buildMatte(const ArrivalField&, float, float, bool)         169 instrs
-computeArrivalField(const Image&, float, float, float, bool) 290 instrs
-computeMatteFullRes(const Image&, const Params&)            151 instrs
+computeArrivalField(const Image&, float, float, float, bool)  290 instrs
+computeMatteFullRes(const Image&, const Params&)              151 instrs
 ```
 
-`computeArrivalField` builds an arrival-time field from the image (it has two file-scope
-tables, `dx8` and `dy8`, at 0x3f64 and 0x3f84 — eight-entry int tables, so eight
-neighbour directions rather than nine); `buildMatte` thresholds that field into a matte;
-`computeMatteFullRes` is the entry point that runs the downsample → field → matte → upsample
-chain. Recovering them means modelling `Params` and `ArrivalField` first, which is why they
-are absent rather than stubbed.
+`computeArrivalField` builds the field `buildMatte` consumes: it keeps a
+`std::vector<std::pair<float, size_t>>` of (arrival, index) pairs — a front to settle in arrival
+order — and has two file-scope eight-entry tables, `dx8` and `dy8` at 0x3f64 and 0x3f84, which
+are **eight** neighbour offsets rather than nine. It writes the largest arrival it sees to
+`field.span`, which is the float `buildMatte` multiplies the tolerance by.
+`computeMatteFullRes` is the entry point that runs downsample → field → matte → upsample.

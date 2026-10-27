@@ -4,19 +4,21 @@
 // MaskFlow.plugin, not from source: the original C++ was destroyed on 2026-10-13 with no
 // remote and no backup.
 //
-// INCOMPLETE — the geometry helpers are here and the matte is not.
+// INCOMPLETE — the geometry helpers and the matte threshold are here; the field builder and
+// the entry point are not.
 //   recovered: clampf, edgeCostScaleFromTolerance, smoothstep, computeDownsampleDims,
-//              downsampleBoxFilter (+ the Image/RGB layout it pinned), upsampleBilinear
-//   outstanding: buildMatte (169), computeMatteFullRes (151), computeArrivalField (290)
+//              downsampleBoxFilter (+ the Image/RGB layout it pinned), upsampleBilinear,
+//              buildMatte (+ the ArrivalField layout it pinned)
+//   outstanding: computeArrivalField (290), computeMatteFullRes (151)
 //
-// The three outstanding functions all take or return `Params` or `ArrivalField`, neither of
-// which is recovered yet — which is why they are absent rather than stubbed:
+// Those two need `Params`, which is not recovered yet — which is why they are absent rather
+// than stubbed:
 //
-//   buildMatte(const ArrivalField&, float, float, bool)
 //   computeArrivalField(const Image&, float, float, float, bool)
 //   computeMatteFullRes(const Image&, const Params&)
 //
-// The six here take nothing but ints, floats and a std::vector.
+// Everything declared here takes nothing but ints, floats, a std::vector and the two structs
+// whose layout the code itself pins.
 
 #pragma once
 #include <vector>
@@ -98,6 +100,27 @@ float smoothstep(float edge0, float edge1, float x);
 DownsampleDims computeDownsampleDims(int width, int height, int maxDim);
 
 // ---------------------------------------------------------------------------
+// [inferred name, recovered layout] The distance field `buildMatte` consumes.
+//
+// `buildMatte`'s own loads pin it: `ldpsw x8, x9, [x0]` takes a signed 32-bit width and
+// height off the front, `ldr x9, [x21, #0x8]` reads the value buffer at +0x8, and
+// `ldr s2, [x21, #0x20]` reads a float immediately after the 24-byte vector — so the struct
+// is 40 bytes, 8-aligned. `computeArrivalField` writes that +0x20 float with `str s9, [x8,
+// #0x20]` after a `std::vector<std::pair<float, size_t>>` front of (arrival, index) pairs, so
+// the member is the LARGEST arrival value in the field; the name `span` is not in the binary.
+// ---------------------------------------------------------------------------
+struct ArrivalField {
+  int width = 0;
+  int height = 0;
+  std::vector<float> values;   // one arrival time per pixel, row-major
+  float span = 0.0f;           // [inferred name] the largest arrival value in `values`
+};
+
+static_assert(sizeof(ArrivalField) == 40, "two ints, a 24-byte vector, then one float");
+static_assert(offsetof(ArrivalField, values) == 8, "the buffer pointer the listing loads at +0x8");
+static_assert(offsetof(ArrivalField, span) == 0x20, "the float the listing loads at +0x20");
+
+// ---------------------------------------------------------------------------
 // [inferred names, recovered layout] A colour image: two ints then a vector.
 //
 // `downsampleBoxFilter` pins it: the width is at +0x0, the height at +0x4, the pixel buffer
@@ -157,5 +180,45 @@ Image downsampleBoxFilter(const Image& src, int outW, int outH);
  */
 std::vector<float> upsampleBilinear(const std::vector<float>& src, int srcW, int srcH, int dstW,
                                     int dstH);
+
+/**
+ * [exact] The field thresholded into a matte: `width*height` floats in 0..1. 169 instructions,
+ * read in full (row AE-05, 2026-10-27).
+ *
+ *     tol  = tolerance > 100 ? 100 : tolerance ; then / 100
+ *            ...and a NEGATIVE tolerance becomes 100.0f — not 1.0f — so it lands past the
+ *            top of the range and takes the degenerate branch below
+ *     half = max(halfWidth, 1e-4f)                  ; floored, so `den` is never zero by
+ *                                                   ; construction — only by cancellation
+ *     lo = tol*field.span - half ; hi = tol*field.span + half ; den = hi - lo
+ *     degenerate = tol <= 0 || tol >= 1
+ *
+ *     per value v:
+ *       special = v == +inf || isnan(v)              ; NOT -inf: that one flows through the
+ *                                                   ; ramp and clamps to 0 like any tiny value
+ *       fill    = (tol > 0 && !special) ? 1.0f : 0.0f
+ *       if (special || degenerate) out = fill
+ *       else if (lo == hi)         out = (v < lo) ? 0.0f : 1.0f     ; a hard step
+ *       else                       out = t*t*(3-2t), t = clamp01((v - lo) / den)
+ *       out = invert ? out : 1 - out
+ *
+ * Three consequences worth more than the arithmetic:
+ *
+ *   * The invert flag is applied to the *fill* as well as to the ramp, so a degenerate call
+ *     with `invert` true is all ZEROS where it would otherwise be all ones, and the special
+ *     values flip with it.
+ *   * A negative tolerance does not clamp to the bottom of the range: it is the one input that
+ *     makes `tol` exceed 1, which forces the degenerate branch and turns the whole matte into
+ *     the fill — 1, or 0 for a `+inf`/NaN element.
+ *   * `lo == hi` is unreachable for a normal `halfWidth` (the 1e-4 floor sees to that). It is
+ *     there for CANCELLATION: with a `span` large enough relative to `half`, `span - half` and
+ *     `span + half` round to the same float and `den` becomes zero. Where a hand-written
+ *     version would divide by it, this one returns the step.
+ *
+ * The `values` buffer is NOT length-checked against `width*height` — it is indexed to that
+ * count and trusted, so a short field reads past its end.
+ */
+std::vector<float> buildMatte(const ArrivalField& field, float tolerance, float halfWidth,
+                              bool invert);
 
 }  // namespace maskflow

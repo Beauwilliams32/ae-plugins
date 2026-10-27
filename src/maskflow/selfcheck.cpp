@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <limits>
 
 namespace {
 
@@ -227,6 +228,125 @@ int main() {
     const std::vector<float> negDim = maskflow::upsampleBilinear(ramp, -3, 1, 2, 2);
     check(negDim.size() == 4, "a negative source width is a guard, not a huge allocation");
     checkNear(negDim[0], 0.0f, 1e-6f, "and returns zeros");
+  }
+
+  std::printf("maskflow::buildMatte\n");
+  {
+    const float inf = std::numeric_limits<float>::infinity();
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+
+    auto field = [](float span, std::vector<float> values) {
+      maskflow::ArrivalField f;
+      f.width = static_cast<int>(values.size());
+      f.height = 1;
+      f.values = std::move(values);
+      f.span = span;
+      return f;
+    };
+
+    // tolerance 50 on a span of 3 is a window of +/-0.01 centred at 1.5, and the matte is the
+    // COMPLEMENT of the ramp: out = 1 - smoothstep. Only values inside the window leave 0 or 1.
+    {
+      const auto m = maskflow::buildMatte(field(3.0f, {0.0f, 1.0f, 1.5f, 2.0f, 3.0f}), 50.0f, 0.01f, false);
+      checkNear(m[0], 1.0, 1e-6, "below the window the non-inverted matte is 1");
+      checkNear(m[1], 1.0, 1e-6, "and stays 1 up to the lower edge");
+      checkNear(m[4], 0.0, 1e-6, "above the window it is 0");
+      checkNear(m[3], 0.0, 1e-6, "starting at the upper edge");
+      checkNear(m[2], 0.5, 1e-6, "the centre value is a half");
+      const auto inverted = maskflow::buildMatte(field(3.0f, {0.0f, 1.0f, 1.5f, 2.0f, 3.0f}), 50.0f, 0.01f, true);
+      checkNear(inverted[0], 0.0, 1e-6, "the invert flag flips it");
+      checkNear(inverted[2], 0.5, 1e-6, "and leaves the ramp's midpoint alone");
+    }
+
+    // tolerance is a PERCENTAGE of the field's span, so the same tolerance on a longer span puts
+    // the window further out: 50 % of 100 is 50, and a value of 40 is now below it.
+    {
+      const auto m = maskflow::buildMatte(field(100.0f, {0.0f, 40.0f, 50.0f, 60.0f, 100.0f}), 50.0f, 0.01f, false);
+      checkNear(m[1], 1.0, 1e-6, "a value below the 50 %-of-span window reads 1");
+      checkNear(m[2], 0.5, 1e-6, "the window centre is still a half");
+      checkNear(m[3], 0.0, 1e-6, "and a value above it reads 0");
+    }
+
+    // tolerance 0 and tolerance >= 100 are DEGENERATE: the window collapses and every pixel takes
+    // the fill instead of the ramp. At tolerance 0 the fill is 0, so the non-inverted matte is all
+    // ones; at 100 (and beyond) it is all zeros.
+    {
+      const auto all = [](const std::vector<float>& m, float want) {
+        for (float v : m) if (std::fabs(v - want) > 1e-6f) return false;
+        return !m.empty();
+      };
+      check(all(maskflow::buildMatte(field(3.0f, {0.0f, 1.5f, 3.0f}), 0.0f, 0.01f, false), 1.0f),
+            "tolerance 0 degenerates to all ones");
+      check(all(maskflow::buildMatte(field(3.0f, {0.0f, 1.5f, 3.0f}), 100.0f, 0.01f, false), 0.0f),
+            "tolerance 100 degenerates to all zeros");
+      check(all(maskflow::buildMatte(field(3.0f, {0.0f, 1.5f, 3.0f}), 250.0f, 0.01f, false), 0.0f),
+            "and anything above 100 is capped to it");
+    }
+
+    // A NEGATIVE tolerance is not clamped to the bottom of the range: it becomes 100.0f and takes
+    // the degenerate branch, which is the opposite of what tolerance 0 does.
+    {
+      const auto neg = maskflow::buildMatte(field(3.0f, {0.0f, 1.5f, 3.0f}), -1.0f, 0.01f, false);
+      check(neg[0] == 0.0f && neg[1] == 0.0f && neg[2] == 0.0f,
+            "a negative tolerance degenerates to all zeros");
+      const auto negInverted = maskflow::buildMatte(field(3.0f, {0.0f, 1.5f, 3.0f}), -1.0f, 0.01f, true);
+      checkNear(negInverted[0], 1.0, 1e-6, "and inverting it gives ones");
+    }
+
+    // +inf and NaN take the FILL, not the ramp; -inf does not — it is just a very small value and
+    // clamps to the bottom of the window like any other.
+    {
+      const auto m = maskflow::buildMatte(field(3.0f, {inf, nan, -inf, 1.5f, 0.0f}), 50.0f, 0.01f, false);
+      checkNear(m[0], 1.0, 1e-6, "+inf takes the fill (1 here), not a NaN from the polynomial");
+      checkNear(m[1], 1.0, 1e-6, "and so does NaN");
+      checkNear(m[2], 1.0, 1e-6, "-inf is NOT special: below the window, so the ramp gives 1 too");
+      checkNear(m[3], 0.5, 1e-6, "while a real value in the window still ramps");
+      const auto inv = maskflow::buildMatte(field(3.0f, {inf, 1.5f}), 50.0f, 0.01f, true);
+      checkNear(inv[0], 0.0, 1e-6, "the invert flag applies to the fill as well as the ramp");
+    }
+
+    // halfWidth is floored at 1e-4, so a degenerate (zero or negative) window still has width.
+    {
+      // The window is centre +/- 1e-4, so a value 4.5e-5 off centre is INSIDE it and ramps. With
+      // an unfloored halfWidth of 0 the window would collapse to a point and this would be 0 or 1.
+      const auto thin = maskflow::buildMatte(field(3.0f, {1.49999f, 1.0f}), 50.0f, 0.0f, false);
+      check(thin[0] > 0.05f && thin[0] < 0.95f,
+            "halfWidth 0 is floored to 1e-4, so the window still RAMPS rather than stepping");
+      checkNear(thin[0], 0.5748, 5e-3, "at the half-way point of that floored window");
+      checkNear(thin[1], 1.0, 1e-6, "and a value well below it still reads 1");
+      const auto negative = maskflow::buildMatte(field(3.0f, {1.49999f}), 50.0f, -1.0f, false);
+      checkNear(negative[0], thin[0], 1e-6, "a negative halfWidth is floored to the same window");
+    }
+
+    // The `lo == hi` branch is a CANCELLATION guard, not a division guard: with a span large enough
+    // relative to the half width, span-half and span+half round to the same float and den is zero.
+    // A hand-written version divides by it; this one falls back to a hard step.
+    {
+      const auto m = maskflow::buildMatte(field(1e30f, {0.0f, 1e30f}), 50.0f, 1e-4f, false);
+      checkNear(m[0], 1.0, 1e-6, "a value below the collapsed window steps to 0, so the matte is 1");
+      checkNear(m[1], 0.0, 1e-6, "and above it steps to 1, so the matte is 0");
+      check(!std::isnan(m[0]) && !std::isnan(m[1]), "no NaN leaks out of the collapsed window");
+    }
+
+    // The inverted arm is 1 - (1 - value), which is NOT the identity: for a value small enough that
+    // 1 - value rounds to 1, it returns 0. Here t is about 1e-5 and the polynomial about 3e-10.
+    {
+      const auto m = maskflow::buildMatte(field(0.0f, {-1e-4f + 2e-9f}), 50.0f, 1e-4f, true);
+      check(m[0] == 0.0f, "the inverted arm collapses a vanishing ramp value to exactly 0");
+    }
+
+    // Shape and guards.
+    {
+      const auto empty = maskflow::buildMatte(maskflow::ArrivalField{}, 50.0f, 0.01f, false);
+      check(empty.empty(), "a zero-sized field produces an empty matte, not a throw");
+      maskflow::ArrivalField f = field(3.0f, {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f});
+      f.width = 3;
+      f.height = 2;
+      const auto box = maskflow::buildMatte(f, 50.0f, 0.01f, false);
+      check(box.size() == 6, "the matte is width*height long");
+      check(!std::isnan(box[5]), "and every element is a real number");
+      check(maskflow::ArrivalField{}.span == 0.0f, "a default-constructed field has a zero span");
+    }
   }
 
   if (failures == 0) std::printf("ALL RECOVERED MASKFLOW MATHS VERIFIED (%d checks)\n", passes);

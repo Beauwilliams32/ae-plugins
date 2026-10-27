@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace maskflow {
 
@@ -181,6 +182,73 @@ std::vector<float> upsampleBilinear(const std::vector<float>& src, int srcW, int
       const float bot = row1[x0] + (row1[x1] - row1[x0]) * wx;
       dst[x] = top + (bot - top) * wy;
     }
+  }
+  return out;
+}
+
+// __ZN8maskflow10buildMatteERKNS_12ArrivalFieldEffb, 169 instrs
+//
+//   fmov s0, #100.0 / fcmp s9,s0 / fcsel s1,s0,s9,gt / fdiv s1,s1,s0   ; min(tol,100)/100
+//   fcmp s9, #0.0 / fcsel s1, s0, s1, mi        ; a NEGATIVE tolerance is 100.0f, not 0
+//   fmov s2, #1e-4 / fcmp s8,s2 / fcsel s4,s2,s8,mi                   ; max(half, 1e-4)
+//   ldr s2, [x21,#0x20] / fmul s5, s1, s2       ; centre = tol * field.span
+//   fsub s3, s5, s4 / fadd s4, s4, s5 / fsub s5, s4, s3   ; lo, hi, hi - lo
+//   fcmp s1,#0.0 / cset w8,ls ; fcmp s1,#1.0 / csinc w8,w8,wzr,lt     ; tol <= 0 || tol >= 1
+//   ldr s17,[x9],#4 / fcmp s17,s6(inf) / cset w12,eq / csinc w12,w12,wzr,vc  ; +inf or NaN
+//   csinc w13, w12, wzr, hi     ; (tol > 0) ? special : true
+//   fcsel s18, s0, s2, ne       ; fill = 0 when that, 1 otherwise
+//   fcmp s3, s4 / b.ne          ; lo != hi ? ramp : step
+//
+// The two float identities around the invert select (`fsub 1,x` then `fsub 1,that`) are the
+// compiler's, not the source's: they exist because the shipped code computes both arms and
+// selects. The arithmetic below is what it computes.
+std::vector<float> buildMatte(const ArrivalField& field, float tolerance, float halfWidth,
+                              bool invert) {
+  const size_t count =
+      static_cast<size_t>(field.width) * static_cast<size_t>(field.height);
+  std::vector<float> out(count, 0.0f);
+  if (count == 0) return out;                 // `cbz x24` — before the allocation, not after
+
+  float tol = tolerance > 100.0f ? 100.0f : tolerance;
+  tol = tol / 100.0f;
+  // A negative tolerance does not clamp to the bottom of the range — it becomes 100.0f, i.e.
+  // past the top, which is what forces the degenerate branch below.
+  if (tolerance < 0.0f) tol = 100.0f;
+
+  const float half = halfWidth < 1e-4f ? 1e-4f : halfWidth;
+  const float centre = tol * field.span;
+  const float lo = centre - half;
+  const float hi = centre + half;
+  const float den = hi - lo;
+  const bool degenerate = tol <= 0.0f || tol >= 1.0f;
+
+  for (size_t i = 0; i < count; ++i) {
+    const float v = field.values[i];
+    // Written as `!(v < +inf)` — a single comparison — because that is what the shipped code
+    // computes: `fcmp v, inf` then `cset eq` / `csinc ...,vc`, true for +inf AND for NaN. A
+    // -inf is NOT special; it flows through the ramp like any other tiny value and clamps to 0.
+    const bool special = !(v < std::numeric_limits<float>::infinity());
+    const float fill = (tol > 0.0f && !special) ? 1.0f : 0.0f;
+    float value;
+    if (special || degenerate) {
+      value = fill;
+    } else if (lo == hi) {
+      // Unreachable for a normal halfWidth — the 1e-4 floor keeps `den` positive. It is here
+      // for CANCELLATION, when span - half and span + half round to the same float.
+      value = v < lo ? 0.0f : 1.0f;
+    } else {
+      const float raw = (v - lo) / den;
+      // Capped at 1 first, floored at 0 second — the arm order `clampf` uses, so a NaN passes
+      // through both selects untouched and the polynomial hands it back.
+      const float capped = raw > 1.0f ? 1.0f : raw;
+      const float t = capped < 0.0f ? 0.0f : capped;
+      value = t * t * (3.0f - 2.0f * t);
+    }
+    // `fsub 1,x` then `fsub 1,that` then a select — so the INVERTED arm is 1 - (1 - value),
+    // not `value`. That round trip is not the identity: for a value small enough that `1 - v`
+    // rounds to 1, `1 - (1 - v)` is 0. It is what the binary computes, so it is what this does.
+    const float inverted = 1.0f - value;
+    out[i] = invert ? 1.0f - inverted : inverted;
   }
   return out;
 }
