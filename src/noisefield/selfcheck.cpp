@@ -332,36 +332,66 @@ int main() {
 
     // The sum of octaves, divided by the amplitude sum, written out here rather than
     // by calling the function under test.
+    //
+    // THE ORDER OF THE TWO FLOAT ARGUMENTS, which this oracle used to have the wrong
+    // way round. `fbm3` is `fbm3(table, x, y, z, octaves, A, B)`, and the arm64
+    // listing settles which is which:
+    //
+    //   __ZN10noisefield4fbm3ERKNS_9PermTableEfffiff, arm64 0x1c34 in
+    //   /tmp/ae/noisefield.asm.  The two float arguments arrive in v3 and v4 (x0 is
+    //   the table, v0..v2 are x/y/z, w1 is the octave count):
+    //       mov.16b v8, v4      ; v8 = the SEVENTH argument
+    //       mov.16b v9, v3      ; v9 = the SIXTH argument
+    //       ...
+    //       fmul s15, s9, s15  ; FREQUENCY  *= the SIXTH argument
+    //       fmul s14, s8, s14  ; AMPLITUDE  *= the SEVENTH argument
+    //   and the normalisation loop multiplies its term by s8 as well:
+    //       fmul s1, s8, s1    ; the amplitude sum is built from the SEVENTH
+    //
+    // So the SIXTH argument is the FREQUENCY MULTIPLIER and the SEVENTH is the
+    // AMPLITUDE GAIN. This is corroborated from the other side: `curlField` and
+    // `fieldAt` inline the same loop from `Params`, where `ldp s12, s11, [x1, #0x14]`
+    // puts Params::freqMult in s12 and Params::gain in s11, and the loop multiplies
+    // the frequency by s12 and the amplitude by s11.
+    //
+    // It was also checked against the SHIPPED bundle directly: calling the shipped
+    // `fbm3(table, 1.25, 2.5, 3.75, 3, 2.0f, 0.5f)` returns -0.0124268103, which is
+    // exactly the model with frequency 2.0 and amplitude 0.5, and NOT the model with
+    // the two the other way round (-0.0124268103 vs 0.14601557).
     for (const auto& c : {std::pair<int, float>{1, 0.5f}, {3, 0.5f}, {4, 0.35f}, {6, 0.7f}}) {
       const int octaves = c.first;
-      const float gain = c.second;
-      const float lacunarity = 2.0f;
+      const float freqMult = 2.0f;   // the SIXTH argument
+      const float ampGain = c.second; // the SEVENTH argument
       double want = 0.0;
       double amp = 1.0, freq = 1.0;
       for (int i = 0; i < octaves; ++i) {
         want += oracle::noise3(1.25 * freq, 2.5 * freq, 3.75 * freq) * amp * 0.9;
-        freq *= lacunarity;
-        amp *= gain;
+        freq *= freqMult;
+        amp *= ampGain;
       }
       double norm = 0.0, a = 1.0;
-      for (int i = 0; i < octaves; ++i) { norm += a; a *= gain; }
+      for (int i = 0; i < octaves; ++i) { norm += a; a *= ampGain; }
       want /= (norm > 1e-6) ? norm : 1.0;
 
-      const float got = noisefield::fbm3(table, 1.25f, 2.5f, 3.75f, octaves, gain, lacunarity);
+      const float got = noisefield::fbm3(table, 1.25f, 2.5f, 3.75f, octaves, freqMult, ampGain);
       char label[128];
-      std::snprintf(label, sizeof label, "fbm3(%d octaves, gain %.2f) matches the oracle", octaves, gain);
+      std::snprintf(label, sizeof label, "fbm3(%d octaves, ampGain %.2f) matches the oracle",
+                    octaves, ampGain);
       checkNear(got, static_cast<float>(want), 2e-5f, label);
     }
 
     // The octave count is clamped to one, so a non-positive count is one octave.
+    // (With one octave the two float arguments cannot matter — nothing is scaled by
+    // them — which is exactly why the order has to be pinned by the checks above.)
     const float one = noisefield::fbm3(table, 0.5f, 0.5f, 0.5f, 1, 0.5f, 2.0f);
     check(noisefield::fbm3(table, 0.5f, 0.5f, 0.5f, 0, 0.5f, 2.0f) == one, "0 octaves behaves as 1");
     check(noisefield::fbm3(table, 0.5f, 0.5f, 0.5f, -4, 0.5f, 2.0f) == one, "and so does a negative count");
 
-    // A gain of 0 leaves one octave, which still has the noise of that octave in it:
-    // the normalisation is 1, so nothing is scaled away.
+    // An amplitude gain of 0 leaves one octave, which still has the noise of that
+    // octave in it: the normalisation is 1, so nothing is scaled away. The gain is
+    // the SEVENTH argument.
     const float firstOctave = noisefield::noise3(table, 0.5f, 0.5f, 0.5f);
-    checkNear(noisefield::fbm3(table, 0.5f, 0.5f, 0.5f, 5, 0.0f, 2.0f), firstOctave, 1e-6f,
+    checkNear(noisefield::fbm3(table, 0.5f, 0.5f, 0.5f, 5, 2.0f, 0.0f), firstOctave, 1e-6f,
               "a zero gain is exactly the first octave (the normalisation is 1)");
   }
 
