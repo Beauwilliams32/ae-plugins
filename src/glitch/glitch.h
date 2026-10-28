@@ -7,21 +7,46 @@
 // Recovered from the demangled symbol table and disassembly of GlitchKit.plugin.
 // The original C++ was destroyed on 2026-10-13 with no remote and no backup.
 //
-// SCOPE. The four scalar helpers are recovered in full. The bundle's render engine is
+// STATE — all SIX `glitch::` symbols are recovered; none are outstanding.
 //
-//     void glitch::apply<T>(const View<const T>& in, View<T>& out,
-//                           const Params&, unsigned seed, float time)
+//   glitch::clampf                 5 instructions    INSTRUCTION-IDENTICAL
+//   glitch::clampi                 5 instructions    INSTRUCTION-IDENTICAL
+//   glitch::hashKey               34 instructions    INSTRUCTION-IDENTICAL
+//   glitch::patternFrame           7 instructions    INSTRUCTION-IDENTICAL
+//   glitch::apply<unsigned char> 1157 instructions    BEHAVIOURAL RECOVERY
+//   glitch::apply<unsigned short> 1228 instructions   BEHAVIOURAL RECOVERY
 //
-// instantiated for T = unsigned char and T = unsigned short — 1157 and 1228
-// instructions respectively — and its five mode BODIES are NOT recovered. What IS
-// recovered of it is the part that can be read without transcribing them: the two types
-// it takes, the mode field, and the shape of the dispatch. See below.
+// NAMESPACE-COMPLETE
+//
+// The four scalar helpers reproduce the bundle's instructions EXACTLY — 5, 5, 34 and 7
+// instructions, all four identical. The two `apply<T>` instantiations are BEHAVIOURAL
+// RECOVERIES: their semantics are transcribed from the listing and verified by
+// differential testing against the shipped bundle itself — the shipped `apply` is
+// dlopen'd, run on the same frames, and its output buffer is compared byte for byte —
+// but the instruction stream is a re-expression rather than a copy, so the differ
+// reports them as DIFFERING and not identical. Treat the BEHAVIOUR as the recovered
+// fact for `apply<T>`, and see src/glitch/RECOVERY-NOTES.md for the reading of each
+// mode body, the addresses it was read from, and what is identical versus behavioural.
+//
+// No After Effects host has ever loaded a rebuilt GlitchKit bundle. Nothing in this
+// header is a host-acceptance claim.
 //
 // The same View<T> + apply<T> shape appears in NoiseField (noisefield::apply<T>)
 // and ChromaKeyAssist (chromakey::renderView<T>), so it is a fleet-wide idiom for
 // satisfying DEEP_COLOR_AWARE rather than a GlitchKit peculiarity.
+//
+// Listing read: /tmp/ae/glitchkit.asm, the arm64 disassembly of
+//   /Applications/Adobe After Effects 2026/Plug-ins/Williams Media/GlitchKit.plugin
+// The 8-bit body is `__ZN6glitch5applyIhEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf`
+// at 0x738..0x1948 (1157 instructions, listed in /tmp/ae/glitch_uc.txt); the 16-bit body
+// is `__ZN6glitch5applyItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf` at
+// 0x1a04..0x2d30 (1228 instructions, listed in /tmp/ae/glitch_us.txt). Addresses quoted
+// in the comments below are the 8-bit body's unless stated otherwise, and every 16-bit
+// address is given as such.
 
 #pragma once
+
+#include <cstddef>
 
 namespace glitch {
 
@@ -35,17 +60,33 @@ namespace glitch {
 //     ldrsw  x21, [x0, #0xc]
 //     ldr    x22, [x0, #0x10] ; +0x10  rowBytes, 64-bit
 //
-// Both instantiations walk the input view at all four offsets, which is what makes this a
-// layout rather than a guess: the 8-bit and 16-bit builds read `[view]`, `[view,#0x8]`,
-// `[view,#0xc]` and `[view,#0x10]` identically and differ only in the channel width the
-// data pointer is interpreted with.
+// BOTH instantiations read the input view at all four offsets and the output view at
+// two of them (the data pointer and the stride). That is what makes this a layout
+// rather than a guess: the 8-bit and the 16-bit build agree on it, and they agree
+// because they are the SAME source at two channel widths.
 //
-// THE TWO INSTANTIATIONS DO NOT READ THE SAME SUBSET, and the layout is pinned by the
-// 8-bit one. `apply<unsigned char>` walks the input at 0x0, 0x8, 0xc and 0x10 and the
-// output at 0x0 and 0x10; `apply<unsigned short>` reads the input at only 0x0 and 0x8 and
-// the output at only 0x0. Same source, same struct — the access sets differ because the
-// two builds schedule the loops differently, which is why test/glitch.test.mjs asserts
-// that neither view is touched OUTSIDE the layout rather than that both read all of it.
+// THE 16-BIT BUILD'S PAIRED LOAD MATTERS, and it is easy to miss. Its prologue is
+// `ldp w9, w28, [x0, #0x8]` at 0x1a24 — ONE paired load that fetches the width
+// (+0x08) AND the height (+0x0c) together. A scanner that only looks for an explicit
+// `[reg, #offset]` sees "+0x8" and never learns that +0x0c is read as well, which is
+// how an earlier draft of this header wrongly claimed the 16-bit build read the input
+// "at only 0x0 and 0x8". It does not.
+//
+// The 16-bit build then reads the two strides through the SPILLED view pointers rather
+// than through x0 and x1 directly, because it spills both arguments at the top of the
+// prologue (`stp x1, x0, [sp, #0x18]` at 0x1a20 — the output view in the first slot,
+// the input view in the second). So:
+//
+//     ldr  x8, [sp, #0x20]     ; 0x1c8c  the input view pointer again
+//     ldr  x0, [x8, #0x10]     ; 0x1c94  the input's rowBytes
+//     ...
+//     ldr  x8, [sp, #0x18]     ; 0x28e8  the output view pointer again
+//     ldr  x0, [x8]            ; 0x28e8  the output's data
+//     ldr  x1, [x8, #0x10]     ; 0x28f0  the output's rowBytes
+//
+// which is why the offsets are the same four and the same two as the 8-bit build's,
+// and why test/glitch.test.mjs follows the spill rather than assuming x0 and x1 keep
+// their argument roles.
 //
 // What is a recovered BEHAVIOUR and not an artefact: the output view's WIDTH AND HEIGHT
 // ARE NEVER READ, by either build. The loops are driven entirely by the input's
@@ -67,30 +108,90 @@ static_assert(sizeof(View<unsigned char>) == 24,
               "View<T> is a pointer, two ints and a long, with padding after the pointer");
 
 // ---------------------------------------------------------------------------
-// [PARTLY RECOVERED] Params — the six fields `apply<T>` reads, and only those.
+// [RECOVERED LAYOUT] Params — all NINE fields `apply<T>` reads.
 //
-//     +0x00  int    mode          compared against 1, 2, 3, 4 and 5
-//     +0x04  float  (clamped 0..1) and an early return when it is <= 0
-//     +0x0c  int                   one of the hashKey inputs
-//     +0x10  float                 multiplies the seed, guarded by `> 0`
-//     +0x1c  BYTE                  read with ldrb, so a flag rather than a float
-//     +0x20  float  (clamped 0..1) and an early return when it is <= 0
+//     +0x00  int    mode          the one-based mode selector, tested against 1..5
+//     +0x04  float  amount        capped at 1; an early return when it is <= 0
+//     +0x08  int    blockSize     clamped to 2..4096; Block Displace's block edge
+//     +0x0c  int    hashInput     one of the hashKey inputs
+//     +0x10  float  rate          the TIME fed to patternFrame, guarded by `> 0`
+//     +0x14  float  shift         the RGB channel shift distance in pixels
+//     +0x18  int    scanline      the band height for Scanline Jitter, clamped 1..4096
+//     +0x1c  BYTE  luma           read with ldrb: bit 0 is "drive by luminance"
+//     +0x20  float  spread        capped at 1; an early return when it is <= 0
 //
-// THE OFFSETS ARE ESTABLISHED FROM THE PROLOGUE ALONE, and that is a deliberate limit.
-// `apply<T>` overwrites x2 with an OUTPUT CURSOR once the mode dispatch is taken, so
-// every `[x2, #N]` after that point is reading pixels, not parameters. The set above is
-// the one both instantiations read BEFORE the reuse, in the same order on the same
-// offsets. What sits at +0x08, +0x14 and +0x18 is therefore NOT claimed — those offsets
-// appear in the disassembly, but past the point where x2 stops being `&Params`.
+// NINE fields, and the set is complete rather than partial.
 //
-// The field NAMES beyond `mode` are not in the binary. They are described by what the
-// prologue does with them, which is why two of them say nothing more than "clamped 0..1".
+// "Capped at 1", not "clamped to 0..1": the lower test is made against the
+// ORIGINAL value rather than against the capped one, so a NEGATIVE amount is
+// left negative rather than lifted to 0 — it takes the early copy-and-return
+// instead. The observable difference from a real 0..1 clamp is nil, because
+// both a negative value and a zero value take the same early return, but the
+// two are not the same instruction sequence and the header should not claim
+// the clamp is stronger than it is.
 //
-// NOT DEFINED HERE, deliberately. `apply<T>` takes this by const reference, so the
-// offsets are usable without a definition — and writing one would mean inventing field
-// names and a total size for a struct whose remaining bytes have not been read.
+// x2 does NOT stay the `&Params` pointer for the whole body of the 8-bit build. It is
+// repurposed as a cursor in the COPY paths and in the mode-4 body — `lsl x2, x15, #2`
+// at 0x88c (mode 5's inline frame copy), `ldr x2, [x1]` at 0x9dc (the copy taken when
+// the amount or the spread is <= 0) with `strb w17, [x2], #1` at 0xa24, `mov x2, #0x0`
+// at 0xeb8 (mode 4) and `ldr x2, [x1]` at 0x17c0 (the catch-all copy). The 16-bit
+// build never repurposes x2 at all.
+//
+// What the listing DOES establish is the offset set: across the WHOLE body of BOTH
+// instantiations, the only offsets ever read through x2 are exactly these nine, one per
+// field, and each of the nine reads happens on its own dispatch branch — before that
+// branch's body repurposes x2. The nine reads are therefore NOT a prologue; they are
+// spread through the body, and the addresses below show exactly where each one is.
+//
+// The 8-bit listing contains exactly these nine offsets and no other:
+//
+//     ldr  s1, [x2, #0x4]   ; 0x764  amount
+//     ldr  s4, [x2, #0x20]  ; 0x780  spread
+//     ldrb w8, [x2, #0x1c]  ; 0x7a4  luma
+//     ldr  s3, [x2, #0x10]  ; 0x7e8  rate
+//     ldr  w10, [x2, #0xc]  ; 0x7ec  hashInput
+//     ldr  w6, [x2]         ; 0x7f0  mode
+//     ldr  s3, [x2, #0x14]  ; 0xacc  shift   (mode 2's body)
+//     ldr  w9, [x2, #0x18]  ; 0xc80  scanline (mode 3's body)
+//     ldr  w10, [x2, #0x8]  ; 0x1248 blockSize (mode 1's body)
+//
+// and the 16-bit listing the same nine, at:
+//
+//     ldr  s1, [x2, #0x4]   ; 0x1a54 amount
+//     ldr  s4, [x2, #0x20]  ; 0x1a70 spread
+//     ldrb w10, [x2, #0x1c] ; 0x1a94 luma
+//     ldr  s3, [x2, #0x10]  ; 0x1ad8 rate
+//     ldr  w13, [x2, #0xc]  ; 0x1adc hashInput
+//     ldr  w11, [x2]        ; 0x1ae0 mode
+//     ldr  s3, [x2, #0x14]  ; 0x1db4 shift
+//     ldr  w8, [x2, #0x18]  ; 0x1f7c scanline
+//     ldr  w11, [x2, #0x8]  ; 0x2554 blockSize
+//
+// The field NAMES beyond `mode` are not in the binary. They are named here after what
+// the code does with them, and the meanings are pinned by the self-check.
 // ---------------------------------------------------------------------------
-struct Params;
+struct Params {
+  int mode = 0;
+  float amount = 0.0f;
+  int blockSize = 0;
+  int hashInput = 0;
+  float rate = 0.0f;
+  float shift = 0.0f;
+  int scanline = 0;
+  unsigned char luma = 0;
+  float spread = 0.0f;
+};
+
+static_assert(sizeof(Params) == 0x24, "Params is nine fields ending at +0x24");
+static_assert(offsetof(Params, mode) == 0x00, "Params.mode at +0x00");
+static_assert(offsetof(Params, amount) == 0x04, "Params.amount at +0x04");
+static_assert(offsetof(Params, blockSize) == 0x08, "Params.blockSize at +0x08");
+static_assert(offsetof(Params, hashInput) == 0x0c, "Params.hashInput at +0x0c");
+static_assert(offsetof(Params, rate) == 0x10, "Params.rate at +0x10");
+static_assert(offsetof(Params, shift) == 0x14, "Params.shift at +0x14");
+static_assert(offsetof(Params, scanline) == 0x18, "Params.scanline at +0x18");
+static_assert(offsetof(Params, luma) == 0x1c, "Params.luma at +0x1c");
+static_assert(offsetof(Params, spread) == 0x20, "Params.spread at +0x20");
 
 // ---------------------------------------------------------------------------
 // [RECOVERED] The mode dispatch — five bodies, one-based, matching the popup.
@@ -114,13 +215,20 @@ struct Params;
 // ALTERNATIVE is so easy to assume: a zero-based enum here would make every mode off by
 // one, and the popup's own text is what rules it out.
 //
-// WHAT THIS DOES NOT ESTABLISH: which body is which mode. The addresses above are
-// ordered 1 -> 0x1248, 2 -> 0xac8, 3 -> 0xc7c, 4 -> 0xeb8, 5 -> 0x888, which is NOT
-// address order, so the bodies cannot be matched to the popup names by position. Until
-// the bodies are read, `plugins/GlitchKit/GlitchRender.cpp`'s mapping from name to
-// behaviour is new code consistent with the popup's ORDER and unverified against the
-// engine. That is recorded rather than glossed, because it is the one place in the two
-// built plugins where a shipped behaviour rests on an ordering assumption.
+// WHICH BODY IS WHICH MODE is established from what each body does rather than from its
+// address:
+//
+//     1 -> 0x1248  Block Displace     — tiles the frame in blockSize squares and
+//                                       displaces each block's pixels
+//     2 -> 0xac8   RGB Channel Shift  — reads R from the left of the pixel and B from
+//                                       the right, A and G straight through
+//     3 -> 0xc7c   Scanline Jitter    — tiles the frame in `scanline`-tall bands and
+//                                       slides each band's pixels sideways
+//     4 -> 0xeb8   Bad Signal         — a rolling band of quantised, displaced pixels
+//     5 -> 0x888   Datamosh Smear     — copies the frame, then smears pixels rightward
+//
+// Each of those readings is anchored to the instructions quoted in
+// src/glitch/RECOVERY-NOTES.md.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -146,6 +254,12 @@ int clampi(int value, int lo, int hi);
 // increment, i.e. the function returns 1 rather than the mixed value when two
 // intermediate stages happen to agree. That is transcribed as written; what it
 // was FOR is not recoverable, and it is not guessed at here.
+//
+// `apply<T>` calls it ONCE for the frame's top hash and then once per block, band or
+// row inside the mode bodies. What salts those calls is the THIRD argument: the top
+// hash uses the mode itself, and each mode's own hashes use `mode * 0x101` — 0x101
+// for Block Displace, 0x202 for RGB Channel Shift, 0x303 for Scanline Jitter, 0x404
+// for Bad Signal and 0x505 for Datamosh Smear.
 // ---------------------------------------------------------------------------
 unsigned int hashKey(unsigned int a, unsigned int b, unsigned int c);
 
@@ -160,5 +274,58 @@ unsigned int hashKey(unsigned int a, unsigned int b, unsigned int c);
 // that the guard is a strict `> 0` — time exactly 0 gives 0, not the seed.
 // ---------------------------------------------------------------------------
 unsigned int patternFrame(unsigned int seed, float time);
+
+// ---------------------------------------------------------------------------
+// [BEHAVIOURAL RECOVERY] The render engine.
+//
+//     void glitch::apply<T>(const View<const T>& in, View<T>& out,
+//                           const Params& params, unsigned seed, float maxValue)
+//
+// Listing read: /tmp/ae/glitch_uc.txt — the arm64 listing of
+//   __ZN6glitch5applyIhEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf
+// at 0x738..0x1948, 1157 instructions. The 16-bit instantiation
+//   __ZN6glitch5applyItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf
+// at 0x1a04..0x2d30, 1228 instructions, is listed in /tmp/ae/glitch_us.txt.
+//
+// BOTH are BEHAVIOURAL RECOVERIES: the semantics are transcribed from those listings,
+// and the behaviour is verified against the shipped bundle by dlopen differential —
+// the bundle's own `apply` is run on the same frames with the same parameters into a
+// sentinel-filled buffer, and the two buffers are compared byte for byte, including
+// the padding past the last row. The instruction STREAM is not a copy of the shipped
+// one, so the differ reports both as DIFFERING. That difference is recorded, not
+// hidden.
+//
+// The fifth argument is NOT a time: `apply<T>` feeds Params.rate (+0x10) to
+// patternFrame, and the float it receives is the PIXEL RANGE — 255 for 8-bit,
+// 65535 for 16-bit — because it divides luminance by it and scales the Bad Signal
+// quantiser by it.
+//
+// ONE PIXEL IS FOUR ELEMENTS of T — A, R, G, B — and View<T>::rowBytes is a stride
+// in ELEMENTS of T, not in bytes. The 16-bit build multiplies it by two when it
+// forms a byte address (`lsl x0, x0, #1` at 0x1ce4 on the input stride and
+// `lsl x11, x1, #1` at 0x28f4 on the output stride in the 16-bit listing). So for a
+// tightly packed frame rowBytes is width * 4 for BOTH depths; reading it as
+// width * 4 * sizeof(T) puts the 16-bit build half a row out of step.
+//
+// The body is transcribed from the listing. Its shape:
+//
+//   * an EMPTY frame — a width or a height below 1 — leaves the output
+//     completely untouched (0x738..0x744 in the 8-bit listing, 0x1a24..0x1a30 in
+//     the 16-bit one, which is the same guard over the same paired load);
+//   * amount and spread are capped at 1, and if EITHER is <= 0 the frame is
+//     copied and returned WITHOUT the spread blend (0x794/0x79c -> 0x9a0);
+//   * a per-frame hash is mixed from hashInput, the pattern frame and the mode;
+//   * one of five mode bodies runs (see the dispatch above);
+//   * finally the spread blend mixes the mode's result with the original input.
+//
+// The output view's width and height are never read: the loops run off the input's
+// dimensions, so a caller handing over a smaller output view gets writes at the
+// input's stride rather than a clamp or an error.
+//
+// See src/glitch/RECOVERY-NOTES.md for the per-mode readings and their addresses.
+// ---------------------------------------------------------------------------
+template <typename T>
+void apply(const View<const T>& in, View<T>& out, const Params& params,
+           unsigned seed, float maxValue);
 
 }  // namespace glitch
