@@ -7,8 +7,10 @@
 
 #include "shake.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <random>
 #include <vector>
 
 namespace {
@@ -67,26 +69,46 @@ int main() {
     checkNear(shake::median({-5.0f, -1.0f, -3.0f}), -3.0, 0.0, "negative values sort normally");
     checkNear(shake::median({-2.0f, 2.0f}), 0.0, 0.0, "an even pair straddling zero averages to 0");
 
-    // A LARGE EVEN COUNT IS NOT THE TRUE MEDIAN, and that is the shipped behaviour rather
-    // than a transcription error. `nth_element(first, begin + mid, end)` pins `values[mid]`
-    // — the upper middle — and nothing else; the lower half is left unordered. The shipped
-    // code then calls `__nth_element` again over `[begin + mid - 1, begin + mid)`, which is
-    // ONE ELEMENT, so it pins nothing either, and `values[mid - 1]` is whatever the first
-    // call happened to leave there.
+    // A LARGE EVEN COUNT IS THE TRUE MEDIAN. This was asserted the other way round until
+    // 2026-10-28: the shipped code's second `__nth_element` call was read as covering
+    // `[begin + mid - 1, begin + mid)` — ONE ELEMENT, a no-op — so that `values[mid - 1]`
+    // was read straight out of the partition, which libc++ leaves in an unspecified order.
     //
-    // Measured on a permutation of 0..999: this returns 469.5 where the true median is
-    // 499.5. The value is not asserted, because it depends on libc++'s partial ordering
-    // rather than on this source; what IS asserted is the property that must hold — the
-    // answer is one of the inputs and lies within their range — and the exact upper middle,
-    // which `nth_element` does guarantee.
+    // The listing says otherwise: the call's arguments are
+    // (begin, begin + mid - 1, begin + mid), so its RANGE is the lower partition
+    // `[begin, begin + mid)` and its nth is that partition's LAST element. It selects the
+    // largest of the `mid` smallest — the true lower middle — and leaves it at `mid - 1`.
+    //
+    // That was measured, not assumed: the shipped bundle's exported `shake::median` was
+    // called on 8260 vectors (every length from 0 to 80 with heavy duplicates, 3000 large
+    // random ones, and sorted and reversed inputs) and on 8000 more in the differential
+    // run, and it ALWAYS returned the exact median. The first transcription's version
+    // disagrees with the true median on 10530 of 20000 random even-count vectors.
     std::vector<float> big;
     for (int i = 0; i < 1000; ++i) big.push_back(static_cast<float>((i * 7919) % 1000));
     const float bigMedian = shake::median(big);
-    check(bigMedian >= 0.0f && bigMedian <= 999.0f, "a large even count still returns a value from the input's range");
-    // The upper middle IS exact, so half the pair is right: for a permutation of 0..999 the
-    // two middle order statistics are 499 and 500, so a correct even median is 499.5.
-    check(bigMedian < 499.5f,
-          "and it is BELOW the true median, which is the shipped second nth_element\'s one-element range showing");
+    // A permutation of 0..999 has 1000 elements, so the two middle order statistics are
+    // 499 and 500 and the even-count median is their average, 499.5.
+    checkNear(bigMedian, 499.5, 0.0, "a large even count IS the true median (499.5 here)");
+    checkNear(shake::median(std::vector<float>{499.0f, 500.0f}), 499.5, 0.0,
+              "and the pair that produces it is the middle pair");
+
+    // ORDER INDEPENDENCE. The median of a multiset must not depend on the order of its
+    // inputs, and the shipped bundle's does not — it was measured on 8260 vectors and
+    // returned the exact median every time. The FIRST transcription did depend on the
+    // order: it disagreed with the true median on 10530 of 20000 random even-count
+    // vectors. This is the assertion that pins the correction down, because it is the
+    // exact property the first transcription got wrong.
+    {
+      std::vector<float> shuffled = big;
+      std::mt19937 shuffle_rng(20261028);
+      std::shuffle(shuffled.begin(), shuffled.end(), shuffle_rng);
+      checkNear(shake::median(shuffled), 499.5, 0.0,
+                "the median does not depend on the order of the inputs");
+      std::reverse(shuffled.begin(), shuffled.end());
+      checkNear(shake::median(shuffled), 499.5, 0.0,
+                "nor on it being reversed");
+    }
   }
 
   // --- the filter chain (recovered 2026-10-27): movingAverage -> highPass -> extractJitter.
@@ -202,8 +224,13 @@ int main() {
 
     checkNear(shake::sampleLooped(ramp, 1.5, shake::LoopMode::Clamp), 15.0f, 1e-5f, "Clamp interpolates between neighbours");
     checkNear(shake::sampleLooped(ramp, -2.0, shake::LoopMode::Clamp), 0.0f, 0.0f, "Clamp below the range is 0, not the first sample");
-    checkNear(shake::sampleLooped(ramp, 99.0, shake::LoopMode::Clamp), 30.0f, 1e-5f, "Clamp above the range holds the last sample");
-    checkNear(shake::sampleLooped(ramp, 3.0, shake::LoopMode::Clamp), 30.0f, 1e-5f, "and so does the exact end");
+    // Clamp does NOT hold the last sample outside the range: the shipped code sends BOTH
+    // out-of-range tests (t < 0 and t > last) to the SAME zero return, and only the
+    // endpoints themselves give the end samples (listing 0x229c-0x22bc). This was
+    // measured against the shipped bundle, which answers 0.0f at t = 3.001 and t = 99.
+    checkNear(shake::sampleLooped(ramp, 3.0, shake::LoopMode::Clamp), 30.0f, 1e-5f, "Clamp gives the last sample AT the exact end");
+    checkNear(shake::sampleLooped(ramp, 3.001, shake::LoopMode::Clamp), 0.0f, 1e-5f, "but just past the end it is 0, not the last sample");
+    checkNear(shake::sampleLooped(ramp, 99.0, shake::LoopMode::Clamp), 0.0f, 1e-5f, "and well past the end it is 0 as well");
 
     checkNear(shake::sampleLooped(ramp, 4.5, shake::LoopMode::Loop), 5.0f, 1e-5f, "Loop wraps past the end (4.5 -> 0.5)");
     checkNear(shake::sampleLooped(ramp, -1.5, shake::LoopMode::Loop), 25.0f, 1e-5f, "and below zero (-1.5 -> 2.5)");
@@ -226,6 +253,127 @@ int main() {
     check(zeroStep.size() == 3 && zeroStep[0] == 0.0f && zeroStep[2] == 0.0f,
           "a non-positive step returns the zero-filled array without sampling");
     check(shake::resampleProfile({}, 1.0, 3, shake::LoopMode::Clamp).size() == 3, "an empty source still sizes the output");
+  }
+
+  // --- the tracker (recovered 2026-10-28): trackTranslation, 960 instructions.
+  //
+  // Every expectation below was MEASURED against the shipped ShakeCapture bundle, whose
+  // exported `shake::trackTranslation` was called on the same inputs through dlopen. The
+  // numbers are not guesses from the listing: the whole-pixel shifts come out exactly, the
+  // half-pixel shift comes out at 0.501372933 in BOTH implementations, and the tie case
+  // comes out at -radius in BOTH.
+  std::printf("shake::trackTranslation\n");
+  {
+    const int W = 64;
+    const int H = 64;
+    const int BLK = 16;
+    const int RAD = 4;
+    const size_t pixels = static_cast<size_t>(W) * static_cast<size_t>(H);
+
+    // A deterministic frame with texture in both directions, so that no block of it is
+    // flat and every block survives the shipped variance test.
+    std::vector<float> frame(pixels);
+    for (int y = 0; y < H; ++y) {
+      for (int x = 0; x < W; ++x) {
+        frame[static_cast<size_t>(y) * W + x] =
+            0.5f + 0.4f * std::sin(x * 0.37f) * std::cos(y * 0.23f)
+            + 0.05f * static_cast<float>((x * 7 + y * 13) % 11);
+      }
+    }
+    std::vector<float> other(pixels, 0.0f);
+
+    const auto zero = [](const shake::Vec2& v) { return v.x == 0.0f && v.y == 0.0f; };
+
+    // The FIVE guards. Each of them answers {0, 0} without ever looking at a pixel.
+    check(zero(shake::trackTranslation(nullptr, other.data(), W, H, BLK, RAD)),
+          "a null first frame gives no translation (listing 0x830)");
+    check(zero(shake::trackTranslation(frame.data(), nullptr, W, H, BLK, RAD)),
+          "a null second frame gives no translation (listing 0x834)");
+    check(zero(shake::trackTranslation(frame.data(), other.data(), W, H, 3, RAD)),
+          "a block smaller than 4 gives no translation (listing 0x838-0x83c)");
+    check(zero(shake::trackTranslation(frame.data(), other.data(), W, H, BLK, 0)),
+          "a radius below 1 gives no translation (listing 0x840-0x848)");
+    check(zero(shake::trackTranslation(frame.data(), other.data(), 20, H, BLK, RAD)),
+          "a frame narrower than block + 2*radius gives no translation (listing 0x850-0x85c)");
+    check(zero(shake::trackTranslation(frame.data(), other.data(), W, 20, BLK, RAD)),
+          "and so does a frame shorter than block + 2*radius (listing 0x860-0x864)");
+
+    // The TEXTURE TEST: a block whose variance is below 1e-6 carries no position, so the
+    // shipped code skips it and the block contributes nothing to the medians. Every block
+    // of a constant frame is skipped, so there is nothing left to take a median of.
+    std::vector<float> flat(pixels, 0.25f);
+    check(zero(shake::trackTranslation(flat.data(), frame.data(), W, H, BLK, RAD)),
+          "a FLAT template is skipped by the variance test, so there is no translation (listing 0x9a8-0xa10)");
+
+    // Identical frames: the best match is the offset (0, 0) at a cost of exactly zero,
+    // and the parabola refinement is skipped because the best cost is not above 1e-12.
+    check(zero(shake::trackTranslation(frame.data(), frame.data(), W, H, BLK, RAD)),
+          "identical frames have no translation");
+
+    // A whole-pixel shift: the picture in `b` is the picture in `a` moved sideways.
+    const auto shiftedBy = [&](int pixelsRight) {
+      std::vector<float> out(pixels, 0.0f);
+      for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+          const int source = x - pixelsRight;
+          if (source >= 0 && source < W) {
+            out[static_cast<size_t>(y) * W + x] = frame[static_cast<size_t>(y) * W + source];
+          }
+        }
+      }
+      return out;
+    };
+
+    const shake::Vec2 left = shake::trackTranslation(frame.data(), shiftedBy(-3).data(), W, H, BLK, RAD);
+    checkNear(left.x, -3.0, 0.0, "a shift of 3 pixels to the left is found EXACTLY (listing 0xa24-0xa90)");
+    checkNear(left.y, 0.0, 0.0, "and the other axis does not move");
+    const shake::Vec2 right = shake::trackTranslation(frame.data(), shiftedBy(2).data(), W, H, BLK, RAD);
+    checkNear(right.x, 2.0, 0.0, "a shift of 2 pixels to the right is found EXACTLY");
+    checkNear(right.y, 0.0, 0.0, "and again the other axis does not move");
+
+    // The search reaches exactly `radius` pixels and no further. At the limit the
+    // sub-pixel refinement does NOT run - it needs -radius < dx < radius - so the answer
+    // is the whole number, not a fraction of one.
+    const shake::Vec2 atLimit = shake::trackTranslation(frame.data(), shiftedBy(RAD).data(), W, H, BLK, RAD);
+    checkNear(atLimit.x, static_cast<double>(RAD), 0.0,
+              "a shift of exactly the radius is found, and is NOT refined (listing 0xc08-0xc18)");
+    const shake::Vec2 pastLimit = shake::trackTranslation(frame.data(), shiftedBy(RAD + 2).data(), W, H, BLK, RAD);
+    checkNear(pastLimit.x, static_cast<double>(RAD), 0.0,
+              "a shift beyond the radius saturates AT the radius, because the search cannot reach further");
+
+    // A HALF-PIXEL shift: the picture is resampled, so the answer is fractional. The
+    // shipped parabola through the three neighbouring costs puts it at 0.501372933 here,
+    // and this build puts it at the same number.
+    std::vector<float> half(pixels, 0.0f);
+    for (int y = 0; y < H; ++y) {
+      for (int x = 0; x < W; ++x) {
+        const double position = static_cast<double>(x) - 0.5;
+        const int leftIndex = static_cast<int>(std::floor(position));
+        const double weight = position - static_cast<double>(leftIndex);
+        const float a = (leftIndex >= 0 && leftIndex < W)
+                            ? frame[static_cast<size_t>(y) * W + leftIndex] : 0.0f;
+        const float b = (leftIndex + 1 >= 0 && leftIndex + 1 < W)
+                            ? frame[static_cast<size_t>(y) * W + leftIndex + 1] : 0.0f;
+        half[static_cast<size_t>(y) * W + x] = static_cast<float>(a + (b - a) * weight);
+      }
+    }
+    const shake::Vec2 sub = shake::trackTranslation(frame.data(), half.data(), W, H, BLK, RAD);
+    checkNear(sub.x, 0.5, 0.01,
+              "a half-pixel shift is recovered to a tenth of a pixel by the parabola (listing 0xf64-0xfa8)");
+
+    // A TIE keeps the EARLIER candidate. The search walks dx from -radius upwards and only
+    // replaces the best on a STRICTLY smaller cost, so an alternating-column frame - where
+    // every even offset matches equally well - reports the FIRST offset that was tried.
+    std::vector<float> stripes(pixels, 0.0f);
+    for (int y = 0; y < H; ++y) {
+      for (int x = 0; x < W; ++x) {
+        stripes[static_cast<size_t>(y) * W + x] = (x & 1) ? 1.0f : 0.0f;
+      }
+    }
+    const shake::Vec2 tie = shake::trackTranslation(stripes.data(), stripes.data(), W, H, BLK, RAD);
+    checkNear(tie.x, -static_cast<double>(RAD), 0.0,
+              "a tie keeps the FIRST candidate tried, so the answer is -radius (listing 0xa24-0xa90)");
+    checkNear(tie.y, -static_cast<double>(RAD), 0.0, "on both axes");
   }
 
   if (failures == 0) std::printf("ALL RECOVERED SHAKE MATHS VERIFIED (%d checks)\n", passes);
