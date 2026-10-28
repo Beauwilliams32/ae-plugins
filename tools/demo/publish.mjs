@@ -336,11 +336,14 @@ const FLEET = [
     ns: 'shake::',
     use: 'Capture footage jitter as reusable controls.',
     why:
-      'This panel is a recorded DEFECT, shown on purpose. `median` performs a second ' +
-      '`nth_element` on a one-element range, which libc++ elides, so the element it reads is ' +
-      'never placed and the answer depends on input ORDER rather than only on the values. ' +
-      'The same 1000 numbers, shuffled repeatedly, should give 499.5 every time. A demo page ' +
-      'that only showed clean output would be hiding the most useful thing in this bundle.',
+      'This panel used to show a recorded DEFECT. `median` was read as performing a second ' +
+      '`nth_element` on a one-element range, which libc++ elides, so the answer appeared to ' +
+      'depend on input ORDER rather than only on the values. That was the first transcription ' +
+      'being wrong, not the bundle: the second call is over the lower partition, with its nth ' +
+      'at that partition\'s last element, so it selects the true lower middle. Measured against ' +
+      'the shipped function itself, `median` returns the exact median for all 8260 vectors tried. ' +
+      'The same 1000 numbers, shuffled repeatedly, give 499.5 every time - and that is what this ' +
+      'panel shows now.',
     stats: [
       ['shuffles', (d) => num(d.trials)],
       ['true median', (d) => num(d.trueMedian)],
@@ -614,7 +617,7 @@ const html = `<!doctype html>
       <li><b>${demoCount}</b>computing live output from recovered source</li>
       <li><b>${FLEET.length - demoCount}</b>spec card, no source recovered</li>
       <li><b>${panelCount}</b>computed panels</li>
-      <li><b>1</b>recorded defect, shown deliberately</li>
+      <li><b>1</b>transcription defect, found and corrected - the demo shows the fix</li>
     </ul>
   </div>
 

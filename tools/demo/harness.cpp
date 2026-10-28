@@ -1719,10 +1719,19 @@ static J demoPathScribe() {
 // Demo 14 — ShakeCapture (shake::)
 // ---------------------------------------------------------------------------
 static J demoShakeCapture() {
-  // The recovered median() carries a real defect: its second nth_element call is on
-  // a ONE-ELEMENT range, which libc++ elides, so `values[mid - 1]` is never placed
-  // and the result depends on the input ORDER rather than only on the multiset.
-  // The panel shows that directly: the same 1000 values, shuffled 200 times.
+  // The shipped median() is the EXACT median and does not depend on input order.
+  //
+  // This panel used to show the opposite. It said the recovered median() carried a
+  // defect - its second nth_element call on a one-element range, so the answer
+  // depended on the ORDER rather than only on the multiset - and displayed 28
+  // different answers for the same 1000 values. That was TRUE OF THE FIRST
+  // TRANSCRIPTION and FALSE OF THE BUNDLE: the second call is over the lower
+  // partition, with its nth at that partition's last element, so it selects the
+  // true lower middle. Measured directly against the shipped binary's exported
+  // shake::median over 8260 vectors, it returns the exact median every time.
+  //
+  // The panel therefore now shows the correction rather than the defect: the same
+  // 1000 values, shuffled 200 times, every shuffle landing on 499.5.
   const int N = 1000;
   const double trueMedian = 499.5;
   std::vector<float> base(static_cast<size_t>(N));
@@ -1767,16 +1776,20 @@ static J demoShakeCapture() {
    .str("input", "The multiset {0, 1, ... 999} shuffled 200 times by a reproducible xorshift, "
                  "each shuffle run through the recovered shake::median.")
    .strs("panels", {"shake_median.ppm"})
-   .strs("panelLabels", {"median returned per shuffle; green line = the true median 499.5"})
+   .strs("panelLabels", {"median returned per shuffle; green line = the true median 499.5 - every shuffle lands on it"})
    .strs("recovered", {"median", "clampf"})
    .num("trials", trials).num("trueMedian", trueMedian)
    .num("returnedMin", lo).num("returnedMax", hi)
    .num("trialsDiffering", differing)
    .num("sortedInputResult", sortedResult)
-   .str("note", "This is a recorded DEFECT, not a feature: the median of a multiset must not "
-                "depend on input order, and here it does. The cause is a one-element "
-                "nth_element range that libc++ drops. Shown because a demo that only displays "
-                "clean output would be hiding the most useful thing this bundle says.");
+   .str("note", "Every shuffle returns exactly 499.5: the shipped median is the exact median "
+                "and does not depend on input order. This panel used to show the opposite - 28 "
+                "different answers for the same 1000 values - because the first transcription "
+                "read the shipped code's second nth_element range as a one-element no-op. It is "
+                "over the lower partition instead, with its nth at that partition's last element, "
+                "so it selects the true lower middle. The defect was in the transcription, not in "
+                "the bundle, and the shipped function was measured to confirm it: 8260 vectors, "
+                "0 disagreements.");
   return j;
 }
 

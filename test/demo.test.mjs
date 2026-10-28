@@ -105,8 +105,15 @@ test("demo harness builds, runs, and writes the panels and numbers it promises",
   assert.ok(ck.falsePositiveRate <= 0.25 && ck.falseNegativeRate <= 0.35,
     `chroma key scoring stays sane (fp ${ck.falsePositiveRate}, fn ${ck.falseNegativeRate})`);
   const sc = work.results.demos.shake;
-  assert.ok(sc.trialsDiffering > 0,
-    "shake::median still disagrees with the true median under reordering — the recorded defect");
+  // This gate used to REQUIRE the defect: it asserted that shake::median disagreed with
+  // the true median under reordering. The defect was real - but in the first
+  // transcription, not in the shipped bundle. The second nth_element is over the lower
+  // partition, not a one-element range, so the shipped median is the exact median.
+  // The assertion now pins the corrected behaviour instead.
+  assert.equal(sc.trialsDiffering, 0,
+    "shake::median agrees with the true median under every reordering");
+  assert.equal(sc.sortedInputResult, sc.trueMedian,
+    "shake::median agrees with the true median on an ascending input");
 });
 
 test("the publisher builds a page whose every figure comes from those numbers", (t) => {
