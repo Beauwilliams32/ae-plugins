@@ -20,30 +20,32 @@ const BUNDLE = "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media"
 /**
  * The functions transcribed here.
  *
- * `spillScore` and `uniformityScore` joined on 2026-10-27; `renderView` on
- * 2026-10-28 (AE-05).
+ * `spillScore` and `uniformityScore` joined on 2026-10-27; `renderView` and
+ * `analyzeFrame` on 2026-10-28 (AE-05).
  *
- * `renderView` is a template, so the differ sees one symbol per instantiation and
- * names it twice. It is listed twice here on purpose: the differ's recovered set
- * is compared with multiplicity, so losing one instantiation would fail the
- * comparison rather than pass it.
+ * `renderView` and `analyzeFrame` are templates, so the differ sees one symbol
+ * per instantiation and names each twice. They are listed twice here on purpose:
+ * the differ's recovered set is compared with multiplicity, so losing one
+ * instantiation would fail the comparison rather than pass it.
  */
 const RECOVERED = [
   "clampf", "rgbToYCbCr", "sensitivityToThreshold", "chromaDistance", "hueAngle",
   "angularDiff", "percentile", "percentileUnsorted", "gradientMagnitude", "spillScore",
   "uniformityScore", "renderView", "renderView",
+  "analyzeFrame",
 ];
 
 /**
  * The functions still unread, as the differ names them.
  *
- * `analyzeFrame` is a template, so the differ sees one symbol per instantiation:
- * two symbols for one function.
+ * One: the 16-bit instantiation of the `analyzeFrame` template. The 8-bit one
+ * was recovered on 2026-10-28; this one is still to come.
+ *
+ * The `StoreReadout(PF_InData*, const Stats&)` host integration is deliberately
+ * NOT in `src/` — it takes an Adobe SDK type — and it is not a `chromakey::`
+ * symbol the differ tracks, so it does not appear here either.
  */
-const OUTSTANDING = [
-  "analyzeFrame(IhEENS_5StatsERKNS_4ViewIKT_EEfRKNS_6ParamsEPfSB_)",
-  "analyzeFrame(ItEENS_5StatsERKNS_4ViewIKT_EEfRKNS_6ParamsEPfSB_)",
-];
+const OUTSTANDING = ["analyzeFrame(ItEENS_5StatsERKNS_4ViewIKT_EEfRKNS_6ParamsEPfSB_)"];
 
 function bundlesInstalled() {
   return existsSync(BUNDLE);
@@ -145,7 +147,7 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
   }
 
   const summary = out.trim().split("\n").pop();
-  assert.match(summary, /7 identical, 6 differing, 2 not implemented/,
+  assert.match(summary, /7 identical, 7 differing, 1 not implemented/,
     `the differ's tally moved: ${summary}`);
 });
 
@@ -155,7 +157,7 @@ test("the functions that do not match are documented as such", () => {
   // far off it is.
   const notes = readFileSync(path.join(SRC, "RECOVERY-NOTES.md"), "utf8");
   for (const fn of ["percentile", "percentileUnsorted", "spillScore", "uniformityScore",
-                    "renderView"]) {
+                    "renderView", "analyzeFrame"]) {
     assert.match(notes, new RegExp(fn), `RECOVERY-NOTES.md does not mention ${fn}`);
   }
   assert.match(notes, /instruction-identical/i, "the notes should say which ones match exactly");
@@ -183,6 +185,8 @@ test("the functions that do not match are documented as such", () => {
 //     body 0x25bc .. 0x2b24   (347 instructions)
 //   __ZN9chromakey10renderViewItEEvRKNS_4ViewIKT_EERNS1_IS2_EEfRKNS_6ParamsENS_8ViewModeEfPKfSE_
 //     body 0x2be4 .. 0x3158   (350 instructions)
+////   __ZN9chromakey12analyzeFrameIhEENS_5StatsERKNS_4ViewIKT_EEfRKNS_6ParamsEPfSB_
+//     body 0x7d8 .. 0x1398   (752 instructions; hot path returns at 0x12f8)
 //
 // The load base comes from `_dyld_get_image_header` over the loaded image list,
 // matched on the image path. The recovered source is compiled into the same
@@ -440,13 +444,242 @@ static void renderCases() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// analyzeFrame<unsigned char>
+//
+// The shipped body is at 0x7d8 in the bundle's own address space, and is called
+// IN PLACE, through the loader's mapping of the bundle.
+//
+// Its Stats come back through a hidden pointer in x8 rather than in registers:
+// five floats is not a homogeneous aggregate of at most four members, so the
+// AAPCS64 returns it indirectly. The shipped body zeroes twenty bytes through
+// that pointer (0x808/0x80c) and then stores uniformity at +0x0, the mean
+// spill at +0x4, p5 and p95 as one eight-byte store at +0x8, and keyedFraction
+// at +0x10.
+//
+// ShippedStats therefore carries a non-trivial destructor ON PURPOSE: that is
+// what makes the harness's own call use the same indirect-return convention,
+// so the result pointer really lands in x8 while the other arguments keep x0
+// (the View), x1 (the Params), v0 (the scale) and x2/x3 (the two output
+// buffers).
+// ---------------------------------------------------------------------------
+
+struct ShippedStats {
+  float uniformity;
+  float meanSpill;
+  float p5;
+  float p95;
+  float keyedFraction;
+  ShippedStats() : uniformity(0), meanSpill(0), p5(0), p95(0), keyedFraction(0) {}
+  ~ShippedStats() {}
+};
+static_assert(sizeof(ShippedStats) == 20, "the shipped Stats is twenty bytes");
+
+// The shipped Params layout, kept separate from chromakey::Params for the same
+// reason ShippedView is: a drift in the recovered layout has to show up as a
+// mismatch rather than hide behind an accidentally compatible call.
+struct ShippedParams { float keyR; float keyG; float keyB; float sensitivity; };
+
+using AF8 = ShippedStats (*)(const ShippedView8&, float, const ShippedParams&,
+                             float*, float*);
+
+static long g_anVectors8 = 0;
+static long g_anMism8 = 0, g_anStatMism8 = 0;
+
+// 'kind' selects the pixel pattern, and it matters:
+//
+//   0  every pixel a random colour
+//   1  every pixel grey (achromatic)
+//   2  a mixture of grey and coloured pixels
+//   3  every pixel the key colour
+//   4  every pixel one fixed colour
+//
+// The grey patterns are what reach the ACHROMATIC SHORTCUT at 0xc08..0xc18.
+// That shortcut fires when EITHER the pixel OR the key is achromatic — an OR,
+// not an AND, because the fccmp at 0xc14 forces NZCV to 0x8 (N=1, so "less
+// than") on the path where the pixel's magnitude was already below 1e-6. The
+// exported 'spillScore' uses the same OR (its two early returns at 0x1490 and
+// 0x14ac), so the two shipped functions AGREE here. A frame of grey pixels
+// under a coloured key, and a frame of coloured pixels under a grey key, are
+// the two cases that pin the OR down.
+//
+// 'normaliseKey' decides the UNITS of the key colour handed to the shipped
+// code. The shipped code divides every PIXEL channel by the scale (0x988,
+// 0x98c, 0x998) but does NOT divide the KEY (0x8ac..0x900) — normalising the
+// key is the caller's job. With the key normalised the KEYED path is
+// reachable at all: pixels fall inside the chroma radius, so the keyed
+// fraction, the uniformity over the KEYED distances and the keyed/non-keyed
+// split all carry real values. With the key left in raw units it sits far
+// away from every pixel, nothing is keyed, and the mean spill and the per
+// pixel scores carry the frame instead. Both are exercised.
+template <typename T, typename V>
+static void analyzeOne(int width, int height, int pad, float scale, float sens,
+                       float keyR, float keyG, float keyB, int kind, bool nullOut,
+                       bool normaliseKey, uintptr_t shippedAddr,
+                       long& mismatches, long& statMismatches) {
+  const unsigned kMax = (sizeof(T) == 1) ? 0xffu : 0xffffu;
+  const long rb = static_cast<long>(width) * 4 + pad;
+  const std::size_t total = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+
+  std::vector<T> s(static_cast<std::size_t>(rb) * static_cast<std::size_t>(height) + 64,
+                   static_cast<T>(0));
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      T* p = &s[static_cast<std::size_t>(y) * rb + x * 4];
+      unsigned r, g, b;
+      if (kind == 1) {
+        r = g = b = rnd() & kMax;
+      } else if (kind == 2) {
+        r = rnd() & kMax;
+        g = rnd() & kMax;
+        b = rnd() & kMax;
+        if (rnd() & 1) { g = r; b = r; }
+      } else if (kind == 3) {
+        r = static_cast<unsigned>(keyR);
+        g = static_cast<unsigned>(keyG);
+        b = static_cast<unsigned>(keyB);
+      } else if (kind == 4) {
+        r = 7; g = 9; b = 11;
+      } else {
+        r = rnd() & kMax;
+        g = rnd() & kMax;
+        b = rnd() & kMax;
+      }
+      p[0] = static_cast<T>(kMax);        // the alpha component is never read
+      p[1] = static_cast<T>(r);
+      p[2] = static_cast<T>(g);
+      p[3] = static_cast<T>(b);
+    }
+  }
+
+  // The destinations are poisoned, so a missing write shows up as a difference
+  // rather than passing because the buffer happened to hold the right bytes.
+  std::vector<float> dA(total ? total : 1), sA(total ? total : 1);
+  std::vector<float> dB(total ? total : 1), sB(total ? total : 1);
+  for (std::size_t i = 0; i < dA.size(); ++i) {
+    dA[i] = -7.0f; sA[i] = -7.0f; dB[i] = -7.0f; sB[i] = -7.0f;
+  }
+
+  const float kR = normaliseKey ? keyR / scale : keyR;
+  const float kG = normaliseKey ? keyG / scale : keyG;
+  const float kB = normaliseKey ? keyB / scale : keyB;
+
+  V S{s.data(), width, height, rb};
+  ShippedParams SP{kR, kG, kB, sens};
+  using AF = ShippedStats (*)(const V&, float, const ShippedParams&, float*, float*);
+  ShippedStats rA = reinterpret_cast<AF>(shippedAddr)
+      (S, scale, SP, nullOut ? nullptr : dA.data(), nullOut ? nullptr : sA.data());
+
+  chromakey::View<const T> myS{s.data(), width, height, rb};
+  chromakey::Params MP{kR, kG, kB, sens};
+  chromakey::Stats rB = chromakey::analyzeFrame<T>
+      (myS, scale, MP, nullOut ? nullptr : dB.data(), nullOut ? nullptr : sB.data());
+
+  ++g_anVectors8;
+  const bool statsSame = std::memcmp(&rA, &rB, sizeof(ShippedStats)) == 0;
+  if (!statsSame) ++statMismatches;
+  const bool buffersSame =
+      (nullOut || total == 0) ||
+      (std::memcmp(dA.data(), dB.data(), total * sizeof(float)) == 0 &&
+       std::memcmp(sA.data(), sB.data(), total * sizeof(float)) == 0);
+  if (!statsSame || !buffersSame) {
+    ++mismatches;
+    if (mismatches <= 8) {
+      std::printf("AN MISMATCH width=%zu w=%d h=%d pad=%d kind=%d scale=%g sens=%g "
+                  "key=(%g,%g,%g) nullOut=%d norm=%d\n",
+                  sizeof(T), width, height, pad, kind, scale, sens, kR, kG, kB,
+                  static_cast<int>(nullOut), static_cast<int>(normaliseKey));
+      std::printf("   shipped: u=%g m=%g p5=%g p95=%g kf=%g\n",
+                  rA.uniformity, rA.meanSpill, rA.p5, rA.p95, rA.keyedFraction);
+      std::printf("   mine   : u=%g m=%g p5=%g p95=%g kf=%g\n",
+                  rB.uniformity, rB.meanSpill, rB.p5, rB.p95, rB.keyedFraction);
+      for (std::size_t i = 0; i < total && i < 4; ++i) {
+        std::printf("   px%zu: dist %g/%g  score %g/%g\n", i, dA[i], dB[i], sA[i], sB[i]);
+      }
+    }
+  }
+}
+
+// One case. The 16-bit instantiation of the same template scales the row stride
+// by two itself (0x1b40: lsl x11, x11, #1), so rowBytes is in ELEMENTS of T at
+// both widths, but that instantiation is not recovered yet.
+static void analyzeCase(int width, int height, int pad, float scale, float sens,
+                        float keyR, float keyG, float keyB, int kind, bool nullOut,
+                        bool normaliseKey) {
+  analyzeOne<unsigned char, ShippedView8>(width, height, pad, scale, sens,
+      keyR, keyG, keyB, kind, nullOut, normaliseKey, g_base + 0x7d8,
+      g_anMism8, g_anStatMism8);
+}
+
+static void analyzeCases() {
+  // Random frames over a spread of shapes, scales, sensitivities, key colours
+  // and pixel patterns, in both key conventions.
+  for (int iter = 0; iter < 8000; ++iter) {
+    const int w = 1 + static_cast<int>(rnd() % 9);
+    const int h = 1 + static_cast<int>(rnd() % 9);
+    const int pad = static_cast<int>(rnd() % 4);
+    const int kind = static_cast<int>(rnd() % 5);
+    const float scale = (rnd() % 4 == 0) ? 1.0f
+                      : ((rnd() % 2 == 0) ? 255.0f : frnd(1.0f, 400.0f));
+    const float sens = frnd(-20.0f, 150.0f);
+    const bool norm = (rnd() % 2) == 0;
+    analyzeCase(w, h, pad, scale, sens, frnd(0.0f, 255.0f), frnd(0.0f, 255.0f),
+                frnd(0.0f, 255.0f), kind, (rnd() % 4) == 0, norm);
+  }
+
+  // Structured edge cases.
+  //
+  //   * a 1x1 frame, which is the only case the percentile's single-sample
+  //     branch (0x1154..0x1160) can reach;
+  //   * single-row and single-column frames;
+  //   * a frame with no pixels at all, which the shipped code answers with the
+  //     zeroed Stats and without touching either output buffer;
+  //   * a frame where every pixel is the key colour, so nothing is left to
+  //     score and the mean spill has no denominator;
+  //   * a frame of grey pixels under a COLOURED key, and a frame of coloured
+  //     pixels under a GREY key — the pair that separates the OR of the
+  //     achromatic shortcut from an AND;
+  //   * a wholly grey frame under a wholly grey key, where the shortcut does
+  //     fire;
+  //   * the sensitivity and scale extremes.
+  for (int kind = 0; kind < 5; ++kind) {
+    analyzeCase(1, 1, 0, 255.0f, 50.0f, 10.0f, 200.0f, 30.0f, kind, false, true);
+    analyzeCase(1, 1, 0, 255.0f, 50.0f, 10.0f, 200.0f, 30.0f, kind, true, true);
+    analyzeCase(1, 7, 2, 255.0f, 50.0f, 10.0f, 200.0f, 30.0f, kind, false, true);
+    analyzeCase(7, 1, 2, 255.0f, 50.0f, 10.0f, 200.0f, 30.0f, kind, false, true);
+    analyzeCase(0, 3, 1, 255.0f, 50.0f, 10.0f, 200.0f, 30.0f, kind, false, true);
+    analyzeCase(3, 0, 1, 255.0f, 50.0f, 10.0f, 200.0f, 30.0f, kind, false, true);
+    // Grey pixels under a coloured key: the pixel is achromatic, the key is not.
+    analyzeCase(4, 4, 0, 255.0f, 50.0f, 10.0f, 200.0f, 30.0f, 1, false, true);
+    // Coloured pixels under a grey key: the key is achromatic, the pixel is not.
+    // A grey key is grey in any units, so this one works un-normalised too.
+    analyzeCase(4, 4, 0, 255.0f, 50.0f, 128.0f, 128.0f, 128.0f, 0, false, false);
+    analyzeCase(4, 4, 0, 255.0f, 50.0f, 128.0f, 128.0f, 128.0f, 0, false, true);
+    // Both achromatic: the shortcut fires.
+    analyzeCase(4, 4, 0, 255.0f, 50.0f, 128.0f, 128.0f, 128.0f, 1, false, false);
+    // Every pixel the key colour: everything is keyed.
+    analyzeCase(5, 5, 0, 255.0f, 50.0f, 20.0f, 180.0f, 40.0f, 3, false, true);
+    analyzeCase(5, 5, 0, 255.0f, 50.0f, 20.0f, 180.0f, 40.0f, 3, false, false);
+    // The sensitivity and scale extremes.
+    for (int s = 0; s < 4; ++s) {
+      const float sens = (s == 0) ? -100.0f : (s == 1) ? 0.0f : (s == 2) ? 100.0f : 1000.0f;
+      const float scale = (s % 2 == 0) ? 1.0f : 255.0f;
+      analyzeCase(3, 3, 1, scale, sens, 10.0f, 200.0f, 30.0f, 0, false, true);
+      analyzeCase(3, 3, 1, scale, sens, 10.0f, 200.0f, 30.0f, 2, false, true);
+    }
+  }
+}
+
 int main() {
   openOracle();
   gradientCases();
   renderCases();
+  analyzeCases();
   std::printf("grad_cases=%ld grad_mismatches=%ld\n", g_gradCases, g_gradMismatches);
   std::printf("vectors=%ld mism8=%ld mism16=%ld\n", g_total, g_mism8, g_mism16);
-  return (g_gradMismatches || g_mism8 || g_mism16) ? 1 : 0;
+  std::printf("an_vectors=%ld an_mism8=%ld an_statmism8=%ld\n",
+              g_anVectors8, g_anMism8, g_anStatMism8);
+  return (g_gradMismatches || g_mism8 || g_mism16 || g_anMism8) ? 1 : 0;
 }
 `;
 
@@ -535,6 +768,97 @@ test("the recovered renderView matches the shipped bundle's own machine code", (
       `the shipped and recovered renderView disagree:\n${out}`);
     const vectors = Number(out.match(/vectors=(\d+)/)?.[1] ?? 0);
     assert.ok(vectors >= 20000, `only ${vectors} vectors were compared`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the recovered analyzeFrame matches the shipped bundle's own machine code", (t) => {
+  if (!differentialPrerequisites(t)) return;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "chromakey-analyze-"));
+  try {
+    const bin = buildHarness(dir, path.join(SRC, "chromakey.cpp"));
+    const out = execFileSync(bin, [], { encoding: "utf8", stdio: "pipe" });
+    assert.match(out, /an_mism8=0 an_statmism8=0/,
+      `the shipped and recovered analyzeFrame disagree:\n${out}`);
+    const vectors = Number(out.match(/an_vectors=(\d+)/)?.[1] ?? 0);
+    assert.ok(vectors >= 8000, `only ${vectors} analyzeFrame vectors were compared`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the analyzeFrame differential can see an AND where the bundle has an OR", (t) => {
+  // The achromatic shortcut at 0xc08..0xc18 fires when EITHER the pixel OR the
+  // key is achromatic. Reading the fccmp at 0xc14 as a plain two-way select
+  // turns it into an AND, and the recovered source would then score a coloured
+  // pixel under a grey key on its hue — which the shipped bundle never does.
+  //
+  // This mutates the `||` in the recovered source into `&&` and requires the
+  // harness to notice. The mutation is applied to a COPY in the temporary
+  // directory; the recovered source in the repository is not touched.
+  if (!differentialPrerequisites(t)) return;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "chromakey-or-mutate-"));
+  try {
+    const original = readFileSync(path.join(SRC, "chromakey.cpp"), "utf8");
+    const mutated = original.replace(
+      "pixelMag < 1e-6f || keyMag < 1e-6f",
+      "pixelMag < 1e-6f && keyMag < 1e-6f");
+    assert.notEqual(mutated, original,
+      "the mutation target (the achromatic shortcut) was not found in chromakey.cpp");
+
+    const mutatedSrc = path.join(dir, "chromakey-mutated.cpp");
+    writeFileSync(mutatedSrc, mutated);
+    const bin = buildHarness(dir, mutatedSrc);
+    let out = "";
+    let failed = false;
+    try {
+      out = execFileSync(bin, [], { encoding: "utf8", stdio: "pipe" });
+    } catch (e) {
+      failed = true;
+      out = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+    }
+    assert.ok(failed, `the harness reported success on a deliberately mutated source:\n${out}`);
+    const m8 = Number(out.match(/an_mism8=(\d+)/)?.[1] ?? 0);
+    assert.ok(m8 > 0,
+      `the mutated source produced no mismatches at all:\n${out}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the analyzeFrame differential can fail", (t) => {
+  // The analyzeFrame differential is only evidence if it CAN report a mismatch.
+  // This mutates one constant in the recovered source — the 5th-percentile
+  // fraction, 0.05f -> 0.06f — and requires the harness to notice. The
+  // mutation is applied to a COPY in the temporary directory; the recovered
+  // source in the repository is not touched.
+  if (!differentialPrerequisites(t)) return;
+
+  const dir = mkdtempSync(path.join(tmpdir(), "chromakey-an-mutate-"));
+  try {
+    const original = readFileSync(path.join(SRC, "chromakey.cpp"), "utf8");
+    const mutated = original.replace("analyzePercentile(sorted, 0.05f)",
+                                     "analyzePercentile(sorted, 0.06f)");
+    assert.notEqual(mutated, original,
+      "the mutation target (the 5th-percentile fraction) was not found in chromakey.cpp");
+
+    const mutatedSrc = path.join(dir, "chromakey-mutated.cpp");
+    writeFileSync(mutatedSrc, mutated);
+    const bin = buildHarness(dir, mutatedSrc);
+    let out = "";
+    let failed = false;
+    try {
+      out = execFileSync(bin, [], { encoding: "utf8", stdio: "pipe" });
+    } catch (e) {
+      failed = true;
+      out = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+    }
+    assert.ok(failed, `the harness reported success on a deliberately mutated source:\n${out}`);
+    const m8 = Number(out.match(/an_mism8=(\d+)/)?.[1] ?? 0);
+    assert.ok(m8 > 0, `the mutated source produced no mismatches at all:\n${out}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

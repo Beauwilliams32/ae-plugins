@@ -5,24 +5,32 @@
 // not from source: the original C++ was destroyed on 2026-10-13 with no remote and
 // no backup.
 //
-// INCOMPLETE — the scalar layer, the statistics layer and `renderView<T>` are
-// here; `analyzeFrame<T>` is not. `tools/codegen-diff.mjs chromakey` names what is
-// missing, and test/chromakey.test.mjs asserts that the recovered set and the
-// outstanding set it reports agree with what this file says.
+// NOT YET COMPLETE: one `chromakey::` symbol is still unrecovered —
+// `analyzeFrame<unsigned short>` (770 instructions in the shipped bundle).
+// The 8-bit instantiation of the same template (752 instructions) was recovered
+// on 2026-10-28 and is what pinned the `View` and `Stats` layouts.
 //
-// RECOVERED HERE (13 functions):
+// RECOVERED HERE (14 functions):
 //   clampf, rgbToYCbCr, sensitivityToThreshold, chromaDistance, hueAngle,
 //   angularDiff, percentile, percentileUnsorted, gradientMagnitude
 //   spillScore, uniformityScore
 //   renderView<unsigned char>, renderView<unsigned short>
+//   analyzeFrame<unsigned char>
 //
-// NOT RECOVERED:
-//   analyzeFrame<unsigned char> (752), analyzeFrame<unsigned short> (770)
-//   StoreReadout(PF_InData*, const Stats&) (70) — host integration, and it must
-//     stay out of `src/`: it takes a `PF_InData*`, which is an Adobe SDK type, and
-//     this directory holds transcriptions of the shipped DSP only.
+// NOT A `chromakey::` SYMBOL, and deliberately out of `src/`:
+//   StoreReadout(PF_InData*, const Stats&) (70) — host integration. It takes a
+//     `PF_InData*`, which is an Adobe SDK type, and this directory holds
+//     transcriptions of the shipped DSP only.
 //
-// SIGNATURE FIDELITY: all thirteen are [exact] — taken verbatim from symbol
+// MEASUREMENT: `node tools/codegen-diff.mjs chromakey` reports SEVEN
+// instruction-identical, SEVEN behavioural, ONE absent. The seven identical are
+// clampf, rgbToYCbCr, sensitivityToThreshold, chromaDistance, hueAngle,
+// angularDiff and gradientMagnitude. The seven behavioural are percentile,
+// percentileUnsorted, spillScore, uniformityScore, renderView<unsigned char>,
+// renderView<unsigned short> and analyzeFrame<unsigned char>. The absent one is
+// analyzeFrame<unsigned short>.
+//
+// SIGNATURE FIDELITY: all fourteen are [exact] — taken verbatim from symbol
 // mangling. `RGB` and `YCbCr` are [inferred] layouts, each established from the
 // offsets the functions themselves use, and pinned by static_assert. `View`,
 // `Params`, `Stats` and `ViewMode` are [inferred] layouts and [invented] names
@@ -121,7 +129,7 @@ float angularDiff(float a, float b);
 //
 //   pMag = sqrt(cb^2 + cr^2);  if (pMag < 1e-6) return 0;      // achromatic pixel
 //   kMag = sqrt(key.cb^2 + key.cr^2);  if (kMag < 1e-6) return 0;   // achromatic key
-//   hue = angularDiff(hueAngle(p.cr, p.cb), hueAngle(key.cr, key.cb));
+//   hue = angularDiff(hueAngle(p.cb, p.cr), hueAngle(key.cb, key.cr));
 //   hueWeight = clamp(1 - hue / (pi/2), 0, 1);                 // 0xbfc90fdb is -pi/2, so this is a
 //                                                              // division by a negative constant
 //   yWeight   = min(fabsf(p.y - referenceY), 1);               // how far this pixel's luma sits from
@@ -238,11 +246,46 @@ struct Params {
 /** [inferred] The per-frame statistics `analyzeFrame` returns. */
 struct Stats {
   float uniformity;
-  float meanScore;
+  float meanSpill;
   float p5;
   float p95;
   float keyedFraction;
 };
+
+// The layouts above are inferred from the offsets the shipped code uses, and
+// these asserts pin them so a silent drift fails the build rather than the
+// differential.
+//
+// `View<T>` — the shipped `analyzeFrame` loads `data` at +0x0, `width` at +0x8,
+// `height` at +0xc and `rowBytes` at +0x10 (arm64 listing of
+// `analyzeFrame<unsigned char>`: `ldr x10, [x28]`, `ldr w9, [x28, #0x8]`,
+// `ldr w8, [x28, #0xc]`, `ldr x11, [x28, #0x10]`).
+static_assert(sizeof(View<unsigned char>) == 24, "the shipped View is 24 bytes");
+static_assert(offsetof(View<unsigned char>, data) == 0, "View::data is at +0x0");
+static_assert(offsetof(View<unsigned char>, width) == 8, "View::width is at +0x8");
+static_assert(offsetof(View<unsigned char>, height) == 12, "View::height is at +0xc");
+static_assert(offsetof(View<unsigned char>, rowBytes) == 16, "View::rowBytes is at +0x10");
+static_assert(sizeof(View<unsigned short>) == 24, "the View layout does not depend on T");
+
+// `Params` — the shipped code reads the key colour and the sensitivity as four
+// consecutive floats (arm64 listing of `analyzeFrame<unsigned char>` at
+// 0x8ac..0x900).
+static_assert(sizeof(Params) == 16, "the shipped Params is four floats");
+static_assert(offsetof(Params, keyR) == 0, "Params::keyR is at +0x0");
+static_assert(offsetof(Params, keyG) == 4, "Params::keyG is at +0x4");
+static_assert(offsetof(Params, keyB) == 8, "Params::keyB is at +0x8");
+static_assert(offsetof(Params, sensitivity) == 12, "Params::sensitivity is at +0xc");
+
+// `Stats` — the shipped body zeroes twenty bytes through the hidden return
+// pointer (0x808/0x80c) and then stores uniformity at +0x0, the mean spill at
+// +0x4, p5 and p95 as ONE eight-byte store at +0x8 (0x1270: `str d0, [x21, #0x8]`)
+// and the keyed fraction at +0x10 (0xda8).
+static_assert(sizeof(Stats) == 20, "the shipped Stats is twenty bytes");
+static_assert(offsetof(Stats, uniformity) == 0, "Stats::uniformity is at +0x0");
+static_assert(offsetof(Stats, meanSpill) == 4, "Stats::meanSpill is at +0x4");
+static_assert(offsetof(Stats, p5) == 8, "Stats::p5 is at +0x8");
+static_assert(offsetof(Stats, p95) == 12, "Stats::p95 is at +0xc");
+static_assert(offsetof(Stats, keyedFraction) == 16, "Stats::keyedFraction is at +0x10");
 
 /** [inferred] The view mode `renderView` dispatches on.
  *
@@ -271,14 +314,52 @@ enum ViewMode {
 // and returns the aggregate statistics. `outDistances` and `outScores` receive
 // one float per pixel when they are non-null.
 //
-// NOT RECOVERED — the signature above is [exact] (taken from the symbol mangling
-// `_ZN9chromakey12analyzeFrameIhEENS_5StatsERKNS_4ViewIKT_EEfRKNS_6ParamsEPfSB_`),
-// but there is no definition of it in `chromakey.cpp` yet: the shipped body is 752
-// instructions for the 8-bit instantiation and 770 for the 16-bit one, and it has
-// not been transcribed. The declaration is kept so the call shape is pinned and so
-// the differ can see that the symbol is still absent; `tools/codegen-diff.mjs
-// chromakey` reports both instantiations as "not implemented" and
-// test/chromakey.test.mjs asserts that they are still outstanding.
+// The signature is [exact] — taken from the symbol mangling
+// `_ZN9chromakey12analyzeFrameIhEENS_5StatsERKNS_4ViewIKT_EEfRKNS_6ParamsEPfSB_`
+// and its `It` sibling. Only the 8-bit instantiation is transcribed here; the
+// 16-bit one (`analyzeFrame<unsigned short>`, 770 instructions in the bundle) is
+// still outstanding and is NOT instantiated in this source.
+//
+// [behavioural] — transcribed from the shipped instruction stream (arm64 listing
+// `/tmp/ae/chromakeyassist.asm`: `analyzeFrame<unsigned char>` body 0x7d8-0x1398
+// (752 instructions; the hot path returns at 0x12f8 and the cold exception tail
+// follows it)), but NOT instruction-identical: the differ reports
+// shipped=752 mine=703 for the 8-bit instantiation.
+//
+// WHAT IT DOES, in the order the listing runs it:
+//
+//   * the returned Stats is zeroed first (0x808/0x80c);
+//   * a width or height below 1 returns it as it stands, and neither output
+//     buffer is touched (0x810..0x828 -> epilogue at 0x12cc, ret at 0x12f8);
+//   * the threshold comes from `sensitivityToThreshold` (0x840..0x874);
+//   * the KEY colour is converted to luma and chroma WITHOUT being divided by
+//     the scale (0x8ac..0x900), while every PIXEL channel is divided by the
+//     scale first (0x988/0x98c/0x998) — an asymmetry that is easy to miss;
+//   * pass one computes each pixel's chroma distance, whether it is inside the
+//     threshold (0x91c..0xa0c), and the mean luma of the KEYED pixels, or 0.5
+//     when nothing is keyed (0xa10..0xa28);
+//   * pass two scores every pixel that is NOT keyed (0xb38..0xd94); a keyed
+//     pixel scores zero and its distance joins the keyed set;
+//   * the keyed fraction is the keyed count over the pixel count (0xd98) and the
+//     mean spill is the mean score over the pixels that are NOT keyed
+//     (0xdac..0xdc4);
+//   * the uniformity is `uniformityScore` over the KEYED distances only
+//     (0xdc8..0x110c);
+//   * p5 and p95 are percentiles over ALL the distances, with a FUSED
+//     multiply-add for the interpolation (0x1110..0x1238), then divided by
+//     sqrt(2) and multiplied by 100, clamped to [0, 100] (0x123c..0x1270);
+//   * the two optional output buffers are copied out (0x1274..0x129c).
+//
+// The NUMBERS are exact. `test/chromakey.test.mjs` dlopens the installed
+// ChromaKeyAssist bundle, calls the shipped `analyzeFrame` at its own body
+// offset 0x7d8 IN PLACE, and compares the returned Stats AND both output
+// buffers byte-for-byte against this implementation over 8100 randomised and
+// edge-cased frames. Measured: `an_mism8=0`, `an_statmism8=0` over 8100 vectors.
+//
+// The harness is mutation-sensitive, and the zero is a measurement rather than
+// a stub: changing the 5th-percentile fraction (0.05f -> 0.06f) in this source
+// makes the same harness report 1110 mismatches, and changing the achromatic
+// shortcut from `||` to `&&` makes it report 962.
 template <typename T>
 Stats analyzeFrame(const View<const T>& src, float scale, const Params& params,
                     float* outDistances, float* outScores);

@@ -2,14 +2,18 @@
 //
 // Each function carries the instructions that establish its behaviour, because
 // that is the whole recovery: where a claim about the original cannot be traced to
-// an instruction, it does not belong here. The scalar layer, the statistics layer
-// and `renderView<T>` are transcribed; `analyzeFrame<T>` and the host integration
-// are not, and are absent rather than stubbed.
+// an instruction, it does not belong here. The scalar layer, the statistics layer,
+// `renderView<T>` and `analyzeFrame<unsigned char>` are transcribed; the 16-bit
+// `analyzeFrame<unsigned short>` and the host integration are not, and are absent
+// rather than stubbed.
 
 #include "chromakey.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
+#include <vector>
 
 namespace chromakey {
 
@@ -307,6 +311,282 @@ float gradientMagnitude(const float* field, int width, int height, long rowStrid
   const float gy = (below - above) / dy;
   return std::sqrt(gx * gx + gy * gy);
 }
+
+// ---------------------------------------------------------------------------
+// analyzeFrame<T>
+//
+// Transcribed from the shipped bundle's own instruction stream. The listing read
+// was /tmp/ae/chromakeyassist.asm (arm64, demangled):
+//
+//   __ZN9chromakey12analyzeFrameIhEENS_5StatsERKNS_4ViewIKT_EEfRKNS_6ParamsEPfSB_
+//     body 0x7d8 .. 0x1398   (752 instructions; the hot path returns at
+//     0x12f8, the cold exception-handling tail follows it)
+//   __ZN9chromakey12analyzeFrameItEENS_5StatsERKNS_4ViewIKT_EEfRKNS_6ParamsEPfSB_
+//     body 0x19b4 .. 0x25bc   (770 instructions)
+//
+// The two bodies are the same algorithm with a different pixel stride, so ONE
+// template covers both. Only the 8-bit instantiation is recovered here; the
+// 16-bit one is still outstanding. The differences that are not the stride:
+//
+//   * the 16-bit instantiation scales `rowBytes` by two itself (0x1b40:
+//     `lsl x11, x11, #1`), so `rowBytes` is in ELEMENTS of T in both;
+//   * the pixel is four components either way — A, R, G and B — so R, G and B
+//     are p[1], p[2] and p[3] for both widths (the 8-bit kernel reads them as
+//     bytes at 0x978/0x980/0x990, the 16-bit one as halfwords at
+//     0x1b58/0x1b60/0x1b70);
+//   * `scale` divides each channel BEFORE the luma is taken (0x988, 0x98c,
+//     0x998), but the KEY colour is NOT divided at all (0x8ac..0x900).
+//
+// The shape, in the order the listing runs it:
+//
+//   0x808/0x80c  the returned Stats is zeroed first
+//   0x810/0x820  a width or height below 1 returns it as it stands
+//   0x840       the threshold, from sensitivityToThreshold
+//   0x87c       the pixel count, height * width
+//   0x910..0x9f8 pass one: the chroma distance of every pixel, whether it is
+//                inside the key radius, and the mean luma of the pixels that are
+//   0xa10       that mean luma, or 0.5 when nothing is keyed
+//   0xa70..0xac4 the key's chroma magnitude and hue
+//   0xb28..0xce0 pass two: the spill score of every pixel that is NOT keyed
+//   0xd98       the keyed fraction
+//   0xdac       the mean spill score, over the pixels that are NOT keyed
+//   0xdc8       the uniformity, over the KEYED distances only
+//   0x1110..0x1238 the 5th and 95th percentiles, over ALL the distances
+//   0x123c      both percentiles, scaled and clamped
+//   0x1274      the two optional output buffers
+//
+// One detail is worth stating because it is easy to read the wrong way round:
+// the ACHROMATIC SHORTCUT at 0xc08..0xc18 fires when EITHER the pixel OR the key
+// is achromatic — an OR, not an AND.
+//
+//   0xc08  movi.2d v0, #0          ; the score the shortcut produces
+//   0xc0c  fcmp s14, s6             ; s14 = the pixel's chroma magnitude
+//   0xc10  ldr s1, [sp, #0x60]      ; s1 = the key's chroma magnitude
+//   0xc14  fccmp s1, s6, #0x8, pl   ; the key's magnitude is only compared
+//                                     ; when the pixel's was NOT smaller than 1e-6
+//   0xc18  b.mi 0xb4c              ; ... and the branch is taken when it is
+//                                     ; smaller still
+//
+// `pl` is "positive or zero", so the compare of the key's magnitude happens only
+// on the path where the pixel's magnitude was at least 1e-6; on the other path
+// the flags are FORCED to the immediate 0x8. That immediate is NZCV with N in
+// bit 3, so 0x8 is N=1, Z=0, C=0, V=0 — "less than". The branch is therefore
+// taken when the pixel's magnitude was below 1e-6, whatever the key's magnitude
+// is, and when it was not, it is taken when the KEY's magnitude is below 1e-6.
+// In other words: the shortcut fires when EITHER is achromatic.
+//
+// That reading was checked against the shipped binary itself, by assembling the
+// four instruction sequence above and running it: the branch is taken for
+// (pixel<1e-6, key>=1e-6), (pixel<1e-6, key<1e-6) and (pixel>=1e-6, key<1e-6),
+// and not for (pixel>=1e-6, key>=1e-6). The exported `spillScore` uses the same
+// OR (its two early returns at 0x1490 and 0x14ac), so the two shipped functions
+// agree here rather than disagreeing.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// The percentile the shipped `analyzeFrame` computes.
+//
+// It is NOT the exported `percentile`: that one divides `p` by 100 and
+// interpolates with a separate multiply and add, while the shipped analyzeFrame
+// interpolates with a FUSED multiply-add (0x11a4: `fmadd s0, s2, s0, s1`). The
+// two differ in the last bit, so this helper is local.
+//
+// `sorted` must already be sorted. `fraction` is the fraction of the way up the
+// range: the shipped code multiplies the rank by 0.05f and 0.95f DIRECTLY
+// (0x1168 and 0x11f0), with no division by 100.
+float analyzePercentile(const std::vector<float>& sorted, float fraction) {
+  const std::size_t count = sorted.size();
+  // 0x1154..0x1160 : a single sample is that sample.
+  if (count == 1) return sorted[0];
+
+  // 0x1164..0x1174 : index = (count - 1) * fraction, in FLOAT.
+  const float index = static_cast<float>(count - 1) * fraction;
+  // 0x1178/0x117c : the two ends of the interpolation — truncating and rounding up.
+  const std::size_t lo = static_cast<std::size_t>(index);
+  const std::size_t hi = static_cast<std::size_t>(std::ceil(index));
+  // 0x1180..0x118c : an index that lands on a sample boundary is that sample.
+  if (lo == hi) return sorted[lo];
+
+  // 0x1190..0x11a4 : low + (high - low) * (index - low), fused.
+  const float low = sorted[lo];
+  const float high = sorted[hi];
+  return std::fma(high - low, index - static_cast<float>(lo), low);
+}
+
+}  // namespace
+
+template <typename T>
+Stats analyzeFrame(const View<const T>& src, float scale, const Params& params,
+                   float* outDistances, float* outScores) {
+  // 0x808/0x80c : the returned Stats is zeroed before anything else happens.
+  Stats stats{};
+
+  const int width = src.width;
+  const int height = src.height;
+  // 0x810..0x828 : a width or height below 1 returns the zeroed Stats.
+  if (width < 1 || height < 1) return stats;
+
+  // 0x840..0x874 : the chroma threshold, from sensitivityToThreshold.
+  const float threshold = sensitivityToThreshold(params.sensitivity);
+
+  // 0x87c : the pixel count. The shipped code multiplies in 32 bits and widens,
+  // so the count is a product of two unsigneds.
+  const std::size_t total =
+      static_cast<std::size_t>(height) * static_cast<std::size_t>(width);
+
+  // 0x888/0x894 : the distances, zeroed. 0x8a0/0x90c : the per-pixel flag.
+  // 0xa2c/0xa3c : the scores, zeroed.
+  std::vector<float> distances(total, 0.0f);
+  std::vector<unsigned char> flags(total, 0);
+  std::vector<float> scores(total, 0.0f);
+
+  // 0x8ac..0x900 : the KEY colour, in the same luma and chroma the pixels are
+ // measured in — but NOT divided by the scale, unlike the pixels.
+  const YCbCr key = rgbToYCbCr(RGB{params.keyR, params.keyG, params.keyB});
+  // 0xa70..0xa7c : the key's chroma magnitude.
+  const float keyMag = std::sqrt(key.cb * key.cb + key.cr * key.cr);
+  // 0xa80..0xac4 : the key's hue.
+  //
+  //   0xa80  mov.16b v0, v10   ; v0 = s10 = cr
+  //   0xa84  mov.16b v1, s9    ; v1 = s9  = cb
+  //   0xa88  bl _atan2f        ; atan2f(cr, cb)
+  //
+  // The repo's `hueAngle(a, b)` calls `atan2f(b, a)` (see its own note above), so
+  // the shipped `atan2f(cr, cb)` is `hueAngle(cb, cr)`. The shipped `spillScore`
+  // uses the same order (0x14d8: v0 = s11 = key.cr, v1 = s9 = key.cb).
+  const float keyHue = hueAngle(key.cb, key.cr);
+
+  // ---- pass one: the distances, the flags and the mean luma ----
+  double sumY = 0.0;              // 0x9e0 : the luma sum, in DOUBLE
+  std::size_t keyedCount = 0;     // 0x9e4 : how many pixels are inside the key
+
+  for (int y = 0; y < height; ++y) {
+    const T* const row = src.data + static_cast<long>(y) * src.rowBytes;
+    for (int x = 0; x < width; ++x) {
+      const T* const p = row + static_cast<long>(x) * 4;
+      // 0x988/0x98c/0x998 : each channel is divided by the scale FIRST.
+      const RGB rgb{static_cast<float>(p[1]) / scale,
+                    static_cast<float>(p[2]) / scale,
+                    static_cast<float>(p[3]) / scale};
+      const YCbCr px = rgbToYCbCr(rgb);
+      const float dist = chromaDistance(px, key);
+      const std::size_t index = static_cast<std::size_t>(y) *
+                                    static_cast<std::size_t>(width) +
+                                static_cast<std::size_t>(x);
+      distances[index] = dist;              // 0x9cc
+      const bool inKey = dist <= threshold;  // 0x9d0/0x9d4
+      flags[index] = inKey ? 1 : 0;          // 0x9dc
+      if (inKey) {
+        // 0x9d8..0x9e8 : the luma sum covers the KEYED pixels only.
+        sumY += static_cast<double>(px.y);
+        ++keyedCount;
+      }
+    }
+  }
+
+  // 0xa10..0xa28 : the mean luma of the keyed pixels, or 0.5 when there are none.
+  const float meanY = keyedCount
+                           ? static_cast<float>(sumY / static_cast<double>(keyedCount))
+                           : 0.5f;
+
+  // ---- pass two: the scores ----
+  // 0xa48..0xa6c : the keyed distances, reserved to the size of the keyed set.
+  std::vector<float> keyedDistances;
+  keyedDistances.reserve(keyedCount);
+  double sumScore = 0.0;           // 0xb58 : the score sum, in DOUBLE
+  std::size_t nonKeyedCount = 0;   // 0xb5c : the pixels that are NOT keyed
+
+  for (int y = 0; y < height; ++y) {
+    const T* const row = src.data + static_cast<long>(y) * src.rowBytes;
+    for (int x = 0; x < width; ++x) {
+      const std::size_t index = static_cast<std::size_t>(y) *
+                                    static_cast<std::size_t>(width) +
+                                static_cast<std::size_t>(x);
+      if (flags[index]) {
+        // 0xb8c..0xba8 : a keyed pixel scores zero, and its distance joins the
+        // keyed set. It is NOT counted in the mean spill and does NOT add to the
+        // score sum — the shipped code jumps past both (0xba8 -> 0xb60).
+        scores[index] = 0.0f;
+        keyedDistances.push_back(distances[index]);
+        continue;
+      }
+
+      const T* const p = row + static_cast<long>(x) * 4;
+      const RGB rgb{static_cast<float>(p[1]) / scale,
+                    static_cast<float>(p[2]) / scale,
+                    static_cast<float>(p[3]) / scale};
+      const YCbCr px = rgbToYCbCr(rgb);
+      // 0xbfc..0xc04 : the pixel's chroma magnitude.
+      const float pixelMag = std::sqrt(px.cb * px.cb + px.cr * px.cr);
+
+      float score;
+      if (pixelMag < 1e-6f || keyMag < 1e-6f) {
+        // 0xc08..0xc18 : the achromatic shortcut. See the note above the
+        // function: it fires when EITHER the pixel or the key is achromatic.
+        score = 0.0f;
+      } else {
+        // 0xc1c..0xc44 : the pixel's hue.
+        //
+        //   0xc1c  mov.16b v0, v11   ; v0 = s11 = cr
+        //   0xc20  mov.16b v1, v10   ; v1 = s10 = cb
+        //   0xc34  bl _atan2f         ; atan2f(cr, cb)
+        //
+        // Same order as the key's hue above, so `hueAngle(cb, cr)`.
+        const float pixelHue = hueAngle(px.cb, px.cr);
+        // 0xc48..0xc74 : the circular distance to the key's hue.
+        const float hue = angularDiff(pixelHue, keyHue);
+        // 0xc78..0xc94 : hueWeight = clamp(hue / (-pi/2) + 1, 0, 1).
+        const float hueWeight = clampf(hue / -1.5707964f + 1.0f, 0.0f, 1.0f);
+        // 0xc98..0xca4 : yWeight = min(|luma - meanY|, 1).
+        const float yDelta = std::fabs(px.y - meanY);
+        const float yWeight = yDelta > 1.0f ? 1.0f : yDelta;
+        // 0xca8..0xcb8 : chroma = clamp(2 * magnitude, 0, 1).
+        const float twiceMag = pixelMag + pixelMag;
+        const float chroma = twiceMag < 0.0f ? 0.0f
+                                          : (twiceMag > 1.0f ? 1.0f : twiceMag);
+        // 0xcc8..0xcdc : the score, clamped to [0, 1].
+        score = clampf(chroma * hueWeight * yWeight, 0.0f, 1.0f);
+      }
+
+      scores[index] = score;                    // 0xb4c
+      sumScore += static_cast<double>(score);  // 0xb54/0xb58
+      ++nonKeyedCount;                          // 0xb5c
+    }
+  }
+
+  // 0xd98 : the fraction of the frame that is keyed.
+  stats.keyedFraction =
+      static_cast<float>(keyedCount) / static_cast<float>(total);
+  // 0xdac : the mean spill score over the pixels that are NOT keyed.
+  stats.meanSpill = nonKeyedCount
+                        ? static_cast<float>(sumScore / static_cast<double>(nonKeyedCount))
+                        : 0.0f;
+  // 0xdc8 : the uniformity, over the KEYED distances only.
+  stats.uniformity = uniformityScore(keyedDistances.data(), keyedDistances.size());
+
+  // 0x1110..0x1238 : the percentiles, over ALL the distances — the shipped code
+  // takes two copies of the whole array and sorts each of them.
+  std::vector<float> sorted(distances);
+  std::sort(sorted.begin(), sorted.end());
+  const float p5raw = analyzePercentile(sorted, 0.05f);
+  const float p95raw = analyzePercentile(sorted, 0.95f);
+  // 0x123c..0x1270 : both percentiles, scaled by 100/sqrt(2) and clamped.
+  stats.p5 = clampf(p5raw / 1.4142135f * 100.0f, 0.0f, 100.0f);
+  stats.p95 = clampf(p95raw / 1.4142135f * 100.0f, 0.0f, 100.0f);
+
+  // 0x1274..0x129c : the two optional output buffers.
+  if (outDistances != nullptr) {
+    std::memcpy(outDistances, distances.data(), total * sizeof(float));
+  }
+  if (outScores != nullptr) {
+    std::memcpy(outScores, scores.data(), total * sizeof(float));
+  }
+  return stats;
+}
+
+template Stats analyzeFrame<unsigned char>(const View<const unsigned char>&, float,
+                                           const Params&, float*, float*);
 
 // ---------------------------------------------------------------------------
 // renderView<T>
