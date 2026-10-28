@@ -7,17 +7,38 @@
 // NAMESPACE-COMPLETE: every `noisefield::` symbol in the bundle is transcribed, so this
 // header is a complete description of the namespace.
 //
+// `node tools/codegen-diff.mjs noisefield` reports 3 identical, 7 differing, 0 not
+// implemented — every symbol is present, and the seven that are not instruction-
+// identical are behavioural recoveries whose behaviour is measured against the shipped
+// bundle (see src/noisefield/differential.cpp and src/noisefield/RECOVERY-NOTES.md).
+//
 // RECOVERED HERE, and how far:
 //   * `clampf`, `clampi`, `fbmAmplitudeSum`  — INSTRUCTION-IDENTICAL to the bundle.
 //   * `kGrad3`                                 — verified against the bundle's own bytes.
-//   * `PermTable::build`, `noise3`, `fbm3`     — same instruction COUNT as the bundle,
-//                                                 different register schedule; verified
-//                                                 against independently written oracles.
-//   * `fieldAt`, `curlField`, `apply<T>`       — BEHAVIOURAL recoveries: the semantics
-//                                                 are pinned by the listing and by a
+//   * `noise3`, `fbm3`                        — same instruction COUNT as the bundle
+//                                                 (183 and 51), different register
+//                                                 schedule; verified against independently
+//                                                 written oracles.
+//   * `PermTable::build`                      — 63 instructions here against the
+//                                                 bundle's 109: clang expands the
+//                                                 256-byte copy differently. Verified
+//                                                 against a shuffle oracle.
+//   * `fieldAt`, `curlField`                  — BEHAVIOURAL recoveries: 226 and 163
+//                                                 instructions, the same counts as the
+//                                                 bundle, but a different register
+//                                                 schedule. The semantics are pinned by
+//                                                 the listing and by a bit-for-bit
+//                                                 differential against the shipped
+//                                                 bundle; the instruction streams are
+//                                                 not identical.
+//   * `apply<unsigned char>`, `apply<unsigned short>` — BEHAVIOURAL recoveries: 363 and
+//                                                 367 instructions here against the
+//                                                 bundle's 408 and 412. The semantics are
+//                                                 pinned by the listing and by a
 //                                                 bit-for-bit differential against the
-//                                                 shipped bundle, but the instruction
-//                                                 streams are not identical.
+//                                                 shipped bundle (3,096,000 render
+//                                                 vectors, 0 differing bytes); the
+//                                                 instruction streams are not identical.
 //
 // No After Effects host has ever loaded a rebuilt bundle. Nothing here is a claim of
 // host acceptance.
