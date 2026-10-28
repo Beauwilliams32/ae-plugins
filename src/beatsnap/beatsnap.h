@@ -5,9 +5,10 @@
 // 1.0.0), not from source: the original C++ was destroyed on 2026-10-13 with no
 // remote and no backup.
 //
-// INCOMPLETE — 7 of this bundle's 11 authored functions are transcribed here. The
-// four that are not are DECLARED below but have no body yet; the header is not
-// claiming more than the source has.
+// All ELEVEN of this bundle's authored functions are transcribed here.
+//
+// NAMESPACE-COMPLETE
+//
 // The five shared-DSP functions are COPIES, and that is the point. BeatSnap's
 // `hannWindow`, `fftRadix2`, `downmixToMono`, `isPowerOfTwo` and `clampf` are
 // machine-code-identical to the `spectra::` ones — `tools/dsp-duplication.mjs`
@@ -16,11 +17,12 @@
 // the shipped fleet, not a shortcut: the same five functions were compiled into
 // several effects, which is why one recovered implementation serves them all.
 //
-// The other six are BeatSnap's own onset detection. Two of them — medianOfWindow
-// and adaptiveThreshold — are recovered from this bundle's own instructions; the
-// remaining four are declared here with their recovered layouts but their bodies
-// are not written yet. It is the listing of all six, plus the two recovered ones,
-// that pinned the three structs below.
+// The other six are BeatSnap's own onset detection, and every one of them was
+// recovered from this bundle's own instructions: medianOfWindow,
+// adaptiveThreshold, computeFlux, pickOnsets, detectOnsets and renderValues.
+// None of them is shared with any other bundle, so there was nothing to copy —
+// each was read out of BeatSnap.plugin's own listing. It is the listing of all
+// six that pinned the three structs below.
 //
 // SIGNATURE FIDELITY. `[exact]` means the signature is verbatim from the symbol
 // mangling. `[partial]` means the signature is verbatim but the BODY is a
@@ -199,9 +201,9 @@ static_assert(offsetof(RenderConfig, peakValue) == 0x1c, "the high half of the s
 static_assert(sizeof(RenderConfig) == 0x20, "0x20 bytes: an int, a double, six more");
 
 // ---------------------------------------------------------------------------
-// The four functions that were outstanding. Each body below cites the listing
-// it was read from; each is [partial] or [exact] as marked, and the mark says
-// how far the recovery goes.
+// BeatSnap's own onset detection. Each body below cites the listing it was read
+// from; each is [partial] or [exact] as marked, and the mark says how far the
+// recovery goes.
 // ---------------------------------------------------------------------------
 
 // [partial] The spectral-flux track for a block of samples: window -> FFT ->

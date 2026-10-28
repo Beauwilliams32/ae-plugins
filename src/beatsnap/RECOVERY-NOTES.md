@@ -7,7 +7,8 @@ C++ was destroyed on 2026-10-13; the binary is the only copy and is unstripped.
 
 ## State
 
-Eleven authored functions. **Seven recovered**, four identified only.
+Eleven authored functions. **All eleven recovered** — three instruction-identical,
+the rest behaviourally verified against the listing.
 
 | Function | Instrs | State |
 |---|---|---|
@@ -25,6 +26,53 @@ Eleven authored functions. **Seven recovered**, four identified only.
 
 `test/beatsnap.test.mjs` asserts that table against `tools/codegen-diff.mjs`, so
 recovering another function fails the test until this file is updated.
+
+## The three structs, with their offset evidence
+
+The names are not in the binary; the layouts are. Every offset below is a load
+or a store in BeatSnap.plugin's own code, and the header carries a
+`static_assert` for each one so a layout change cannot pass silently.
+
+### `OnsetConfig` — 0x20 bytes
+
+```
+ldr  d8, [x2]             +0x00  sampleRate    (a double; the guard is > 0)
+ldr  w28, [x2, #0x8]      +0x08  fftSize       (an int; a power of two >= 4)
+ldp  s1, s0, [x22, #0xc]  +0x0c  bandLoHz, +0x10 bandHiHz   (floats)
+ldr  s0, [x20, #0x14]     +0x14  thresholdScale (a float)
+ldr  s0, [x20, #0x18]     +0x18  pickScale      (a float)
+ldr  w1, [x20, #0x1c]     +0x1c  medianWindow  (an int)
+```
+
+The last three are read by `detectOnsets` in the order medianWindow,
+thresholdScale, pickScale — which is the order they are declared in, and the
+order the call sites use.
+
+### `FluxTrack` — 0x28 bytes
+
+```
+str  xzr, [x8, #0x20] / movi.2d v0, #0 / stp q0, q0, [x8]   ; the sret is zeroed
+stp d0, d1, [x8, #0x18]                                     ; the two doubles
+ldp d1, d2, [x21, #0x18]                                    ; ... are read back
+```
+
+The flux VECTOR is the first member at +0x00: `computeFlux` calls
+`std::vector<float>::assign` with the sret pointer ITSELF as the vector's
+`this`, which is what places it there, and the two doubles follow it at +0x18
+and +0x20.
+
+### `RenderConfig` — 0x20 bytes
+
+```
+ldr  w8, [x22]             +0x00  mode       (an int; 1 means "discrete")
+ldr  d8, [x22, #0x8]       +0x08  timeScale  (a double; the guard is > 0)
+ldp  s2, s3, [x22, #0x10]  +0x10  attackMs, +0x14 decayMs   (floats, ms)
+ldp  s12, s1, [x22, #0x18] +0x18  fillValue, +0x1c peakValue (floats)
+```
+
+The peak value is read two ways — `ldr s0, [x22, #0x1c]` on the discrete path
+and the high half of the `ldp` pair on the curve path — and it is the SAME
+field.
 
 ## The five shared-DSP copies are not a shortcut, and are checked
 

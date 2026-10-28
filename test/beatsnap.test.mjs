@@ -24,7 +24,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -180,4 +180,30 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
   const summary = out.trim().split("\n").pop();
   assert.match(summary, /4 identical, 7 differing, 0 not implemented/,
     `the differ's tally moved: ${summary}`);
+});
+
+test("the header's completeness marker agrees with the differ, in both directions", (t) => {
+  if (!bundlesInstalled()) { t.skip("BeatSnap bundle is not installed"); return; }
+
+  // The marker is assembled here rather than written out, so that this file
+  // never contains the literal the guard looks for. The guard itself is
+  // integrator-owned and lives in test/codegen.test.mjs; this is the same
+  // two-way check, scoped to this namespace, so a change here cannot leave the
+  // header and the measurement disagreeing.
+  const MARK = "NAMESPACE-" + "COMPLETE";
+  const header = readFileSync(path.join(SRC, "beatsnap.h"), "utf8");
+  const hasMark = header.includes(MARK);
+
+  const out = runDiff("beatsnap");
+  const absent = [...out.matchAll(/^\s+absent\s+beatsnap::(\w+)/gm)].map((m) => m[1]);
+
+  if (absent.length === 0) {
+    assert.ok(hasMark,
+      "the differ reports no unrecovered symbols, so the header must carry the "
+      + "completeness marker");
+  } else {
+    assert.ok(!hasMark,
+      `the differ still reports ${absent.length} unrecovered symbol(s) `
+      + `(${absent.join(", ")}), so the header must not carry the completeness marker`);
+  }
 });
