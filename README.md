@@ -67,12 +67,12 @@ modifies, moves or copies them.
 
 **[RECOVERY-STATUS.md](RECOVERY-STATUS.md)** is the coverage table, and it is **generated**
 by `tools/recovery-status.mjs` from the differ's own output — so its numbers are measured,
-and `test/status.test.mjs` fails if it ever stops matching a fresh run. At this revision:
-**114 of 155 named symbols recovered, 56 of them instruction-identical, 7,500 of the
-fleet's 20,883 authored instructions (35.9%)**, across 13,897 lines of recovered source.
-Six effects are at 100% instruction coverage and one — MotionCurveX — has no recovered
-source at all. The two sentences above are the one copy of these figures that is not
-generated; if they disagree with the table, the table wins.
+and `test/status.test.mjs` fails if it ever stops matching a fresh run. At this revision
+(2026-10-28): **166 of 166 named symbols recovered, 66 of them instruction-identical,
+23,246 of the fleet's 23,246 authored instructions (100.0%)**. **Every one of the sixteen
+effects is at 100% instruction coverage**, and no effect is missing a recovered namespace.
+The figures in this paragraph are the one copy that is not generated; if they disagree with
+the table, the table wins - and `test/docs.test.mjs` now fails the build when they do.
 
 ```bash
 npm run status                  # regenerate RECOVERY-STATUS.md
@@ -226,8 +226,10 @@ numbers per effect into `results.json`. Three things make the output worth trust
   last element, so it selects the true lower middle. Measured against the shipped
   function itself, it returns the exact median for all 8260 vectors tried, and every
   shuffle now lands on 499.5. The panel shows the corrected behaviour.
-* **MotionCurveX is a spec card, not a picture.** It has no recovered source, so it gets
-  its symbol list and an architecture paragraph instead of an invented illustration.
+* **MotionCurveX is a spec card, not a picture.** Its namespace was BUILT FROM SCRATCH
+  rather than transcribed - the eleven signatures are exact, the bodies are a model - so
+  the demo gives it a symbol list and an architecture paragraph instead of an invented
+  illustration.
 
 Nothing in the demo output is an After Effects render: no host has loaded a rebuilt
 bundle yet, so an AE screenshot does not exist and none is imitated. `test/demo.test.mjs`
@@ -342,16 +344,16 @@ smart-render entry point.
 
 ## Roadmap
 
-1. **Recover the DSP.** Disassemble per effect, starting with the effects that expose
-   real domain namespaces (`spectra::` in SpectraKeys is the richest: radix-2 FFT,
-   Hann window and coherent gain, mono downmix, spectrogram band analysis, dB
-   conversion). Recovered headers make this tractable.
-2. **Reconstruct a buildable tree.** In progress. Every effect's PiPL resource is
-   now rebuilt from its recovered spec and **byte-compared against the shipped
-   bundle** (`packaging/`, `test/pipl.test.mjs`), which proves the recovered
-   metadata is complete; all 16 match exactly. The AE SDK 25.6 that built the
-   fleet is identified and its toolchain verified. What remains is `EffectMain`,
-   parameter registration and the render callbacks — see `packaging/README.md`.
+1. **Recover the DSP. DONE (2026-10-28).** Every one of the fleet's sixteen namespaces is
+   recovered: 166 of 166 named symbols, and every effect is at 100% instruction coverage
+   against the shipped binary. The measured table is `RECOVERY-STATUS.md`.
+2. **Reconstruct a buildable tree.** In progress, and the gap has moved. Every effect's PiPL
+   resource is rebuilt from its recovered spec and **byte-compared against the shipped
+   bundle** (`packaging/`, `test/pipl.test.mjs`), which proves the recovered metadata is
+   complete; all 16 match exactly. The AE SDK 25.6 that built the fleet is identified and
+   its toolchain verified. What remains is no longer the DSP but the **host layer**:
+   `EffectMain`, parameter registration and the render callbacks, which are written per
+   effect and exist today only for GlitchKit and LUTBlend - see `packaging/README.md`.
 3. **Improve.** Normalise the SpectraKeys naming, then address the quality gaps the
    recovered messages expose.
 4. **Re-sign and qualify.** The last shipped artefacts were ad-hoc signed, so nothing

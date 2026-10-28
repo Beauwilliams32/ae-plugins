@@ -133,6 +133,61 @@ test("every source path the documentation links to exists", () => {
   assert.deepEqual(missing, [], `documentation references files that do not exist:\n${missing.join("\n")}`);
 });
 
+test("the README's headline figures match the generated coverage table", () => {
+  // The README carries the fleet's headline numbers in prose, because a reader meets the
+  // prose before the table. That copy is hand-written, and it drifted twice: it said
+  // "114 of 155 ... 35.9%" while the generated table said 142 of 166 and 59.4%, and it
+  // still said "one - MotionCurveX - has no recovered source at all" months after
+  // MotionCurveX had a namespace. A hand-written copy of a generated number is a
+  // number that goes stale, so it is checked here against the artifact rather than
+  // trusted.
+  //
+  // Only the RECOVERY claims are checked. The line count is deliberately NOT: it moves
+  // with every commit that touches src/, and a README that has to be edited for every
+  // lane's commit is a README that will be left alone instead.
+  const table = read("RECOVERY-STATUS.md");
+  const readme = read("README.md");
+
+  const symbols = table.match(/\| Named symbols recovered \| (\d+) of (\d+) \|/);
+  assert.ok(symbols, "RECOVERY-STATUS.md has no 'Named symbols recovered' row");
+  const [, recovered, total] = symbols.map(Number);
+
+  const identical = table.match(/\| — instruction-identical to the shipped binary \| (\d+) \|/);
+  assert.ok(identical, "RECOVERY-STATUS.md has no 'instruction-identical' row");
+
+  const instructions = table.match(/\| Authored instructions recovered \| (\d+) of (\d+) \(([\d.]+)%\) \|/);
+  assert.ok(instructions, "RECOVERY-STATUS.md has no 'Authored instructions recovered' row");
+  const [, instrRecovered, instrTotal, instrPct] = instructions;
+
+  assert.ok(readme.includes(`**${recovered} of ${total} named symbols recovered`),
+    `the README does not say "${recovered} of ${total} named symbols recovered"`);
+  assert.ok(readme.includes(`${identical[1]} of them instruction-identical`),
+    `the README does not say "${identical[1]} of them instruction-identical"`);
+  // The README writes these with thousands separators; the table does not.
+  const grouped = (n) => n.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  assert.ok(readme.includes(`${grouped(instrRecovered)} of the fleet's `
+    + `${grouped(instrTotal)} authored instructions (${instrPct}%)`),
+    `the README does not quote the table's instruction coverage `
+    + `(${instrRecovered} of ${instrTotal}, ${instrPct}%)`);
+});
+
+test("the README does not claim an effect is missing a recovered namespace", () => {
+  // A stale sentence of the shape "X has no recovered source" survives every edit that
+  // touches the code, because nothing reads it. When the fleet reached full coverage
+  // those sentences became false and the README still made them. The check is on the
+  // SHAPE of the claim rather than on a list of names, so it keeps holding as effects
+  // are added.
+  const readme = read("README.md");
+  for (const phrase of [
+    "has no recovered source",
+    "still exists only as an installed binary",
+    "no recovered namespace",
+  ]) {
+    assert.ok(!readme.includes(phrase),
+      `the README still claims "${phrase}" - every effect has a recovered namespace now`);
+  }
+});
+
 test("the namespace list in the documentation matches src/", () => {
   // README enumerates the recovered namespaces in a table. Every one must exist, and a
   // newly recovered namespace must appear, so the table cannot silently fall behind.

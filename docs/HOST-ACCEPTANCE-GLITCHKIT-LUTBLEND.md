@@ -1,9 +1,11 @@
 # Host acceptance — GlitchKit + LUTBlend (the two rebuildable bundles)
 
-Two of the fleet's sixteen effects have a recovered source namespace complete enough to rebuild a
-bundle: **GlitchKit** and **LUTBlend**. Every other effect still exists only as an installed binary
-(`RECOVERY-STATUS.md`). This packet is the host-side acceptance run for a rebuilt GlitchKit/LUTBlend
-bundle: it exists so the owner's session is ticking and signing rather than composing a record.
+As of 2026-10-28 **all sixteen** of the fleet's namespaces are recovered - 166 of 166 symbols, every
+effect at 100% instruction coverage (`RECOVERY-STATUS.md`). What still limits the rebuildable set is
+not the DSP but the **written host layer** - `EffectMain`, parameter registration and the render
+callback - which exists today only for **GlitchKit** and **LUTBlend**. Those two are therefore the
+rebuildable bundles, and this packet is the host-side acceptance run for them: it exists so the
+owner's session is ticking and signing rather than composing a record.
 
 **Nothing below is pre-ticked. A blank box is an unobserved result.** No After Effects host has ever
 loaded a rebuilt bundle, so every box starts empty and stays empty until someone runs the checks in
