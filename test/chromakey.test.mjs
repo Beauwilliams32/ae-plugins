@@ -275,17 +275,33 @@ static void gradientCases() {
     // The horizontal pair is read on row y itself, and y may be one past the last
     // row when the clamp is being exercised, so the buffer carries a whole extra
     // row of slack.
+    //
+    // It ALSO carries slack BEFORE the first element, and that is not optional.
+    // The shipped kernel clamps the COLUMN indices (xm1 = max(x-1,0),
+    // xp1 = min(x+1,width-1)) but it does NOT clamp the ROW index y: the centre row
+    // is addressed as field[stride*y + ...] with the raw y. When y is -1 that
+    // address is a whole stride before the start of the buffer, and when x is -1
+    // the vertical pair reads field[stride*ym1 + x] = field[-1]. An earlier
+    // revision of this harness allocated slack only at the end, so those reads
+    // landed outside the allocation and the harness died with SIGBUS on roughly
+    // five per cent of runs - a fault in the ORACLE, not in the recovered code,
+    // because the recovered code has the identical addressing.
+    //
+    // The slack is zero-filled, so both the shipped kernel and the recovered one
+    // read the same well-defined values and the comparison stays deterministic.
     const std::size_t count = static_cast<std::size_t>(stride)
                             * (static_cast<std::size_t>(height) + 2) + 16;
-    std::vector<float> field(count);
+    const std::size_t front = static_cast<std::size_t>(stride) + 2;
+    std::vector<float> storage(count + front, 0.0f);
+    float* const field = storage.data() + front;
     for (std::size_t i = 0; i < count; ++i) {
       field[i] = static_cast<float>(static_cast<int32_t>(nextRandom() % 2001) - 1000) / 100.0f;
     }
     const int x = static_cast<int>(nextRandom() % static_cast<uint64_t>(width + 2)) - 1;
     const int y = static_cast<int>(nextRandom() % static_cast<uint64_t>(height + 2)) - 1;
 
-    const float a = shipped(field.data(), width, height, stride, x, y);
-    const float b = chromakey::gradientMagnitude(field.data(), width, height, stride, x, y);
+    const float a = shipped(field, width, height, stride, x, y);
+    const float b = chromakey::gradientMagnitude(field, width, height, stride, x, y);
     ++g_gradCases;
     const bool same = (a == b) || (std::isnan(a) && std::isnan(b));
     if (!same) {
@@ -306,7 +322,7 @@ static long g_total = 0, g_mism8 = 0, g_mism16 = 0;
 
 static void one(int srcW, int dstW, int H, int pad8, int pad16, int mode, float mix,
                 float scale, float sens, bool alphaNull, bool spillNull,
-                bool structured, const float* forcedAlpha, const float* forcedSpill) {
+                bool structured, const float* forcedAlpha, int forcedCount) {
   const long rb8 = static_cast<long>(dstW) * 4 + pad8;
   const long rb16 = static_cast<long>(dstW) * 4 + pad16;
   const long srb8 = static_cast<long>(srcW) * 4 + pad8;
@@ -320,8 +336,24 @@ static void one(int srcW, int dstW, int H, int pad8, int pad16, int mode, float 
     alphaBuf[i] = structured ? static_cast<float>(i % 5) * 0.25f : frnd(0.0f, 1.0f);
     spillBuf[i] = structured ? static_cast<float>(i % 7) * 0.03f : frnd(-0.1f, 1.2f);
   }
-  if (forcedAlpha) alphaBuf.assign(forcedAlpha, forcedAlpha + alphaBuf.size());
-  if (forcedSpill) spillBuf.assign(forcedSpill, forcedSpill + spillBuf.size());
+  // The forced values are a PATTERN, not a buffer: they are repeated cyclically to
+  // fill the frame. An earlier revision of this harness copied
+  // forcedAlpha + alphaBuf.size() elements out of a five-element array, so the
+  // last four elements of every 3x3 frame were uninitialised stack memory. That
+  // made the comparison depend on whatever happened to be on the stack: the
+  // harness reported a mismatch at the final pixel of the structured frames on
+  // roughly one run in eighty, and the mismatch was in the ORACLE's input, not
+  // in either implementation. The pattern is now expanded explicitly, so both
+  // the shipped kernel and the recovered one are handed the same well-defined
+  // values.
+  if (forcedAlpha) {
+    for (std::size_t i = 0; i < alphaBuf.size(); ++i)
+      alphaBuf[i] = forcedAlpha[i % static_cast<std::size_t>(forcedCount)];
+  }
+  if (forcedAlpha) {
+    for (std::size_t i = 0; i < spillBuf.size(); ++i)
+      spillBuf[i] = forcedAlpha[i % static_cast<std::size_t>(forcedCount)];
+  }
   const float* alpha = alphaNull ? nullptr : alphaBuf.data();
   const float* spill = spillNull ? nullptr : spillBuf.data();
 
@@ -390,7 +422,7 @@ static void renderCases() {
                       : ((rnd() % 3 == 0) ? 65535.0f : frnd(1.0f, 1000.0f));
     const float sens = frnd(-20.0f, 150.0f);
     one(srcW, dstW, H, pad8, pad16, mode, mix, scale, sens, alphaNull, spillNull,
-        false, nullptr, nullptr);
+        false, nullptr, 0);
   }
 
   // Structured edge cases: every mode including out of range, the mix extremes,
@@ -401,9 +433,9 @@ static void renderCases() {
     for (int m = 0; m < 5; ++m) {
       const float mix = (m == 0) ? -1.0f : (m == 1) ? 0.0f : (m == 2) ? 1.0f : (m == 3) ? 2.0f : 0.5f;
       const float sens = (m == 4) ? -5.0f : 50.0f;
-      one(3, 3, 3, 0, 0, mode, mix, 255.0f, sens, false, false, true, edge, edge);
-      one(1, 1, 1, 0, 0, mode, 1.0f, 65535.0f, 0.0f, true, true, true, edge, edge);
-      one(4, 2, 2, 3, 1, mode, 0.25f, 1.0f, 100.0f, false, true, true, edge, edge);
+      one(3, 3, 3, 0, 0, mode, mix, 255.0f, sens, false, false, true, edge, 5);
+      one(1, 1, 1, 0, 0, mode, 1.0f, 65535.0f, 0.0f, true, true, true, edge, 5);
+      one(4, 2, 2, 3, 1, mode, 0.25f, 1.0f, 100.0f, false, true, true, edge, 5);
     }
   }
 }
