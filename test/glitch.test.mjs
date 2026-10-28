@@ -49,10 +49,10 @@ const STATE = {
   hashKey: { status: "MATCH", shipped: 34, mine: 34, kind: "identical" },
   patternFrame: { status: "MATCH", shipped: 7, mine: 7, kind: "identical" },
   "apply<unsigned char>": {
-    status: "DIFFER", shipped: 1157, mine: 1409, kind: "behavioural", tag: "h",
+    status: "DIFFER", shipped: 1157, mine: 1410, kind: "behavioural", tag: "h",
   },
   "apply<unsigned short>": {
-    status: "DIFFER", shipped: 1228, mine: 1477, kind: "behavioural", tag: "t",
+    status: "DIFFER", shipped: 1228, mine: 1478, kind: "behavioural", tag: "t",
   },
 };
 
@@ -155,6 +155,18 @@ test("recovered glitch source compiles and its maths verifies", (t) => {
   assert.doesNotMatch(out, /\bFAIL\b/, out);
   const passes = (out.match(/^  PASS/gm) ?? []).length;
   assert.ok(passes >= 25, `expected >= 25 checks, saw ${passes}`);
+
+  // BOTH instantiations are checked. `apply<unsigned short>` is the same
+  // source at a wider channel depth, and a mistake that only shows up there —
+  // a stride doubled twice, a quantiser grid built from the wrong maximum —
+  // would sail past the 8-bit checks untouched.
+  assert.match(out, /^glitch::apply<unsigned char>$/m,
+    "the self-check did not exercise the 8-bit instantiation");
+  assert.match(out, /^glitch::apply<unsigned short>$/m,
+    "the self-check did not exercise the 16-bit instantiation");
+  const passes16 = (out.match(/^  PASS 16-bit:/gm) ?? []).length;
+  assert.ok(passes16 >= 20,
+    `expected >= 20 checks against the 16-bit instantiation, saw ${passes16}`);
 });
 
 test("the recovered apply agrees with the SHIPPED bundle, byte for byte", (t) => {

@@ -117,6 +117,65 @@ glitch::Params baseParams() {
 }
 
 // ---------------------------------------------------------------------------
+// The 16-bit twin of everything above.
+//
+// `apply<unsigned short>` is the SAME source at a different channel width, so
+// the same helpers exist — but they are separate types, and a check written
+// only against the 8-bit instantiation would not notice a mistake that only
+// shows up at the wider depth. The addresses quoted in the 16-bit checks are
+// the 16-bit listing's (0x1a04..0x2d30), NOT the 8-bit ones.
+//
+// `View<T>::rowBytes` is a stride in ELEMENTS of T, so a tightly packed row
+// is `kW * 4` ELEMENTS at BOTH depths: the 16-bit build doubles it to bytes
+// when it forms an address (`lsl x2, x2, #1` at 0x1cec).
+// ---------------------------------------------------------------------------
+constexpr unsigned short kSentinel16 = 0xEEEE;
+
+struct Buf16 {
+  std::vector<unsigned short> elems;
+  explicit Buf16(long n) : elems((size_t)(n < 0 ? 0 : n), kSentinel16) {}
+  unsigned short* p() { return elems.data(); }
+  const unsigned short* p() const { return elems.data(); }
+};
+
+bool framesEqual(const Buf16& a, const Buf16& b) {
+  return a.elems.size() == b.elems.size() &&
+         std::memcmp(a.p(), b.p(), a.elems.size() * sizeof(unsigned short)) == 0;
+}
+
+bool framesEqual(const Buf16& a, const Buf16& b, long n) {
+  return std::memcmp(a.p(), b.p(), (size_t)n * sizeof(unsigned short)) == 0;
+}
+
+bool allSentinel(const Buf16& a, long from, long to) {
+  for (long i = from; i < to; ++i) {
+    if (a.p()[i] != kSentinel16) return false;
+  }
+  return true;
+}
+
+bool allSentinel(const Buf16& a) { return allSentinel(a, 0, (long)a.elems.size()); }
+
+void fillFrame(Buf16& b, bool blackWithAlphaRamp) {
+  for (int y = 0; y < kH; ++y) {
+    for (int x = 0; x < kW; ++x) {
+      unsigned short* q = b.p() + (long)y * kRowBytes + (long)x * 4;
+      q[0] = (unsigned short)((x * 37 + y * 53) & 0xff);
+      q[1] = (unsigned short)(blackWithAlphaRamp ? 0 : ((x * 13 + y * 7) & 0xff));
+      q[2] = (unsigned short)(blackWithAlphaRamp ? 0 : ((x * 5 + y * 3) & 0xff));
+      q[3] = (unsigned short)(blackWithAlphaRamp ? 0 : ((x * 11 + y * 17) & 0xff));
+    }
+  }
+}
+
+void render16(Buf16& in, int inW, int inH, Buf16& out, int outW, int outH,
+              const glitch::Params& p, unsigned seed, float maxValue) {
+  glitch::View<const unsigned short> vi{in.p(), inW, inH, kRowBytes};
+  glitch::View<unsigned short> vo{out.p(), outW, outH, kRowBytes};
+  glitch::apply<unsigned short>(vi, vo, p, seed, maxValue);
+}
+
+// ---------------------------------------------------------------------------
 // apply<T> — the render engine.
 //
 // These are BEHAVIOURAL assertions, not instruction-level ones: `apply<T>` is
@@ -158,9 +217,19 @@ void applyChecks8() {
 
   // --- amount: the early copy-and-return (0x764..0x79c) ---
   //
-  // The amount is capped at 1, and the LOWER test is made against the
-  // ORIGINAL value, so a negative amount stays negative and takes the same
-  // early return a zero amount takes.
+  // The amount is CLAMPED to 0..1, and the clamp's lower bound really is
+  // 0.0f — the shipped code materialises the zero with `movi.2d v1, #0` at
+  // 0x778, and v1 is the register that held the amount (`ldr s1, [x2, #0x4]`
+  // at 0x764), so the zeroing destroys the amount and the `fcsel s2, s1, s2,
+  // mi` at 0x77c selects that zero.
+  //
+  // An earlier draft of this file claimed the lower test was made against
+  // the ORIGINAL value and that "a negative amount stays negative". That was
+  // wrong: the sequence was assembled and run on this machine, and a negative
+  // amount comes out as 0.0f. The OBSERVABLE result is the same either way —
+  // a negative amount takes the same early copy-and-return that a zero
+  // amount takes — so the assertion below holds, but the reason for it is
+  // the clamp, not a negative value surviving the clamp.
   {
     Buf8 in(kFrameBytes);
     fillFrame(in, false);
@@ -475,6 +544,331 @@ void applyChecks8() {
 }
 
 // ---------------------------------------------------------------------------
+// apply<unsigned short> — the SAME engine at the wider channel depth.
+//
+// The 16-bit instantiation is the same source instantiated a second time, so
+// it is a behavioural recovery in exactly the same sense as the 8-bit one.
+// These checks exist because a mistake that only shows up at the wider depth
+// — a stride that was doubled twice, a quantiser grid computed from the wrong
+// maximum, an alpha that was quantised only at one depth — would sail past
+// the 8-bit checks untouched.
+//
+// Every address in this block is the 16-bit listing's.
+// ---------------------------------------------------------------------------
+void applyChecks16() {
+  // --- an empty frame leaves the output completely untouched (0x1a24..0x1a30) ---
+  //
+  // `ldp w9, w28, [x0, #0x8]` at 0x1a24 / `cmp w9, #1` at 0x1a28 /
+  // `ccmp w28, #1, #0x8, ge` at 0x1a2c / `b.ge 0x1a54` at 0x1a30.
+  //
+  // The 16-bit guard's branch has the OPPOSITE sense to the 8-bit one: it is
+  // `b.ge`, so the degenerate case falls THROUGH into the epilogue at 0x1a34
+  // rather than branching to it. Either way NOTHING is written.
+  {
+    Buf16 in(kFrameBytes);
+    fillFrame(in, false);
+    const glitch::Params p = baseParams();
+
+    Buf16 out(kFrameBytes);
+    render16(in, 0, kH, out, kW, kH, p, 1u, 65535.0f);
+    check(allSentinel(out), "16-bit: a zero-width input leaves the output untouched");
+
+    Buf16 out2(kFrameBytes);
+    render16(in, kW, 0, out2, kW, kH, p, 1u, 65535.0f);
+    check(allSentinel(out2), "16-bit: a zero-height input leaves the output untouched");
+
+    Buf16 out3(kFrameBytes);
+    render16(in, 0, 0, out3, kW, kH, p, 1u, 65535.0f);
+    check(allSentinel(out3), "16-bit: an empty input leaves the output untouched");
+  }
+
+  // --- the amount clamp, at 0x1a54..0x1a80 ---
+  //
+  // The 16-bit build has the SAME clamp, including the register trick: the
+  // amount is read into S1 at 0x1a54, `movi.2d v1, #0` at 0x1a68 zeroes it,
+  // and the `fcsel` after it selects that zero for a negative amount. So the
+  // amount is clamped to 0..1 here too, and a negative amount takes the same
+  // early copy-and-return that a zero amount takes (0x1a84 / 0x1a88).
+  {
+    Buf16 in(kFrameBytes);
+    fillFrame(in, false);
+
+    Buf16 a0(kFrameBytes);
+    glitch::Params p0 = baseParams();
+    p0.amount = 0.0f;
+    render16(in, kW, kH, a0, kW, kH, p0, 7u, 65535.0f);
+    check(framesEqual(in, a0), "16-bit: an amount of 0 copies the frame unchanged");
+
+    Buf16 aNeg(kFrameBytes);
+    glitch::Params pNeg = baseParams();
+    pNeg.amount = -0.5f;
+    render16(in, kW, kH, aNeg, kW, kH, pNeg, 7u, 65535.0f);
+    check(framesEqual(in, aNeg), "16-bit: a NEGATIVE amount copies the frame unchanged");
+    check(framesEqual(a0, aNeg),
+          "16-bit: a negative amount is indistinguishable from an amount of 0");
+
+    Buf16 a1(kFrameBytes);
+    Buf16 a2(kFrameBytes);
+    glitch::Params p1 = baseParams();
+    p1.amount = 1.0f;
+    glitch::Params p2 = baseParams();
+    p2.amount = 2.0f;
+    render16(in, kW, kH, a1, kW, kH, p1, 7u, 65535.0f);
+    render16(in, kW, kH, a2, kW, kH, p2, 7u, 65535.0f);
+    check(framesEqual(a1, a2),
+          "16-bit: an amount above 1 is capped, so 2.0 renders exactly as 1.0 does");
+  }
+
+  // --- the spread clamp and the early copy-and-return (0x1a70..0x1a90) ---
+  {
+    Buf16 in(kFrameBytes);
+    fillFrame(in, false);
+
+    Buf16 s0(kFrameBytes);
+    glitch::Params p0 = baseParams();
+    p0.spread = 0.0f;
+    render16(in, kW, kH, s0, kW, kH, p0, 7u, 65535.0f);
+    check(framesEqual(in, s0), "16-bit: a spread of 0 copies the frame unchanged");
+
+    Buf16 sNeg(kFrameBytes);
+    glitch::Params pNeg = baseParams();
+    pNeg.spread = -0.5f;
+    render16(in, kW, kH, sNeg, kW, kH, pNeg, 7u, 65535.0f);
+    check(framesEqual(in, sNeg), "16-bit: a NEGATIVE spread copies the frame unchanged");
+
+    Buf16 s1(kFrameBytes);
+    Buf16 s2(kFrameBytes);
+    glitch::Params p1 = baseParams();
+    p1.spread = 1.0f;
+    glitch::Params p2 = baseParams();
+    p2.spread = 2.0f;
+    render16(in, kW, kH, s1, kW, kH, p1, 7u, 65535.0f);
+    render16(in, kW, kH, s2, kW, kH, p2, 7u, 65535.0f);
+    check(framesEqual(s1, s2),
+          "16-bit: a spread above 1 is capped, so 2.0 renders exactly as 1.0 does");
+  }
+
+  // --- the catch-all mode copies the frame (0x2b9c) ---
+  //
+  // The dispatch is one-based in both builds: `cmp w11, #0x2 / b.le 0x1da0` at
+  // 0x1b48..0x1b50, `cmp w11, #0x3 / b.eq 0x1f78` at 0x1b54..0x1b58,
+  // `cmp w11, #0x4 / b.eq 0x21c4` at 0x1b5c..0x1b60 and
+  // `cmp w11, #0x5 / b.ne 0x2b9c` at 0x1b64..0x1b68. So mode 0 and mode 6
+  // both land on the plain copy at 0x2b9c.
+  {
+    Buf16 in(kFrameBytes);
+    fillFrame(in, false);
+    for (int m = 0; m <= 6; m++) {
+      if (m >= 1 && m <= 5) continue;
+      Buf16 o(kFrameBytes);
+      glitch::Params p = baseParams();
+      p.mode = m;
+      render16(in, kW, kH, o, kW, kH, p, 7u, 65535.0f);
+      check(framesEqual(in, o), "16-bit: an unknown mode falls through to the copy");
+    }
+  }
+
+  // --- mode 2, RGB Channel Shift (0x1db0..0x1f78) ---
+  //
+  // `fcvtas x14, s6` at 0x1db0's block turns the displacement into a 64-bit
+  // integer, `sub w16, w9, x14` and `add w14, w14, x9` are 32-BIT (so they
+  // wrap), and R is taken from the LEFT with the min-then-zero clamp while B
+  // comes from the RIGHT. A and G come straight from the pixel itself.
+  {
+    Buf16 in(kFrameBytes);
+    fillFrame(in, false);
+    Buf16 o(kFrameBytes);
+    glitch::Params p = baseParams();
+    p.mode = 2;
+    render16(in, kW, kH, o, kW, kH, p, 7u, 65535.0f);
+    bool alphaSame = true;
+    bool greenSame = true;
+    bool redDiffers = false;
+    bool blueDiffers = false;
+    for (int y = 0; y < kH; ++y) {
+      for (int x = 0; x < kW; ++x) {
+        const long i = (long)y * kRowBytes + (long)x * 4;
+        if (o.p()[i + 0] != in.p()[i + 0]) alphaSame = false;
+        if (o.p()[i + 2] != in.p()[i + 2]) greenSame = false;
+        if (o.p()[i + 1] != in.p()[i + 1]) redDiffers = true;
+        if (o.p()[i + 3] != in.p()[i + 3]) blueDiffers = true;
+      }
+    }
+    check(alphaSame, "16-bit: mode 2 passes alpha straight through");
+    check(greenSame, "16-bit: mode 2 passes green straight through");
+    check(redDiffers, "16-bit: mode 2 moves red in from the left");
+    check(blueDiffers, "16-bit: mode 2 moves blue in from the right");
+  }
+
+  // --- mode 4, Bad Signal (0x21c4..0x2554) ---
+  //
+  // The quantiser's grid is derived from the MAXIMUM VALUE, not from the
+  // element width: `step = fma(amount, -250, 256) - 1` is 5 at an amount of
+  // 1, so `quant = maxValue / step` is 65535 / 5 = 13107 at this depth —
+  // NOT 255 / 5 = 51, which is the 8-bit grid. The alpha is still never
+  // quantised: the quantiser's guard is `fcmp s2, s22 / b.le` against a
+  // 0.001f threshold, and the alpha is copied from the source pixel.
+  {
+    Buf16 in(kFrameBytes);
+    fillFrame(in, false);
+    Buf16 o(kFrameBytes);
+    glitch::Params p = baseParams();
+    p.mode = 4;
+    render16(in, kW, kH, o, kW, kH, p, 7u, 65535.0f);
+
+    constexpr unsigned short kGrid16 = 13107;  // 65535 / 5
+    bool rgbQuantised = true;
+    bool differs = false;
+    for (int y = 0; y < kH; ++y) {
+      for (int x = 0; x < kW; ++x) {
+        const long i = (long)y * kRowBytes + (long)x * 4;
+        for (int c = 1; c < 4; ++c) {
+          if (o.p()[i + c] % kGrid16 != 0) rgbQuantised = false;
+          if (o.p()[i + c] != in.p()[i + c]) differs = true;
+        }
+      }
+    }
+    check(rgbQuantised,
+          "16-bit: mode 4 quantises red, green and blue to a multiple of 13107");
+
+    bool alphaInInput = true;
+    bool alphaOffGrid = false;
+    bool inSet[65536] = {false};
+    for (int y = 0; y < kH; ++y) {
+      for (int x = 0; x < kW; ++x) {
+        inSet[in.p()[(long)y * kRowBytes + (long)x * 4]] = true;
+      }
+    }
+    for (int y = 0; y < kH; ++y) {
+      for (int x = 0; x < kW; ++x) {
+        const long i = (long)y * kRowBytes + (long)x * 4;
+        if (!inSet[o.p()[i + 0]]) alphaInInput = false;
+        if (o.p()[i + 0] % kGrid16 != 0) alphaOffGrid = true;
+      }
+    }
+    check(alphaInInput, "16-bit: mode 4 copies the alpha from a source pixel");
+    check(alphaOffGrid, "16-bit: mode 4 never quantises the alpha");
+    check(differs, "16-bit: mode 4 changes the frame it is given");
+  }
+
+  // --- mode 5, Datamosh Smear (0x28a4..0x2b98) ---
+  {
+    Buf16 in(kFrameBytes);
+    fillFrame(in, false);
+    Buf16 o(kFrameBytes);
+    glitch::Params p = baseParams();
+    p.mode = 5;
+    render16(in, kW, kH, o, kW, kH, p, 7u, 65535.0f);
+    bool alphaInInput = true;
+    bool differs = false;
+    bool inSet[65536] = {false};
+    for (int y = 0; y < kH; ++y) {
+      for (int x = 0; x < kW; ++x) {
+        inSet[in.p()[(long)y * kRowBytes + (long)x * 4]] = true;
+      }
+    }
+    for (int y = 0; y < kH; ++y) {
+      for (int x = 0; x < kW; ++x) {
+        const long i = (long)y * kRowBytes + (long)x * 4;
+        if (!inSet[o.p()[i + 0]]) alphaInInput = false;
+        for (int c = 0; c < 4; ++c) {
+          if (o.p()[i + c] != in.p()[i + c]) differs = true;
+        }
+      }
+    }
+    check(alphaInInput, "16-bit: mode 5 copies the alpha rather than generating it");
+    check(differs, "16-bit: mode 5 changes the frame it is given");
+  }
+
+  // --- the five modes are five different effects at this depth too ---
+  {
+    Buf16 in(kFrameBytes);
+    fillFrame(in, false);
+    Buf16 o[5] = {Buf16(kFrameBytes), Buf16(kFrameBytes),
+                  Buf16(kFrameBytes), Buf16(kFrameBytes),
+                  Buf16(kFrameBytes)};
+    for (int m = 1; m <= 5; ++m) {
+      glitch::Params p = baseParams();
+      p.mode = m;
+      render16(in, kW, kH, o[m - 1], kW, kH, p, 7u, 65535.0f);
+    }
+    bool distinct = true;
+    for (int a = 0; a < 5; ++a) {
+      for (int b = a + 1; b < 5; ++b) {
+        if (framesEqual(o[a], o[b])) distinct = false;
+      }
+    }
+    check(distinct, "16-bit: the five modes render five different frames");
+  }
+
+  // --- the output view's width and height are NEVER read (16-bit too) ---
+  {
+    Buf16 in(kFrameBytes);
+    fillFrame(in, false);
+    const glitch::Params p = baseParams();
+
+    Buf16 plain(kFrameBytes);
+    render16(in, kW, kH, plain, kW, kH, p, 7u, 65535.0f);
+
+    Buf16 tall((long)(kH + 5) * kRowBytes);
+    render16(in, kW, kH, tall, kW + 7, kH + 5, p, 7u, 65535.0f);
+    check(framesEqual(plain, tall, kFrameBytes),
+          "16-bit: the output view's width and height are never read");
+    check(allSentinel(tall, kFrameBytes, (long)(kH + 5) * kRowBytes),
+          "16-bit: the rows past the input's height are never written");
+  }
+
+  // --- the spread blend (0x2cb4..0x2d10) ---
+  //
+  //     out[i] = llround(fma(in[i], 1 - spread, spread * mode_out[i]))
+  //
+  // The blend reads the ORIGINAL input and the mode's own result, and the
+  // 16-bit build's version is `ucvtf / fmul s3, s1, s3 / fmadd s2, s2, s0, s3
+  // / fcvtas x8, s2 / strh w8, [x16], #2` at 0x2cf4..0x2d10 — the same
+  // multiply, the same fused multiply-add, the same round-half-away
+  // conversion and the same 16-bit store.
+  {
+    Buf16 in(kFrameBytes);
+    fillFrame(in, false);
+
+    Buf16 full(kFrameBytes);
+    Buf16 half(kFrameBytes);
+    glitch::Params pf = baseParams();
+    pf.mode = 2;
+    pf.spread = 1.0f;
+    glitch::Params ph = baseParams();
+    ph.mode = 2;
+    ph.spread = 0.5f;
+    render16(in, kW, kH, full, kW, kH, pf, 7u, 65535.0f);
+    render16(in, kW, kH, half, kW, kH, ph, 7u, 65535.0f);
+
+    bool exact = true;
+    for (long i = 0; i < kFrameBytes; ++i) {
+      const float res = std::fma(static_cast<float>(in.p()[i]), 0.5f,
+                                  0.5f * static_cast<float>(full.p()[i]));
+      const unsigned long long want =
+          static_cast<unsigned long long>(llroundf(res)) & 0xffffull;
+      if (want != static_cast<unsigned long long>(half.p()[i])) exact = false;
+    }
+    check(exact, "16-bit: the spread blend is fma(in, 1 - spread, spread * out), rounded");
+  }
+
+  // --- the luma flag drives the effect at this depth too ---
+  {
+    Buf16 black(kFrameBytes);
+    fillFrame(black, true);
+
+    Buf16 o(kFrameBytes);
+    glitch::Params p = baseParams();
+    p.mode = 1;
+    p.luma = 1;
+    render16(black, kW, kH, o, kW, kH, p, 7u, 65535.0f);
+    check(framesEqual(black, o),
+          "16-bit: with the luma flag set, a black frame does not move");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // The dlopen differential — the shipped bundle against this source.
 //
 // `apply<T>` is a BEHAVIOURAL RECOVERY. Its instruction stream is a
@@ -572,8 +966,13 @@ void runDifferential() {
   const int modes[] = {-2, 0, 1, 2, 3, 4, 5, 6, 8};
   // The amount and spread sets cover the three interesting regions of the
   // clamp: below zero, at zero, inside (0,1), above one, and NaN.
+  //
+  // The NEGATIVE spread is there on purpose. The clamp lifts it to 0.0f
+  // (the `movi.2d v1, #0` trick at 0x778 / 0x1a68), and a zero spread takes
+  // the early copy-and-return, so the two must agree with the shipped bundle
+  // at every shape and mode. That is a check on the CLAMP, not on the blend.
   const float amounts[] = {-1.0f, 0.0f, 0.25f, 0.5f, 1.0f, 2.0f, nan};
-  const float spreads[] = {0.0f, 0.5f, 1.0f, 1.5f, nan};
+  const float spreads[] = {-0.5f, 0.0f, 0.5f, 1.0f, 1.5f, nan};
   const int lumas[] = {0, 1};
   // Shapes: a single pixel, a single row, a single column, an odd size, and
   // one where the frame is not a multiple of the block size.
@@ -840,6 +1239,9 @@ int main() {
 
   std::printf("glitch::apply<unsigned char>\n");
   applyChecks8();
+
+  std::printf("glitch::apply<unsigned short>\n");
+  applyChecks16();
 
   // The oracle. `apply<T>` is a behavioural recovery, so the shipped bundle is
   // the authority: this calls the bundle's own apply on the same frames and
