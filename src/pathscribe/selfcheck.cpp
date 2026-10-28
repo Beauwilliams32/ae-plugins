@@ -383,6 +383,146 @@ int main() {
     check(allZero, "and leaves it zero filled");
   }
 
+  // --- rasterizeBars (recovered 2026-10-28): solid columns, and the one VizConfig field
+  // the ribbon does not read.
+  std::printf("pathscribe::rasterizeBars\n");
+  {
+    pathscribe::VizConfig cfg;
+    cfg.columns = 8;
+    cfg.rows = 8;
+    cfg.baseline = 0.5f;
+    cfg.amplitude = 1.0f;
+    cfg.thickness = 0.5f;
+    cfg.barScale = 0.5f;
+
+    // One level, so one bar, at the full column pitch less the bar's own width.
+    std::vector<float> bars, ribbon;
+    pathscribe::rasterizeBars({0.5f}, cfg, bars, ribbon);
+    check(bars.size() == 64, "the profile is columns * rows long");
+    check(ribbon.size() == 64, "and so is the ribbon");
+    // The bar is drawn on columns 2..5: `half` is barScale * step * 0.5 = 2, so the
+    // bar's left edge is at 2 and its right edge at 6.
+    checkNear(bars[2], 1.0f, 0.0, "the bar starts at column 2");
+    checkNear(bars[5], 1.0f, 0.0, "and ends at column 5");
+    checkNear(bars[6], 0.0f, 0.0, "with nothing on column 6");
+    checkNear(bars[1], 0.0f, 0.0, "nor on column 1");
+    // It grows UPWARD from the baseline: the baseline is at row 4, the level is half
+    // the height, so rows 0..3 are drawn and row 4 is not.
+    checkNear(bars[3 * 8 + 2], 1.0f, 0.0, "the bar reaches the top of its height");
+    checkNear(bars[4 * 8 + 2], 0.0f, 0.0, "but stops at the baseline");
+    // The ribbon carries the LEVEL, not the drawn height.
+    checkNear(ribbon[2], 0.5f, 0.0, "and the ribbon carries the level");
+    checkNear(ribbon[6], 0.0f, 0.0, "and nothing where the bar is not");
+
+    // MODE 3 is the only mode that behaves differently: it CENTRES the bar on the
+    // baseline instead of growing upward from it.
+    pathscribe::VizConfig centred = cfg;
+    centred.mode = 3;
+    std::vector<float> cbars, cribbon;
+    pathscribe::rasterizeBars({0.5f}, centred, cbars, cribbon);
+    checkNear(cbars[1 * 8 + 2], 0.0f, 0.0, "mode 3 does not reach the top of the strip");
+    checkNear(cbars[2 * 8 + 2], 1.0f, 0.0, "it starts half a level above the baseline");
+    checkNear(cbars[5 * 8 + 2], 1.0f, 0.0, "and ends half a level below it");
+    checkNear(cbars[6 * 8 + 2], 0.0f, 0.0, "so it is centred, not bottom-anchored");
+
+    // EVERY other mode is the same function: 0, 1 and 2 all grow upward.
+    std::vector<float> mbars, mribbon;
+    pathscribe::VizConfig mode2 = cfg;
+    mode2.mode = 2;
+    pathscribe::rasterizeBars({0.5f}, mode2, mbars, mribbon);
+    check(mbars == bars && mribbon == ribbon,
+          "mode 2 draws exactly what mode 0 draws — only mode 3 differs");
+
+    // PARTIAL COVERAGE. Three levels over eight columns put the bar edges between
+    // the column boundaries, so the outer columns of a bar are drawn at a fraction
+    // of full height. These are the pixels that a rewrite gets wrong by writing
+    // `left`/`right` where the bundle uses their min and max.
+    std::vector<float> tbars, tribbon;
+    pathscribe::rasterizeBars({0.25f, 0.5f, 0.75f}, cfg, tbars, tribbon);
+    checkNear(tbars[2 * 8 + 0], 0.3333333f, 1e-6, "a bar's left edge covers a third of its column");
+    checkNear(tbars[2 * 8 + 1], 1.0f, 0.0, "and the next column is fully covered");
+    checkNear(tbars[2 * 8 + 2], 0.0f, 0.0, "with nothing beyond the bar's right edge");
+    checkNear(tbars[0 * 8 + 3], 0.6666667f, 1e-6, "the middle bar's left edge is partial too");
+    checkNear(tbars[0 * 8 + 6], 1.0f, 0.0, "and the tallest bar is fully covered");
+    checkNear(tbars[0 * 8 + 7], 0.3333333f, 1e-6, "with a partial column at its right edge");
+    checkNear(tribbon[0 * 8 + 7], 0.75f, 0.0, "and the ribbon carries the tallest level there");
+
+    // A NEGATIVE baseline puts the origin at the BOTTOM of the strip.
+    pathscribe::VizConfig low = cfg;
+    low.baseline = -1.0f;
+    std::vector<float> lbars, lribbon;
+    pathscribe::rasterizeBars({0.5f}, low, lbars, lribbon);
+    checkNear(lbars[3 * 8 + 2], 0.0f, 0.0, "a negative baseline moves the bar down the strip");
+    checkNear(lbars[4 * 8 + 2], 1.0f, 0.0, "to the bottom half");
+
+    // A baseline above 1 collapses the origin to the top, where the bar has no room.
+    pathscribe::VizConfig high = cfg;
+    high.baseline = 2.0f;
+    std::vector<float> hbars, hribbon;
+    pathscribe::rasterizeBars({0.5f}, high, hbars, hribbon);
+    bool nothingDrawn = true;
+    for (float v : hbars) if (v != 0.0f) nothingDrawn = false;
+    for (float v : hribbon) if (v != 0.0f) nothingDrawn = false;
+    check(nothingDrawn, "a baseline above 1 draws nothing at all");
+
+    // A NEGATIVE barScale is clamped to ZERO, not to a small width, so the bars are
+    // drawn at the FULL column pitch — the opposite of what the name suggests.
+    pathscribe::VizConfig wide = cfg;
+    wide.barScale = -1.0f;
+    std::vector<float> wbars, wribbon;
+    pathscribe::rasterizeBars({0.5f}, wide, wbars, wribbon);
+    checkNear(wbars[0], 1.0f, 0.0, "a negative barScale draws at the full column pitch");
+    checkNear(wbars[7], 1.0f, 0.0, "right up to the last column");
+    // And a barScale of 0 does the same thing, because the width is zero either way.
+    pathscribe::VizConfig zero = cfg;
+    zero.barScale = 0.0f;
+    std::vector<float> zbars2, zribbon2;
+    pathscribe::rasterizeBars({0.5f}, zero, zbars2, zribbon2);
+    check(zbars2 == wbars, "and so does a barScale of zero");
+
+    // The amplitude is clamped to [0, 4]: a negative amplitude draws nothing at all.
+    pathscribe::VizConfig neg = cfg;
+    neg.amplitude = -1.0f;
+    std::vector<float> nbars2, nribbon2;
+    pathscribe::rasterizeBars({0.5f}, neg, nbars2, nribbon2);
+    bool ampNothing = true;
+    for (float v : nbars2) if (v != 0.0f) ampNothing = false;
+    for (float v : nribbon2) if (v != 0.0f) ampNothing = false;
+    check(ampNothing, "a negative amplitude draws nothing");
+
+    // The level is clamped to [0, 1]: a negative level is skipped, and one above 1
+    // is drawn as if it were 1.
+    std::vector<float> negbars, negribbon;
+    pathscribe::rasterizeBars({-0.5f}, cfg, negbars, negribbon);
+    bool levelNothing = true;
+    for (float v : negbars) if (v != 0.0f) levelNothing = false;
+    for (float v : negribbon) if (v != 0.0f) levelNothing = false;
+    check(levelNothing, "a negative level is skipped");
+    std::vector<float> highbars, highribbon;
+    pathscribe::rasterizeBars({2.0f}, cfg, highbars, highribbon);
+    std::vector<float> onebars, oneribbon;
+    pathscribe::rasterizeBars({1.0f}, cfg, onebars, oneribbon);
+    check(highbars == onebars && highribbon == oneribbon,
+          "a level above 1 is clamped to 1");
+
+    // The outputs are SIZED before the early exits, so a degenerate config still
+    // returns zero-filled arrays of the right length.
+    pathscribe::VizConfig none = cfg;
+    none.columns = 0;
+    std::vector<float> zbars, zribbon;
+    pathscribe::rasterizeBars({0.5f}, none, zbars, zribbon);
+    check(zbars.empty(), "no columns gives an empty profile");
+    check(zribbon.empty(), "and an empty ribbon");
+
+    std::vector<float> ebars, eribbon;
+    pathscribe::rasterizeBars({}, cfg, ebars, eribbon);
+    check(ebars.size() == 64, "no levels still sizes the profile");
+    bool allZero = true;
+    for (float v : ebars) if (v != 0.0f) allZero = false;
+    for (float v : eribbon) if (v != 0.0f) allZero = false;
+    check(allZero, "and leaves it zero filled");
+  }
+
   if (failures == 0) std::printf("ALL RECOVERED PATHSCRIBE MATHS VERIFIED (%d checks)\n", passes);
   else std::printf("%d FAILURES out of %d checks\n", failures, passes + failures);
   return failures == 0 ? 0 : 1;

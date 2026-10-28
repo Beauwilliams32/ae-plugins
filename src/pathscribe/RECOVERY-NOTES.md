@@ -7,8 +7,8 @@ unstripped.
 
 ## State
 
-Seventeen of the eighteen symbols are recovered. Eight of them are
-**instruction-identical** to this bundle.
+All eighteen symbols are recovered. Eight of them are **instruction-identical** to this
+bundle; the other ten are behavioural recoveries.
 
 | Function | Instrs | State |
 |---|---|---|
@@ -29,7 +29,7 @@ Seventeen of the eighteen symbols are recovered. Eight of them are
 | `waveformColumns` | 80 | Recovered — 83 here (own) |
 | `smoothedLevelsAtFrame` | 179 | Recovered — 177 here (own) |
 | `rasterizeRibbon` | 147 | Recovered — 151 here (own) |
-| `rasterizeBars` | 173 | Identified only |
+| `rasterizeBars` | 173 | Recovered — 176 here (own) |
 
 ## Ten of the eighteen symbols are SpectraKeys', and that is the finding
 
@@ -217,8 +217,109 @@ the pixels that are drawn (1.0, 0.2977531, 0.7659177, 0.4393398) and for the mag
 the ribbon carries.
 
 
+### `rasterizeBars` — the last symbol, and the one field the ribbon does not read
+
+`rasterizeBars` is the same grid, the same `VizConfig` and the same two output
+buffers as `rasterizeRibbon`, but a different profile: solid columns instead of a
+filled band. 173 instructions in the bundle, arm64 body at `0x2038`, x86_64 body at
+`0x23d0`.
+
+It is also the only reader of `VizConfig::barScale` at offset `0x18`, which is what
+finished the struct's meaning: **`barScale` is the bar's WIDTH as a fraction of the
+column pitch**, capped at 0.9 so that neighbouring bars can never touch.
+
+```
+origin = (baseline < 0 ? 1 : 1 - min(baseline, 1)) * rows
+step   = columns / n
+scale  = (barScale < 0 ? 0 : min(barScale, 0.9))
+half   = scale * step * 0.5
+for bar i in 0 .. n-1:
+    level = clamp(levels[i], 0, 1);  if (level <= 0) continue
+    H     = level * clamp(amplitude, 0, 4) * rows
+    mode == 3 ? (eLow = origin - H/2, eHigh = origin + H/2)   ; centred on the baseline
+              : (eLow = origin - H,   eHigh = origin)         ; growing up from it
+    rowLo = max(0, floor(eLow));  rowHi = min(rows-1, ceil(eHigh))
+    left  = i * step + half;  right = (i+1) * step - half
+    colLo = max(0, floor(left));  colHi = min(columns-1, ceil(right))
+    for row in rowLo .. rowHi:
+        cover = clamp(min(yTop, row+1) - max(yBottom, row), 0, 1)
+        for col in colLo .. colHi:
+            horiz = clamp(min(xMax, col+1) - max(xMin, col), 0, 1)
+            value = cover * horiz
+            outBars[row * columns + col]    = max(outBars[...],    value)
+            outRibbon[row * columns + col] = max(outRibbon[...], level)
+```
+
+Six things a rewrite gets wrong, and every one of them is in the instructions:
+
+- **The horizontal coverage is measured against the MINIMUM and the MAXIMUM of the
+  column's two edges** — `min(max(left,right), col+1) - max(min(left,right), col)` —
+  not against `left` and `right` themselves. The bundle computes the two edges, then
+  selects their min and max, and the *min* is the one that meets the column's left
+  edge and the *max* the one that meets its right edge.
+- **`mode` only distinguishes 3 from everything else.** Modes 0, 1 and 2 are the same
+  function: the bar grows upward from the baseline. Only mode 3 centres it on the
+  baseline (`origin -/+ H/2`).
+- **A negative `barScale` is clamped to ZERO, not to a small width.** That makes
+  `half` zero, so the bars are drawn at the FULL column pitch — the opposite of what
+  "negative width" suggests.
+- **A negative `amplitude` is clamped to zero**, which makes `H` zero and draws
+  nothing. `amplitude` is NOT the ribbon's lower bound here; that is the ribbon's
+  own trick.
+- **`bic w1, w8, w8, asr #31` is `max(0, x)`, not `abs(x)`.** The same instruction
+  appears in `rasterizeRibbon` for the cell count, and the same misreading is
+  described under `rasterizeRibbon` above; see the note at the end of this file.
+- **The three edge and height expressions are FUSED.** The bundle uses `fmadd` and
+  `fmsub` for `left`, `right` and the mode-3 heights, so the multiply and the add
+  round once, not twice. On arm64 that is a different answer from a plain
+  `a * b + c` in the last bit, and the differential harness would catch it if the
+  transcription did not contract the same way. It does: the transcription compiles to
+  the same `fmadd` / `fmsub` forms.
+
+**Measurement.** 176 instructions here against the bundle's 173, and DIFFER rather
+than MATCH. The three extra instructions are the cell-count arithmetic and the
+early-exit sequence around it; the arithmetic itself is the same. The behaviour is
+verified against the **shipped arm64 bundle itself** by a dlopen differential
+harness (`/tmp/ae/ae05o/bars-diff.cpp`): the installed bundle is dlopened, its
+`pathscribe::rasterizeBars` is called through `dlsym`, and the result is compared
+bit-for-bit against this transcription over randomised inputs. **60,000 randomised
+vectors over three seeds, 634,072,063 cells compared, 107,637,806 of them non-zero,
+0 disagreements.** Reproduce with:
+
+```
+clang++ -std=c++17 -O2 -I src/pathscribe -o /tmp/ae/ae05o/bars-diff /tmp/ae/ae05o/bars-diff.cpp src/pathscribe/pathscribe.cpp
+for s in 20261028 20261029 20261030; do /tmp/ae/ae05o/bars-diff 20000 $s wide; done
+```
+
+(the `wide` argument widens the grid to 200x200 and up to 64 levels; without it the same
+60,000 vectors compare 34,543,188 cells, also with 0 disagreements.)
+
+## A discrepancy found while recovering `rasterizeBars` — NOT fixed here
+
+`rasterizeRibbon` (landed 2026-10-28, commit `a9d6627`) is described in this file as
+taking `rowLo` as "the ABSOLUTE value of a truncated coordinate". **That is wrong.**
+The bundle's `bic w15, w15, w15, asr #31` is `max(0, x)`, not `abs(x)`: `abs` needs
+`x ^ (x >> 31)`, and `bic` against the arithmetic shift clears the low bit of a
+negative value instead of negating it.
+
+The same instruction appears in `rasterizeRibbon` for the CELL COUNT
+(`bic w1, w8, w8, asr #0x1f`), where the landed source uses `std::abs(columns *
+rows)`. For a negative product the bundle returns **0** cells and `std::abs`
+returns the magnitude, so the two disagree on the SIZE of both output buffers. The
+differ reports it directly:
+
+```
+DIFFER  pathscribe::rasterizeRibbon  shipped=147 mine=151
+          shipped: bic w1, w8, w8, asr #0x1f
+          mine   : cmp w8, #0x0
+          shipped: str wzr, [sp, #0xc]
+          mine   : cneg w1, w8, mi
+```
+
+This is in another function and outside this recovery's remit, so it is reported
+rather than changed — `rasterizeRibbon` is not this lane's symbol and its owner
+should decide.
+
 ## What is next
 
-`rasterizeBars` (173) is the last one: the same `VizConfig`, the same grid, the
-other profile. Its `cfg[0x18]` field - the one the ribbon does not read - is the only
-part of `VizConfig` this recovery does not yet explain.
+Nothing in this namespace. All eighteen of the bundle's symbols are transcribed.

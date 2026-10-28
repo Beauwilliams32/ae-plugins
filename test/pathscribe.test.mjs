@@ -37,9 +37,10 @@ const SHARED = [["clampf", "clampf"], ["isPowerOfTwo", "isPowerOfTwo"],
 
 /** PathScribe's own; waveformColumns joined on 2026-10-27 (row AE-05). */
 /** smoothedLevelsAtFrame joined on 2026-10-28 (row AE-06). */
+/** rasterizeBars joined on 2026-10-28 (row AE-05, this lane). */
 const OWN = ["spanCoverage", "binEdgeHz", "smoothStep", "waveformColumns", "barLevels",
-             "smoothedLevelsAtFrame", "rasterizeRibbon"];
-const OUTSTANDING = ["rasterizeBars"];
+             "smoothedLevelsAtFrame", "rasterizeRibbon", "rasterizeBars"];
+const OUTSTANDING = [];
 
 function bundlesInstalled() {
   return existsSync(BUNDLE);
@@ -165,8 +166,13 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
   // And smoothStep is expected NOT to be, at 25 instructions either way.
   assert.match(out, /DIFFER\s+pathscribe::smoothStep\s+shipped=25 mine=25/,
     "smoothStep should compile to the bundle's instruction count");
+  // rasterizeBars is a BEHAVIOURAL recovery, not an instruction-identical one: the
+  // transcription is semantically equal to the bundle (verified bit-for-bit by the
+  // dlopen differential harness) but compiles to a different instruction stream.
+  assert.match(out, /DIFFER\s+pathscribe::rasterizeBars\s+shipped=173 mine=176/,
+    "rasterizeBars should be present as a behavioural (not instruction-identical) recovery");
 
   const summary = out.trim().split("\n").pop();
-  assert.match(summary, /8 identical, 9 differing, 1 not implemented/,
+  assert.match(summary, /8 identical, 10 differing, 0 not implemented/,
     `the differ's tally moved: ${summary}`);
 });
