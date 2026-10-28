@@ -45,10 +45,14 @@ const SHARED_DSP = ["clampf", "isPowerOfTwo", "hannWindow", "fftRadix2", "downmi
  * a structural difference in how the two loops walk the vector, not a difference
  * in what they compute, and it is recorded in src/beatsnap/RECOVERY-NOTES.md.
  */
-const OWN_RECOVERED = { medianOfWindow: "MATCH", adaptiveThreshold: "DIFFER" };
+const OWN_RECOVERED = {
+  medianOfWindow: "MATCH",
+  adaptiveThreshold: "DIFFER",
+  computeFlux: "DIFFER",
+};
 
 /** The functions in this bundle that are NOT recovered yet. */
-const OUTSTANDING = ["computeFlux", "pickOnsets", "detectOnsets", "renderValues"];
+const OUTSTANDING = ["pickOnsets", "detectOnsets", "renderValues"];
 
 function bundlesInstalled() {
   return existsSync(BUNDLE);
@@ -103,7 +107,7 @@ test("recovered beatsnap source compiles and its maths verifies", (t) => {
     assert.match(out, /ALL RECOVERED BEATSNAP MATHS VERIFIED/, `self-check failed:\n${out}`);
     assert.doesNotMatch(out, /\bFAIL\b/, out);
     const passes = (out.match(/^  PASS/gm) ?? []).length;
-    assert.ok(passes >= 45, `expected >= 45 checks, saw ${passes}`);
+    assert.ok(passes >= 90, `expected >= 90 checks, saw ${passes}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -167,6 +171,6 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
     "medianOfWindow is no longer instruction-identical to the bundle");
 
   const summary = out.trim().split("\n").pop();
-  assert.match(summary, /3 identical, 4 differing, 4 not implemented/,
+  assert.match(summary, /3 identical, 5 differing, 3 not implemented/,
     `the differ's tally moved: ${summary}`);
 });

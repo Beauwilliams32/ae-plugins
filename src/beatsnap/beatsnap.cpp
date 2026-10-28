@@ -7,8 +7,10 @@
 // re-checks each one against BeatSnap's own instructions, which is what makes this
 // a recovery rather than a copy of a copy.
 //
-// Nothing else from this bundle is here: BeatSnap's own onset detection is not
-// recovered yet, and inventing it would be worse than leaving it out.
+// BeatSnap's own onset detection follows below. It is NOT shared with any other
+// bundle — `computeFlux`, `pickOnsets`, `detectOnsets` and `renderValues` exist
+// only in BeatSnap.plugin — so each one was transcribed from this bundle's own
+// instructions, with the listing quoted above each body as the evidence.
 
 #include "beatsnap.h"
 
@@ -190,6 +192,177 @@ std::vector<float> adaptiveThreshold(const std::vector<float>& flux, int window,
     out[i] = threshold < floorValue ? floorValue : threshold;
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// computeFlux(const float*, size_t, const OnsetConfig&)
+//
+// __ZN8beatsnap11computeFluxEPKfmRKNS_11OnsetConfigE, 416 instrs
+//
+// The sret is zeroed first — `str xzr, [x8, #0x20]` / `movi.2d v0, #0` /
+// `stp q0, q0, [x8]` — which is why an early return leaves an empty track
+// with hopSeconds and windowSeconds still zero.
+//
+//   cbz x0, ret                 ; samples == nullptr
+//   cbz x1, ret                 ; n == 0
+//   ldr d8, [x2] / fcmp d8,#0.0 / b.ls ret          ; sampleRate <= 0
+//   ldr w28, [x2, #0x8]
+//   subs w8, w28, #0x1 / and w8, w28, w8
+//   ccmp w8, #0x0, #0x0, ge     ; fft >= 1
+//   ccmp w28, #0x2, #0x0, eq    ; fft != 2
+//   ccmp w28, #0x4, #0x0, hs    ; fft >= 4
+//   b.hs continue
+//
+// The four tests are ONE fused compare chain, so the source is a single
+// condition: a power of two that is at least 4. `fft == 2` is excluded by the
+// `fft < 4` arm, which is LAST because it is the final `b.hs`.
+//
+//   lsr x21, x28, #2             ; hopSize = fft >> 2
+//   lsr x19, x28, #1             ; bins   = fft >> 1
+//   subs x8, x1, x28 / udiv x8, x8, x21 / csinc w27, wzr, w8, lo
+//                                ; hops = (n < fft) ? 0 : (n - fft)/hopSize + 1
+//   ucvtf d0, w21 / fdiv d0, d0, d8      ; hopSeconds   = hopSize / rate
+//   fmov d1, #0.5 / fmul d1, d9, d1 / fdiv d1, d1, d8
+//                                ; windowSeconds = (fft * 0.5) / rate
+//   stp d0, d1, [x8, #0x18]      ; BOTH DOUBLES ARE STORED HERE
+//   cmp w27, #0x1 / b.lt ret     ; hops < 1 -> empty flux, but the two
+//                                ;   doubles above are ALREADY SET
+//
+// That ordering is the easiest thing in this function to get wrong: a signal
+// too short to yield a single frame still comes back with its hop and window
+// times filled in. Only the four guards above return with them at zero.
+//
+//   bl __ZNSt3__16vectorIfNS_9allocatorIfEEE6assignEmRKf
+//                                ; track.flux.assign(hops, 0.0f), with the
+//                                ;   sret ITSELF as the vector's `this` —
+//                                ;   which is what puts the vector at +0x00
+//
+// The window is built INLINE: the listing contains no call to `hannWindow`,
+// only `__Znwm` + `_bzero` (which is what `std::vector<float> v(n)` emits)
+// and four `_cosf` calls per group of four samples:
+//
+//   mov w8, #0xfdb / movk w8, #0x40c9   ; 0x40c90fdb = 2*pi as a float
+//   fmul.4s v0, v0, v2                  ; index * 2pi
+//   fdiv.4s v0, v0, v1                  ; / (float)fft
+//   fsub.4s v0, v0, v1                  ; 1 - cos
+//   movi.4s v1, #0x3f, lsl #24          ; 0x3F000000 = 0.5f
+//   fmul.4s v0, v0, v1                  ; * 0.5f
+//
+// The band, in bins. The pair is min/max'd BEFORE it is used, the two bin
+// indices are clamped, and they are then SORTED — an upside-down band works:
+//
+//   ldp s1, s0, [x22, #0xc]   ; bandLo, bandHi
+//   fcsel s2, s0, s1, mi      ; min
+//   fcsel s0, s0, s1, mi      ; max
+//   fdiv d8, d8, d9           ; binHz = rate / fft
+//   fcvtas x8, d1             ; lround(minHz / binHz)
+//   fcvtas x11, d0            ; lround(maxHz / binHz)
+//
+// The clamp is the awkward one — the upper bound is an UNSIGNED min while the
+// lower bound is a SIGNED floor, and BOTH look at the original value:
+//
+//   sub  w9, w19, #0x1        ; bins - 1
+//   cmp  w8, w9 / csel w10, w8, w9, lo    ; unsigned min
+//   cmp  w8, #0x0 / csel w8, wzr, w10, lt ; signed floor on the RAW value
+//
+// so the net rule is `raw < 0 ? 0 : min(raw, bins - 1)`. That is NOT the
+// namespace's `clampf`, which tests its low bound last; the source here is an
+// explicit expression.
+//
+// The FFT is the namespace's own `fftRadix2`, called with two local vectors:
+//
+//   sub x0, x29, #0x90 / sub x1, x29, #0xa8 / bl beatsnap::fftRadix2
+//
+// and the magnitudes are `sqrt(re^2 + im^2)` (`fmul` / `fmadd` / `fsqrt`) into
+// two ping-ponged `std::vector<float>` buffers of `bins` samples each.
+//
+// The flux is the POSITIVE difference between consecutive magnitude frames,
+// summed over the band in FLOAT arithmetic:
+//
+//   fsub s1, s1, s2 / fadd s2, s0, s1 / fcmp s1, #0.0 / fcsel s0, s2, s0, gt
+//
+// and `flux[0]` is a literal zero (`str wzr, [x8]`) — the first frame has no
+// predecessor to be compared with.
+// ---------------------------------------------------------------------------
+FluxTrack computeFlux(const float* samples, size_t n, const OnsetConfig& config) {
+  FluxTrack track;
+  if (samples == nullptr) return track;
+  if (n == 0) return track;
+  if (config.sampleRate <= 0.0) return track;
+
+  const int fft = config.fftSize;
+  if (!isPowerOfTwo(fft) || fft < 4) return track;
+
+  const size_t hopSize = static_cast<size_t>(fft) >> 2;
+  const size_t bins = static_cast<size_t>(fft) >> 1;
+  const double rate = config.sampleRate;
+
+  int hops = 0;
+  if (n >= static_cast<size_t>(fft)) {
+    hops = static_cast<int>((n - static_cast<size_t>(fft)) / hopSize + 1);
+  }
+
+  // These two are stored before the `hops < 1` test — see the note above.
+  track.hopSeconds = static_cast<double>(hopSize) / rate;
+  track.windowSeconds = (static_cast<double>(fft) * 0.5) / rate;
+  if (hops < 1) return track;
+
+  track.flux.assign(static_cast<size_t>(hops), 0.0f);
+
+  // The window is built inline rather than by calling `hannWindow`.
+  const float twoPi = 6.28318530717958647692f;
+  const float nf = static_cast<float>(fft);
+  std::vector<float> window(static_cast<size_t>(fft));
+  for (int j = 0; j < fft; ++j) {
+    window[static_cast<size_t>(j)] =
+        0.5f * (1.0f - std::cos(twoPi * static_cast<float>(j) / nf));
+  }
+
+  // The band, in bins: min/max'd, clamped, then sorted.
+  const float bandLoHz = config.bandLoHz < config.bandHiHz ? config.bandLoHz : config.bandHiHz;
+  const float bandHiHz = config.bandLoHz < config.bandHiHz ? config.bandHiHz : config.bandLoHz;
+  const double binHz = rate / static_cast<double>(fft);
+  const long lastBin = static_cast<long>(bins) - 1;
+  long rawLo = std::lround(static_cast<double>(bandLoHz) / binHz);
+  long rawHi = std::lround(static_cast<double>(bandHiHz) / binHz);
+  rawLo = rawLo < 0 ? 0 : (rawLo > lastBin ? lastBin : rawLo);
+  rawHi = rawHi < 0 ? 0 : (rawHi > lastBin ? lastBin : rawHi);
+  const long binLo = rawLo < rawHi ? rawLo : rawHi;
+  const long binHi = rawLo < rawHi ? rawHi : rawLo;
+
+  std::vector<float> re(static_cast<size_t>(fft));
+  std::vector<float> im(static_cast<size_t>(fft));
+  std::vector<float> magCur(bins);
+  std::vector<float> magPrev(bins);
+
+  for (int frame = 0; frame < hops; ++frame) {
+    const size_t start = static_cast<size_t>(frame) * hopSize;
+    for (int k = 0; k < fft; ++k) {
+      re[static_cast<size_t>(k)] = samples[start + static_cast<size_t>(k)]
+                                 * window[static_cast<size_t>(k)];
+      im[static_cast<size_t>(k)] = 0.0f;
+    }
+    fftRadix2(re, im);
+
+    for (size_t k = 0; k < bins; ++k) {
+      const float r = re[k];
+      const float m = im[k];
+      magCur[k] = std::sqrt(r * r + m * m);
+    }
+
+    if (frame == 0) {
+      track.flux[0] = 0.0f;
+    } else {
+      float acc = 0.0f;
+      for (long k = binLo; k <= binHi; ++k) {
+        const float d = magCur[static_cast<size_t>(k)] - magPrev[static_cast<size_t>(k)];
+        if (d > 0.0f) acc += d;
+      }
+      track.flux[static_cast<size_t>(frame)] = acc;
+    }
+    magCur.swap(magPrev);
+  }
+  return track;
 }
 
 }  // namespace beatsnap

@@ -319,6 +319,110 @@ int main() {
     check(narrow.size() == wide.size() && narrow.size() == 7, "both sizes match the input length");
   }
 
+  std::printf("beatsnap::computeFlux\n");
+  {
+    beatsnap::OnsetConfig cfg;
+    cfg.sampleRate = 48000.0;
+    cfg.fftSize = 64;
+    cfg.bandLoHz = 20.0f;
+    cfg.bandHiHz = 8000.0f;
+
+    const std::vector<float> silence(256, 0.0f);
+
+    // The four guards, in the order the prologue tests them. Each one returns
+    // through the shared epilogue with the sret still zeroed, so the track is
+    // empty AND both times are zero.
+    {
+      const beatsnap::FluxTrack t = beatsnap::computeFlux(nullptr, 256, cfg);
+      check(t.flux.empty(), "computeFlux: a null sample pointer yields an empty track");
+      check(t.hopSeconds == 0.0 && t.windowSeconds == 0.0,
+            "computeFlux: a null sample pointer leaves the hop and window times at zero");
+    }
+    {
+      const beatsnap::FluxTrack t = beatsnap::computeFlux(silence.data(), 0, cfg);
+      check(t.flux.empty(), "computeFlux: n == 0 yields an empty track");
+      check(t.hopSeconds == 0.0 && t.windowSeconds == 0.0,
+            "computeFlux: n == 0 leaves the hop and window times at zero");
+    }
+    {
+      beatsnap::OnsetConfig bad = cfg;
+      bad.sampleRate = 0.0;
+      const beatsnap::FluxTrack t = beatsnap::computeFlux(silence.data(), 256, bad);
+      check(t.flux.empty(), "computeFlux: a non-positive sample rate yields an empty track");
+    }
+    {
+      beatsnap::OnsetConfig bad = cfg;
+      bad.fftSize = 6;  // not a power of two
+      const beatsnap::FluxTrack t = beatsnap::computeFlux(silence.data(), 256, bad);
+      check(t.flux.empty(), "computeFlux: a non-power-of-two fft size yields an empty track");
+    }
+    {
+      beatsnap::OnsetConfig bad = cfg;
+      bad.fftSize = 2;  // a power of two, but below four
+      const beatsnap::FluxTrack t = beatsnap::computeFlux(silence.data(), 256, bad);
+      check(t.flux.empty(),
+            "computeFlux: fft == 2 yields an empty track (the `fft < 4` arm excludes it)");
+    }
+
+    // THE ORDERING. `stp d0, d1, [x8, #0x18]` comes BEFORE `cmp w27, #0x1`, so a
+    // signal too short to make a single frame still comes back with its two
+    // times filled in. Only the four guards above leave them at zero.
+    {
+      const std::vector<float> few(32, 0.0f);  // 32 samples, fft is 64
+      const beatsnap::FluxTrack t = beatsnap::computeFlux(few.data(), few.size(), cfg);
+      check(t.flux.empty(), "computeFlux: a signal shorter than one frame yields no flux");
+      check(t.hopSeconds == 16.0 / 48000.0,
+            "computeFlux: ... but hopSeconds is STILL set (hopSize/rate = 16/48000)");
+      check(t.windowSeconds == 32.0 / 48000.0,
+            "computeFlux: ... and windowSeconds is STILL set (fft*0.5/rate = 32/48000)");
+    }
+
+    // The frame count: `hops = (n < fft) ? 0 : (n - fft)/hopSize + 1`.
+    {
+      const std::vector<float> exact(64, 0.0f);
+      const beatsnap::FluxTrack t = beatsnap::computeFlux(exact.data(), exact.size(), cfg);
+      check(t.flux.size() == 1, "computeFlux: n == fft yields exactly one frame");
+      check(t.flux[0] == 0.0f, "computeFlux: the first frame's flux is a literal zero");
+    }
+    {
+      const std::vector<float> two(80, 0.0f);  // fft + hop
+      const beatsnap::FluxTrack t = beatsnap::computeFlux(two.data(), two.size(), cfg);
+      check(t.flux.size() == 2, "computeFlux: n == fft + hop yields two frames");
+      check(t.flux[0] == 0.0f, "computeFlux: ... and the first frame is still a literal zero");
+    }
+
+    // A burst, so the flux is not trivially zero everywhere.
+    std::vector<float> burst(512, 0.0f);
+    for (size_t i = 128; i < 192; ++i) burst[i] = 1.0f;
+    {
+      const beatsnap::FluxTrack t = beatsnap::computeFlux(burst.data(), burst.size(), cfg);
+      check(t.flux.size() == (512 - 64) / 16 + 1,
+            "computeFlux: the frame count follows (n - fft)/hopSize + 1");
+      check(t.flux[0] == 0.0f, "computeFlux: the first frame's flux is zero even for a loud signal");
+      bool nonNegative = true;
+      bool somePositive = false;
+      for (float f : t.flux) {
+        if (f < 0.0f) nonNegative = false;
+        if (f > 0.0f) somePositive = true;
+      }
+      check(nonNegative,
+            "computeFlux: the flux sums POSITIVE differences, so it is never negative");
+      check(somePositive, "computeFlux: a burst produces a positive flux");
+    }
+
+    // The band pair is min/max'd and then SORTED, so an upside-down band is
+    // the same band.
+    {
+      beatsnap::OnsetConfig inverted = cfg;
+      inverted.bandLoHz = 8000.0f;
+      inverted.bandHiHz = 20.0f;
+      const beatsnap::FluxTrack a = beatsnap::computeFlux(burst.data(), burst.size(), cfg);
+      const beatsnap::FluxTrack b = beatsnap::computeFlux(burst.data(), burst.size(), inverted);
+      check(a.flux == b.flux,
+            "computeFlux: an upside-down band gives the identical flux (the pair is sorted)");
+    }
+  }
+
   if (failures == 0) std::printf("ALL RECOVERED BEATSNAP MATHS VERIFIED (%d checks)\n", passes);
   else std::printf("%d FAILURES out of %d checks\n", failures, passes + failures);
   return failures == 0 ? 0 : 1;

@@ -18,7 +18,7 @@ Eleven authored functions. **Seven recovered**, four identified only.
 | `downmixToMono` | 116 | Recovered — differs in 2 of 116 positions, both reordered |
 | `fftRadix2` | 100 | Recovered — differs in 4 of 100 positions |
 | `adaptiveThreshold` | 78 | Recovered — 91 here; a loop-structure difference, not a maths one |
-| `computeFlux` | 416 | **Identified only** |
+| `computeFlux` | 416 | Recovered — differs, 421 here (see below) |
 | `renderValues` | 190 | **Identified only** |
 | `pickOnsets` | 136 | **Identified only** |
 | `detectOnsets` | 47 | **Identified only** — but fully read; see below |
@@ -96,6 +96,76 @@ The self-check reads that ramp back out of a single-sample track
 (`10 * 5.0 = 50.0`, `10 * 1.4 = 14.0`), so the formula is verified rather than
 asserted.
 
+## `computeFlux` — the STFT core, and the ordering that is easy to get wrong
+
+416 instructions, read in full. It is the largest function in the bundle and the
+one with the most behaviour pinned to the ORDER of the listing rather than to
+the arithmetic.
+
+The four guards come first, in this order — `samples == nullptr`, `n == 0`,
+`sampleRate <= 0`, and then a FUSED compare chain that rejects a non-power-of-two
+fft size and an fft size below four:
+
+```
+subs w8, w28, #0x1 / and w8, w28, w8
+ccmp w8, #0x0, #0x0, ge     ; fft >= 1
+ccmp w28, #0x2, #0x0, eq    ; fft != 2
+ccmp w28, #0x4, #0x0, hs    ; fft >= 4
+```
+
+so the source is one condition, `!isPowerOfTwo(fft) || fft < 4`. `fft == 2` is
+excluded by the `fft < 4` arm, which is LAST because it is the final `b.hs`.
+
+**The ordering that matters.** The hop and window times are computed and stored
+BEFORE the "is there even one frame" test:
+
+```
+ucvtf d0, w21 / fdiv d0, d0, d8          ; hopSeconds   = hopSize / rate
+fmov d1, #0.5 / fmul d1, d9, d1 / fdiv d1, d1, d8
+                                         ; windowSeconds = (fft * 0.5) / rate
+stp d0, d1, [x8, #0x18]                  ; BOTH ARE STORED HERE
+cmp w27, #0x1 / b.lt ret                 ; hops < 1 -> empty flux, but the two
+                                         ;   doubles above are ALREADY SET
+```
+
+So a signal too short to yield a single frame comes back with an EMPTY flux and
+its hop and window times FILLED IN. Only the four guards leave them at zero.
+The self-check pins both halves of that.
+
+The rest of the function, in the listing's order:
+
+1. `track.flux.assign(hops, 0.0f)` — a real libc++ call with the sret pointer
+   ITSELF as the vector's `this`, which is what puts the flux vector at +0x00.
+2. The window is built INLINE, not by calling `hannWindow`: the listing contains
+   no call to it, only `__Znwm` + `_bzero` (what `std::vector<float> v(n)`
+   emits) and four `_cosf` calls per group of four samples. The formula is the
+   same PERIODIC Hann, `0.5f * (1 - cosf(j * 2pi / fft))`.
+3. The band is min/max'd, converted to bins with `fcvtas` (an `lround`), clamped,
+   and then SORTED, so an upside-down band behaves like an upright one.
+   The clamp is asymmetric in the listing — the upper bound is an UNSIGNED min
+   while the lower bound is a SIGNED floor applied to the RAW value — so the net
+   rule is `raw < 0 ? 0 : min(raw, bins - 1)`, which is not the namespace's own
+   `clampf`.
+4. `fftRadix2` on two local vectors, magnitudes `sqrt(re^2 + im^2)` into two
+   ping-ponged buffers, and the flux is the sum over the band of the POSITIVE
+   difference between consecutive frames, in float arithmetic.
+   `flux[0]` is a literal zero — the first frame has no predecessor.
+
+### Why it differs from the bundle
+
+`shipped=416 mine=421`, and the differ's first divergence is in the PROLOGUE:
+the two spills the callee-saved vector registers to different slots. That is
+register allocation, not semantics — it is the same class of difference the
+shared-DSP copies show, and it is why the differ reports a differing
+instruction COUNT rather than a position count.
+
+One contributing difference is known and is a source-shape difference rather
+than a behaviour one: the bundle allocates its two magnitude buffers as raw
+`new float[bins]()` (`__Znwm` + `_bzero`, freed with `__ZdlPv`, with no vector
+triple), whereas the recovered source uses `std::vector<float>`. The two have
+identical observable behaviour — same values, same order, same lifetime — and
+the difference is confined to allocation and teardown.
+
 ## `medianOfWindow` — an honest improvement target
 
 The shipped implementation allocates a **copy** of the window, `memcpy`s it, runs a
@@ -114,10 +184,6 @@ recovered behaviour without changing the effect.
 
 ## Not recovered, and what would be needed
 
-- `computeFlux` (416) — the STFT/spectral-flux core. The largest function here, and
-  the one that would need `OnsetConfig`'s remaining fields and the `FluxTrack`
-  layout. `spectra::analyse` is already recovered and covers the same shape of
-  work, so it is a transcription-plus-difference job rather than a blank page.
 - `pickOnsets` (136) — peak picking over a flux track against a threshold track.
   Needs `FluxTrack` and its own return type.
 - `renderValues` (190) — takes `const vector<double>&`, an `int` and a
