@@ -261,22 +261,28 @@ float percentileUnsorted(std::vector<float> samples, float p) {
 //   csinc w10, w4, wzr, gt / sub w10, w10, #0x1   ; xm1 = max(x - 1, 0)
 //   add w11, w4, #0x1 / csinc w9, w9, w4, lt      ; xp1 = min(x + 1, width - 1)
 //   csinc w11, w5, wzr, gt / sub w11, w11, #0x1   ; ym1 = max(y - 1, 0)
-//   sxtw x12, w5 / mul x12, x3, x12 / add x12, x0, x12, lsl #2
-//                                                 ; row = base + (stride * y) * 4
-//   ... s0 = field[ym1][xm1], s1 = field[ym1][xp1]
-//       s2 = field[ym1][x],   s3 = field[yp1][x]
+//   sxtw x12, w5 / mul x12, x3, x12 / add x12, x0, x12, lsl #2   ; row y
+//   ldr s0, [x12, w10, uxtw #2]                  ; s0 = field[stride*y   + xm1]
+//   ldr s1, [x12, w9, sxtw #2]                   ; s1 = field[stride*y   + xp1]
+//   mul x12, x3, x11 / add x12, x0, x12, lsl #2                  ; row ym1
+//   ldr s2, [x12, w4, sxtw #2]                   ; s2 = field[stride*ym1 + x]
 //   csinc w8, w8, w5, lt                          ; yp1 = min(y + 1, height - 1)
+//   sxtw x12, w8 / mul x12, x3, x12 / add x12, x0, x12, lsl #2   ; row yp1
+//   ldr s3, [x12, w4, sxtw #2]                   ; s3 = field[stride*yp1 + x]
 //   sub w9, w9, w10 / cmp #1 / csinc / ucvtf      ; dx = max(xp1 - xm1, 1) as float
 //   sub w8, w8, w11 / cmp #1 / csinc / ucvtf      ; dy = max(yp1 - ym1, 1) as float
 //   fsub s0, s1, s0 / fdiv s0, s0, s4             ; gx = (right - left) / dx
 //   fsub s1, s3, s2 / fdiv s1, s1, s5             ; gy = (below - above) / dy
 //   fmul s1, s1, s1 / fmadd s0, s0, s0, s1 / fsqrt
 //
-// The four samples are all in rows ym1 and yp1, at columns xm1, xp1, x, x. So the
-// horizontal difference is taken on the TOP row (ym1) and the vertical difference on
-// the CENTRE column — the kernel is anchored top-left rather than centred, which is
-// the shipped behaviour and is pinned by the self-check on a grid where a centred
-// kernel would give a different answer.
+// The kernel is a CROSS. The horizontal difference is taken on the CENTRE ROW y
+// (listing 0x2b68-0x2b78) and the vertical difference on the CENTRE COLUMN x
+// (listing 0x2b7c-0x2b98). An earlier revision of this file read the horizontal
+// pair from row ym1 and described the kernel as "anchored top-left"; that was a
+// transcription error which had propagated into the notes and the self-check, and
+// all three are corrected. The self-check now pins the shipped behaviour on grids
+// where the two readings disagree, and the differ reports this function
+// instruction-identical to the bundle.
 float gradientMagnitude(const float* field, int width, int height, long rowStride, int x, int y) {
   if (field == nullptr) return 0.0f;
   if (width < 1) return 0.0f;
@@ -288,8 +294,8 @@ float gradientMagnitude(const float* field, int width, int height, long rowStrid
   const int yp1 = (height - 1 < y + 1) ? height - 1 : y + 1;
 
   const long stride = rowStride;
-  const float left = field[stride * ym1 + xm1];
-  const float right = field[stride * ym1 + xp1];
+  const float left = field[stride * y + xm1];
+  const float right = field[stride * y + xp1];
   const float above = field[stride * ym1 + x];
   const float below = field[stride * yp1 + x];
 
