@@ -481,11 +481,16 @@ float fbm3(const PermTable& table, float x, float y, float z, int octaves, float
 //               then min(f, extent-1)
 //         3     "outside is transparent": the pixel is written as four zero
 //               bytes (8 for 16-bit) instead of a sample
-//     In edge mode 3 the SHIPPED Y test is a no-op: `fcmp s9, #0` /
-//     `fccmp s9, s13, #0x0, pl` / `b.gt` can never reject, because nzcv = 0
-//     clears the flags when sy >= 0, and when sy < 0 the second compare (sy
-//     against extent-1) cannot be "greater".  Transparency is therefore decided
-//     by the X TEST ALONE.  This is transcribed as observed, not as intended.
+//     In edge mode 3 the X and Y tests are SYMMETRIC.  The X test is
+//     `fcmp s10, s14` / `fccmp s10, s12, #0x8, le` / `cset w28, pl`, which is
+//     "inside" iff `sx <= width-1 && sx >= 0`.  The Y test is
+//     `fcmp s9, #0.0` / `fccmp s9, s13, #0x0, pl` / `b.gt`, and it is reached
+//     only when `sy >= 0` (the fccmp is conditional on `pl`, i.e. on the first
+//     compare saying "not less than zero"); when `sy < 0` the fccmp does not
+//     execute and leaves nzcv = 0, so `b.gt` is TAKEN and the pixel is
+//     transparent.  So the Y test rejects `sy < 0` as well as `sy > height-1`,
+//     and a Y failure branches straight to the zero-fill, overriding the X
+//     result rather than combining with it.
 //
 //   * The sample is bilinear between four neighbours:
 //         i0 = clamp(floor(sx), 0, width-1);   i1 = (i0+1 >= width)
@@ -570,7 +575,7 @@ void apply(const View<const T>& src, View<T>& dst, const Params& params, float /
           if (w < 0.0f) w += yExtent;
           sy = (w > yTop) ? yTop : w;
         } else if (edgeMode == 3) {
-          // The shipped Y test is a no-op; only X decides transparency.
+          if (sy < 0.0f || sy > yTop) inside = false;
         } else {
           const float c = (sy > yTop) ? yTop : sy;
           sy = (sy < 0.0f) ? 0.0f : c;
