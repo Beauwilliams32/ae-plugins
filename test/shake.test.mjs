@@ -4,7 +4,8 @@
 // shared with four other bundles. The interesting claims are in the self-check rather than
 // here: `shake::median` averages the two middle values on an even count, differently from
 // `beatsnap::medianOfWindow`, it is the exact median, and it does not depend on the order
-// of its inputs.
+// of its inputs; and `shake::sampleLooped` in Clamp mode answers 0.0f — not the end sample
+// — anywhere OUTSIDE the range.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -59,7 +60,7 @@ test("recovered shake source compiles and its maths verifies", (t) => {
     assert.match(out, /ALL RECOVERED SHAKE MATHS VERIFIED/, `self-check failed:\n${out}`);
     assert.doesNotMatch(out, /\bFAIL\b/, out);
     const passes = (out.match(/^  PASS/gm) ?? []).length;
-    assert.ok(passes >= 71, `expected >= 71 checks, saw ${passes}`);
+    assert.ok(passes >= 72, `expected >= 72 checks, saw ${passes}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

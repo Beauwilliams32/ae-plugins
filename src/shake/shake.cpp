@@ -166,7 +166,7 @@ void normalizeUnitAmplitude(ShakeProfile& profile) {
 }
 
 
-// __ZN5shake12sampleLoopedERKNSt3__16vectorIfNS_9allocatorIfEEEEdNS_8LoopModeE, 92 instrs
+// __ZN5shake12sampleLoopedERKNSt3__16vectorIfNS0_9allocatorIfEEEEdNS_8LoopModeE, 92 instrs
 //
 // Read in full. The three mode branches share one tail: bring the position into [0, last],
 // truncate it, and lerp between values[i] and values[i+1] (a single fmadd). Loop is the only
@@ -201,8 +201,13 @@ float sampleLooped(const std::vector<float>& values, double t, LoopMode mode) {
       break;
     }
     case LoopMode::Clamp:
+      // The listing has BOTH out-of-range tests branching to the SAME zero return
+      // (0x229c `b.mi 0x238c` for t < 0 and 0x22a8 `b.gt 0x238c` for t > last), so
+      // Clamp does NOT hold the end sample outside the range - it answers 0.0f there.
+      // The end samples are only returned AT the endpoints (0x22b0 `b.ls 0x2388` for
+      // t <= 0 and 0x22b8 `b.ge 0x23a0` for t >= last).
       if (t < 0.0) return 0.0f;
-      if (t > static_cast<double>(last)) return values[last];
+      if (t > static_cast<double>(last)) return 0.0f;
       w = t;
       break;
     default:

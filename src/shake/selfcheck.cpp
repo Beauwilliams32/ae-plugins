@@ -224,8 +224,13 @@ int main() {
 
     checkNear(shake::sampleLooped(ramp, 1.5, shake::LoopMode::Clamp), 15.0f, 1e-5f, "Clamp interpolates between neighbours");
     checkNear(shake::sampleLooped(ramp, -2.0, shake::LoopMode::Clamp), 0.0f, 0.0f, "Clamp below the range is 0, not the first sample");
-    checkNear(shake::sampleLooped(ramp, 99.0, shake::LoopMode::Clamp), 30.0f, 1e-5f, "Clamp above the range holds the last sample");
-    checkNear(shake::sampleLooped(ramp, 3.0, shake::LoopMode::Clamp), 30.0f, 1e-5f, "and so does the exact end");
+    // Clamp does NOT hold the last sample outside the range: the shipped code sends BOTH
+    // out-of-range tests (t < 0 and t > last) to the SAME zero return, and only the
+    // endpoints themselves give the end samples (listing 0x229c-0x22bc). This was
+    // measured against the shipped bundle, which answers 0.0f at t = 3.001 and t = 99.
+    checkNear(shake::sampleLooped(ramp, 3.0, shake::LoopMode::Clamp), 30.0f, 1e-5f, "Clamp gives the last sample AT the exact end");
+    checkNear(shake::sampleLooped(ramp, 3.001, shake::LoopMode::Clamp), 0.0f, 1e-5f, "but just past the end it is 0, not the last sample");
+    checkNear(shake::sampleLooped(ramp, 99.0, shake::LoopMode::Clamp), 0.0f, 1e-5f, "and well past the end it is 0 as well");
 
     checkNear(shake::sampleLooped(ramp, 4.5, shake::LoopMode::Loop), 5.0f, 1e-5f, "Loop wraps past the end (4.5 -> 0.5)");
     checkNear(shake::sampleLooped(ramp, -1.5, shake::LoopMode::Loop), 25.0f, 1e-5f, "and below zero (-1.5 -> 2.5)");

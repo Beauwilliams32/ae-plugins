@@ -152,7 +152,7 @@ void normalizeUnitAmplitude(ShakeProfile& profile);
  */
 enum class LoopMode : int {
   None = 0,      ///< no sampling; the function returns 0.0f
-  Clamp = 1,     ///< hold the end sample outside the range
+  Clamp = 1,     ///< the end samples, but only AT the endpoints: outside the range, 0.0f
   Loop = 2,      ///< wrap with fmod, so the series repeats
   PingPong = 3,  ///< reflect: fmod over 2*(n-1), then mirror the second half
 };
@@ -165,7 +165,8 @@ enum class LoopMode : int {
  *   * an empty series returns 0.0f;
  *   * a ONE-sample series returns values[0] for t == 0 (and for NaN), returns **0.0f** in Clamp mode
  *     for any other t, and values[0] otherwise — the 0.0f is a quirk of the shipped code, kept;
- *   * Clamp: t < 0 -> 0.0f (not values[0]), t > last -> values[last];
+ *   * Clamp: t < 0 -> 0.0f (not values[0]) and t > last -> 0.0f as well (not values[last]);
+ *     the end samples are only returned AT the endpoints;
  *   * Loop: fmod(t, n) with the negative result brought back into range, then the index wraps;
  *   * PingPong: fmod(t, 2*(n-1)), then `period - w` for the mirrored half, then the same
  *     truncate-and-lerp as Clamp;
