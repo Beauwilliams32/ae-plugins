@@ -10,7 +10,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -67,6 +67,59 @@ function runDiff(fragment) {
     return execFileSync("node", args, { cwd: ROOT, encoding: "utf8", stdio: "pipe" });
   } catch (e) {
     return `${e.stdout ?? ""}${e.stderr ?? ""}`;
+  }
+}
+
+/**
+ * Build the differential harness against a directory holding noisefield.h,
+ * noisefield.cpp and differential.cpp, and run it.
+ *
+ * `-fvisibility=hidden` matters: without it the recovered `noisefield::apply` could
+ * interpose the shipped one inside the loader-mapped bundle, and the comparison
+ * would be the recovered code compared with itself.
+ */
+function buildAndRunHarness(dir) {
+  const bin = path.join(dir, "differential");
+  execFileSync("clang++", [
+    "-std=c++17", "-O2", "-fvisibility=hidden",
+    "-I", dir,
+    "-o", bin,
+    path.join(dir, "differential.cpp"),
+    path.join(dir, "noisefield.cpp"),
+  ], { stdio: "pipe" });
+
+  let status = 0;
+  let stdout = "";
+  try {
+    stdout = execFileSync(bin, { encoding: "utf8", stdio: "pipe" });
+  } catch (e) {
+    status = e.status ?? 1;
+    stdout = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+  }
+  const field = (name) => {
+    const m = stdout.match(new RegExp(`^${name} (-?\\d+)$`, "m"));
+    return m ? Number(m[1]) : null;
+  };
+  return {
+    status,
+    stdout,
+    scalars: field("SCALAR_MISMATCHES"),
+    u8Vectors: field("APPLY_U8_VECTORS"),
+    u8Mismatches: field("APPLY_U8_MISMATCH_VECTORS"),
+    u8Bytes: field("APPLY_U8_DIFFERING_BYTES"),
+    u16Vectors: field("APPLY_U16_VECTORS"),
+    u16Mismatches: field("APPLY_U16_MISMATCH_VECTORS"),
+    u16Bytes: field("APPLY_U16_DIFFERING_BYTES"),
+    vectors: field("VECTORS"),
+    mismatchVectors: field("MISMATCH_VECTORS"),
+    differingBytes: field("DIFFERING_BYTES"),
+  };
+}
+
+/** Copy the harness sources into a scratch directory, so a copy can be perturbed. */
+function stageSources(dir) {
+  for (const f of ["noisefield.h", "noisefield.cpp", "differential.cpp"]) {
+    copyFileSync(path.join(SRC, f), path.join(dir, f));
   }
 }
 
@@ -197,4 +250,71 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
   const summary = out.trim().split("\n").pop();
   assert.match(summary, /3 identical, 7 differing, 0 not implemented/,
     `the differ's tally moved: ${summary}`);
+});
+
+test("the recovered renderer is bit-identical to the shipped bundle", (t) => {
+  if (!bundlesInstalled()) { t.skip("NoiseField bundle is not installed"); return; }
+  if (!haveClang()) { t.skip("clang++ not available — differential skipped"); return; }
+
+  const dir = mkdtempSync(path.join(tmpdir(), "noisefield-diff-"));
+  try {
+    stageSources(dir);
+    const r = buildAndRunHarness(dir);
+
+    assert.equal(r.status, 0,
+      `the differential harness reported differences:\n${r.stdout}`);
+    assert.equal(r.scalars, 0,
+      `the scalar helpers disagree with the shipped bundle:\n${r.stdout}`);
+    assert.equal(r.mismatchVectors, 0,
+      `${r.mismatchVectors} render vectors disagreed with the shipped bundle:\n${r.stdout}`);
+    assert.equal(r.differingBytes, 0,
+      `${r.differingBytes} destination bytes disagreed with the shipped bundle:\n${r.stdout}`);
+
+    // Both instantiations are measured separately, and both are measured at scale:
+    // a harness that quietly only exercised one of them would still report a clean
+    // total.
+    assert.ok(r.u8Vectors >= 20000, `only ${r.u8Vectors} apply<unsigned char> vectors`);
+    assert.ok(r.u16Vectors >= 20000, `only ${r.u16Vectors} apply<unsigned short> vectors`);
+    assert.equal(r.u8Mismatches, 0, `apply<unsigned char> mismatched:\n${r.stdout}`);
+    assert.equal(r.u16Mismatches, 0, `apply<unsigned short> mismatched:\n${r.stdout}`);
+    assert.equal(r.u8Bytes, 0, `apply<unsigned char> bytes differed:\n${r.stdout}`);
+    assert.equal(r.u16Bytes, 0, `apply<unsigned short> bytes differed:\n${r.stdout}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the differential harness can fail — a perturbed constant is caught", (t) => {
+  if (!bundlesInstalled()) { t.skip("NoiseField bundle is not installed"); return; }
+  if (!haveClang()) { t.skip("clang++ not available — mutation check skipped"); return; }
+
+  // The REAL source is never touched: the perturbation is applied to a COPY, and the
+  // copy is what gets compiled. The source is read before and after to prove it.
+  const before = readFileSync(path.join(SRC, "noisefield.cpp"), "utf8");
+
+  const dir = mkdtempSync(path.join(tmpdir(), "noisefield-mut-"));
+  try {
+    stageSources(dir);
+    const cppPath = path.join(dir, "noisefield.cpp");
+    const src = readFileSync(cppPath, "utf8");
+    // One constant in `curlField`: the divisor the X component of the curl is scaled
+    // by. Changing it by one part in ten thousand must change the rendered pixels.
+    const target = "  out.x = (s1 - s2) / 0.02f;";
+    assert.equal(src.split(target).length - 1, 1,
+      "the perturbation target must appear exactly once in the source");
+    writeFileSync(cppPath, src.replace(target, "  out.x = (s1 - s2) / 0.0201f;"));
+
+    const r = buildAndRunHarness(dir);
+
+    assert.notEqual(r.status, 0,
+      "the harness passed a build with a perturbed constant — it cannot detect errors");
+    assert.ok(r.mismatchVectors > 0,
+      `the perturbed build reported no mismatching vectors:\n${r.stdout}`);
+    assert.ok(r.differingBytes > 0,
+      `the perturbed build reported no differing bytes:\n${r.stdout}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(readFileSync(path.join(SRC, "noisefield.cpp"), "utf8"), before,
+      "the real source was modified by the mutation test");
+  }
 });
