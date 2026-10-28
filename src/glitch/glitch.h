@@ -128,24 +128,42 @@ static_assert(sizeof(View<unsigned char>) == 24,
 // [RECOVERED LAYOUT] Params — all NINE fields `apply<T>` reads.
 //
 //     +0x00  int    mode          the one-based mode selector, tested against 1..5
-//     +0x04  float  amount        capped at 1; an early return when it is <= 0
+//     +0x04  float  amount        clamped to 0..1; an early return when it is <= 0
 //     +0x08  int    blockSize     clamped to 2..4096; Block Displace's block edge
 //     +0x0c  int    hashInput     one of the hashKey inputs
 //     +0x10  float  rate          the TIME fed to patternFrame, guarded by `> 0`
 //     +0x14  float  shift         the RGB channel shift distance in pixels
 //     +0x18  int    scanline      the band height for Scanline Jitter, clamped 1..4096
 //     +0x1c  BYTE  luma           read with ldrb: bit 0 is "drive by luminance"
-//     +0x20  float  spread        capped at 1; an early return when it is <= 0
+//     +0x20  float  spread        clamped to 0..1; an early return when it is <= 0
 //
 // NINE fields, and the set is complete rather than partial.
 //
-// "Capped at 1", not "clamped to 0..1": the lower test is made against the
-// ORIGINAL value rather than against the capped one, so a NEGATIVE amount is
-// left negative rather than lifted to 0 — it takes the early copy-and-return
-// instead. The observable difference from a real 0..1 clamp is nil, because
-// both a negative value and a zero value take the same early return, but the
-// two are not the same instruction sequence and the header should not claim
-// the clamp is stronger than it is.
+// The clamp IS a 0..1 clamp, and the way it is written is worth reading
+// carefully because the register trick is not obvious:
+//
+//     ldr    s1, [x2, #0x4]      ; 0x764  the amount
+//     fmov   s3, #1.00000000     ; 0x768
+//     fcmp   s1, s3              ; 0x76c
+//     fcsel  s2, s3, s1, gt      ; 0x770  s2 = (amount > 1) ? 1 : amount
+//     fcmp   s1, #0.0            ; 0x774
+//     movi.2d v1, #0000000000000000 ; 0x778
+//     fcsel  s2, s1, s2, mi      ; 0x77c  s2 = (amount < 0) ? s1 : s2
+//
+// The `movi.2d v1, #0` at 0x778 is the whole trick. A 64-bit vector move zeroes
+// BOTH halves of V1, and S1 is the low half — so the instruction that supplies
+// the 0.0f constant DESTROYS the amount that was in S1. The `fcsel` at 0x77c
+// then selects that zero, not the original negative amount. The spread is
+// clamped the same way at 0x780..0x790, reusing the same zeroed V1.
+//
+// MEASURED, not assumed: that exact instruction sequence was assembled and run
+// on this machine. A negative amount comes out as 0.0f, and a NaN comes out as
+// NaN, because `fcmp` sets NZCV = 0b0011 for an unordered comparison and the
+// `mi` condition (N set) is therefore false.
+//
+// An earlier draft of this header claimed that a negative amount "stays
+// negative". That was wrong, and it was wrong in the same way in
+// RECOVERY-NOTES.md; both are corrected.
 //
 // x2 does NOT stay the `&Params` pointer for the whole body of the 8-bit build. It is
 // repurposed as a cursor in the COPY paths and in the mode-4 body — `lsl x2, x15, #2`

@@ -304,11 +304,24 @@ inline float lumaFactor(const T* p, float maxValue) {
 //     fcsel s2, s1, s2, mi     ; the value or the first result
 //
 // The SECOND test is against the ORIGINAL value, not against the first
-// result, so a negative value wins over the upper clamp, and a NaN passes
-// straight through (0x764..0x790).
+// result, and the value it selects on the negative branch is NOT the original
+// one but a ZERO: the shipped code materialises the 0.0f constant with
+// `movi.2d v1, #0` at 0x778, and `v1` is the SAME REGISTER that held the
+// amount (`ldr s1, [x2, #0x4]` at 0x764) — a 64-bit vector move zeroes both
+// halves, so S1 becomes 0.0f. The following `fcsel s2, s1, s2, mi` at 0x77c
+// then selects that zero when the amount was negative.
+//
+// MEASURED, not assumed: that exact eight-instruction sequence was assembled
+// and run on this machine. A negative amount comes out as 0.0f, and a NaN
+// comes out as NaN, because `fcmp` sets NZCV = 0b0011 for an unordered
+// comparison and `mi` (N set) is therefore false.
+//
+// So the clamp IS a 0..1 clamp (0x764..0x790) — with a NaN passing straight
+// through it. An earlier draft of this file claimed that a negative amount
+// "stays negative"; that was wrong, and it is corrected here.
 inline float clampAmount(float v) {
   const float hi = (v > 1.0f) ? 1.0f : v;
-  return (v < 0.0f) ? v : hi;
+  return (v < 0.0f) ? 0.0f : hi;
 }
 
 // --- frame copy ------------------------------------------------------------
