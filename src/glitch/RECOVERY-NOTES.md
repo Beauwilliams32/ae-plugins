@@ -105,10 +105,21 @@ in the high one — and reads the strides back through the spills:
 ```
 ldr  x8, [sp, #0x20]   0x1c8c   the input view pointer again
 ldr  x0, [x8, #0x10]   0x1c94   the input's rowBytes
-ldr  x8, [sp, #0x18]   0x28e8   the output view pointer again
-ldr  x0, [x8]          0x28e8   the output's data
-ldr  x1, [x8, #0x10]   0x28f0   the output's rowBytes
+ldr  x8, [sp, #0x18]   0x1c98   the output view pointer again
+ldr  x13, [x8]         0x1c9c   the output's data
+ldr  x2, [x8, #0x10]   0x1ca0   the output's rowBytes
 ```
+
+and LATER in the same body the INPUT view is reloaded from its own spill slot:
+
+```
+ldr  x8, [sp, #0x20]   0x28e4   the input view pointer again
+ldr  x0, [x8]          0x28e8   the input's data
+ldr  x1, [x8, #0x10]   0x28f0   the input's rowBytes
+```
+
+The two are reloaded TOGETHER at `0x2ba4` — `ldp x14, x8, [sp, #0x18]` gives x14 = the
+OUTPUT view (low slot) and x8 = the INPUT view (high slot).
 
 So both instantiations read the input at all four offsets and the output at `+0x00` and
 `+0x10`. `test/glitch.test.mjs` follows the spill rather than assuming `x0` and `x1` keep
@@ -121,7 +132,8 @@ this, and the differential exercises it with a deliberately undersized output vi
 
 **`rowBytes` is a stride in ELEMENTS of T, not in bytes.** The 16-bit build doubles it when
 it forms a byte address — `lsl x0, x0, #1` at `0x1ce4` on the input stride and
-`lsl x11, x1, #1` at `0x28f4` on the output stride. A tightly packed row is therefore
+`lsl x2, x2, #1` at `0x1cec` on the OUTPUT stride (and again at `0x28f4` on the input
+stride and `0x2c00` on the output stride). A tightly packed row is therefore
 `width * 4` for BOTH depths; reading it as `width * 4 * sizeof(T)` puts the 16-bit build
 half a row out of step.
 
@@ -157,8 +169,25 @@ ldr  w10, [x2, #0x8]  0x1248 blockSize     |  ldr  w11, [x2, #0x8]  0x2554 block
 `x2` is the `&Params` pointer for every one of those reads. In the 8-bit build it is
 repurposed afterwards, as a copy cursor, in the three copy paths and in mode 4 — `lsl x2,
 x15, #2` at `0x88c`, `ldr x2, [x1]` at `0x9dc` with `strb w17, [x2], #1` at `0xa24`,
-`mov x2, #0x0` at `0xeb8`, and `ldr x2, [x1]` at `0x17c0`. The 16-bit build never repurposes
-`x2` at all.
+`mov x2, #0x0` at `0xeb8`, and `ldr x2, [x1]` at `0x17c0`.
+
+**The 16-bit build repurposes `x2` as well** — an earlier draft of this file claimed it
+did not, and that was wrong. Every write to `x2` in the 16-bit listing is:
+
+```
+mov  x2, #0x0        0x1b6c   mode-5 body counter   (incremented at 0x1bdc)
+ldr  x2, [x8, #0x10] 0x1ca0   the OUTPUT's rowBytes (x8 = the output view)
+lsl  x2, x2, #1      0x1cec   the OUTPUT's byte stride
+mov  x2, #0x0        0x1ebc   modes 1/2 body counter (incremented at 0x1f30)
+mov  x2, #0x0        0x21c4   mode-4 entry counter  (incremented at 0x2364)
+mov  x2, #0x0        0x28a4   mode-4 body counter   (incremented by 2 at 0x292c)
+lsl  x2, x8, #1      0x2bf8   the INPUT's byte stride (x8 = the input's rowBytes)
+```
+
+So in the 16-bit build `x2` is a loop counter in three of the mode bodies and a
+byte-scaled stride in the other two; the strides it holds are the OUTPUT's at `0x1cec`
+and the INPUT's at `0x2bf8`. This is the evidence that the nine `Params` reads are
+NOT a prologue: `x2` stops being the `&Params` pointer long before the body ends.
 
 ## The mode dispatch — five bodies, one-based
 

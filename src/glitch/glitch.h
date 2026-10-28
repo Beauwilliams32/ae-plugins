@@ -7,26 +7,28 @@
 // Recovered from the demangled symbol table and disassembly of GlitchKit.plugin.
 // The original C++ was destroyed on 2026-10-13 with no remote and no backup.
 //
-// STATE — all SIX `glitch::` symbols are recovered; none are outstanding.
-//
-//   glitch::clampf                 5 instructions    INSTRUCTION-IDENTICAL
-//   glitch::clampi                 5 instructions    INSTRUCTION-IDENTICAL
-//   glitch::hashKey               34 instructions    INSTRUCTION-IDENTICAL
-//   glitch::patternFrame           7 instructions    INSTRUCTION-IDENTICAL
-//   glitch::apply<unsigned char> 1157 instructions    BEHAVIOURAL RECOVERY
-//   glitch::apply<unsigned short> 1228 instructions   BEHAVIOURAL RECOVERY
-//
 // NAMESPACE-COMPLETE
 //
+// STATE — ALL SIX `glitch::` symbols are recovered. NONE is outstanding.
+//
+//   glitch::clampf                  5 instructions    INSTRUCTION-IDENTICAL
+//   glitch::clampi                  5 instructions    INSTRUCTION-IDENTICAL
+//   glitch::hashKey                34 instructions    INSTRUCTION-IDENTICAL
+//   glitch::patternFrame            7 instructions    INSTRUCTION-IDENTICAL
+//   glitch::apply<unsigned char>  1157 instructions    BEHAVIOURAL RECOVERY
+//   glitch::apply<unsigned short> 1228 instructions    BEHAVIOURAL RECOVERY
+//
 // The four scalar helpers reproduce the bundle's instructions EXACTLY — 5, 5, 34 and 7
-// instructions, all four identical. The two `apply<T>` instantiations are BEHAVIOURAL
-// RECOVERIES: their semantics are transcribed from the listing and verified by
-// differential testing against the shipped bundle itself — the shipped `apply` is
-// dlopen'd, run on the same frames, and its output buffer is compared byte for byte —
-// but the instruction stream is a re-expression rather than a copy, so the differ
-// reports them as DIFFERING and not identical. Treat the BEHAVIOUR as the recovered
-// fact for `apply<T>`, and see src/glitch/RECOVERY-NOTES.md for the reading of each
-// mode body, the addresses it was read from, and what is identical versus behavioural.
+// instructions, all four identical. BOTH recovered `apply<T>` instantiations are
+// BEHAVIOURAL RECOVERIES: their semantics are transcribed from the listing and
+// verified by differential testing against the shipped bundle itself — the shipped
+// `apply` is dlopen'd, run on the same frames, and its output buffer is compared byte
+// for byte — but the instruction stream is a re-expression rather than a copy, so the
+// differ reports them as DIFFERING and not identical. Treat the BEHAVIOUR as the
+// recovered fact for `apply<T>`, and see src/glitch/RECOVERY-NOTES.md for the reading
+// of each mode body, the addresses it was read from, and what is identical versus
+// behavioural. The differ's tally for this namespace is 4 identical, 2 differing,
+// 0 not implemented.
 //
 // No After Effects host has ever loaded a rebuilt GlitchKit bundle. Nothing in this
 // header is a host-acceptance claim.
@@ -38,11 +40,16 @@
 // Listing read: /tmp/ae/glitchkit.asm, the arm64 disassembly of
 //   /Applications/Adobe After Effects 2026/Plug-ins/Williams Media/GlitchKit.plugin
 // The 8-bit body is `__ZN6glitch5applyIhEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf`
-// at 0x738..0x1948 (1157 instructions, listed in /tmp/ae/glitch_uc.txt); the 16-bit body
-// is `__ZN6glitch5applyItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf` at
-// 0x1a04..0x2d30 (1228 instructions, listed in /tmp/ae/glitch_us.txt). Addresses quoted
-// in the comments below are the 8-bit body's unless stated otherwise, and every 16-bit
-// address is given as such.
+// at 0x738..0x1948 (1157 instructions, listed in /tmp/ae/glitch_uc.txt) — that is the
+// listing the RECOVERED 8-bit `apply` was read from.
+//
+// The 16-bit body is `__ZN6glitch5applyItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf`
+// at 0x1a04..0x2d30 (1228 instructions, listed in /tmp/ae/glitch_us.txt) — that is the
+// listing the RECOVERED 16-bit `apply` was read from. Every structural fact below that
+// describes "the 16-bit build" is read from it.
+//
+// Addresses quoted in the comments below are the 8-bit body's unless stated otherwise,
+// and every 16-bit address is given as such.
 
 #pragma once
 
@@ -80,9 +87,19 @@ namespace glitch {
 //     ldr  x8, [sp, #0x20]     ; 0x1c8c  the input view pointer again
 //     ldr  x0, [x8, #0x10]     ; 0x1c94  the input's rowBytes
 //     ...
-//     ldr  x8, [sp, #0x18]     ; 0x28e8  the output view pointer again
-//     ldr  x0, [x8]            ; 0x28e8  the output's data
-//     ldr  x1, [x8, #0x10]     ; 0x28f0  the output's rowBytes
+//     ldr  x8, [sp, #0x18]     ; 0x1c98  the output view pointer again
+//     ldr  x13, [x8]           ; 0x1c9c  the output's data
+//     ldr  x2, [x8, #0x10]     ; 0x1ca0  the output's rowBytes
+//
+// and LATER, in the same body, the INPUT view is reloaded from its own spill
+// slot (NOT the output's):
+//
+//     ldr  x8, [sp, #0x20]     ; 0x28e4  the input view pointer again
+//     ldr  x0, [x8]            ; 0x28e8  the input's data
+//     ldr  x1, [x8, #0x10]     ; 0x28f0  the input's rowBytes
+//
+// and the pair is reloaded together at 0x2ba4 — `ldp x14, x8, [sp, #0x18]` gives
+// x14 = the OUTPUT view (the low slot) and x8 = the INPUT view (the high slot).
 //
 // which is why the offsets are the same four and the same two as the 8-bit build's,
 // and why test/glitch.test.mjs follows the spill rather than assuming x0 and x1 keep
@@ -135,7 +152,10 @@ static_assert(sizeof(View<unsigned char>) == 24,
 // at 0x88c (mode 5's inline frame copy), `ldr x2, [x1]` at 0x9dc (the copy taken when
 // the amount or the spread is <= 0) with `strb w17, [x2], #1` at 0xa24, `mov x2, #0x0`
 // at 0xeb8 (mode 4) and `ldr x2, [x1]` at 0x17c0 (the catch-all copy). The 16-bit
-// build never repurposes x2 at all.
+// build repurposes x2 as well, but differently: as a byte-scaled stride (`lsl x2,
+// x2, #1` at 0x1cec on the OUTPUT stride and `lsl x2, x8, #1` at 0x2bf8 on the
+// INPUT stride) and as a loop counter (`mov x2, #0x0` at 0x1b6c, 0x1ebc, 0x21c4
+// and 0x28a4).
 //
 // What the listing DOES establish is the offset set: across the WHOLE body of BOTH
 // instantiations, the only offsets ever read through x2 are exactly these nine, one per
@@ -169,6 +189,14 @@ static_assert(sizeof(View<unsigned char>) == 24,
 //
 // The field NAMES beyond `mode` are not in the binary. They are named here after what
 // the code does with them, and the meanings are pinned by the self-check.
+//
+// The nine reads really do all happen before their own branch's body touches x2,
+// in BOTH builds. Mode 1's body opens with its own read (`ldr w10, [x2, #0x8]` at
+// 0x1248 in the 8-bit listing, `ldr w11, [x2, #0x8]` at 0x2554 in the 16-bit one),
+// mode 2's with the shift (`ldr s3, [x2, #0x14]` at 0xacc and 0x1db4) and mode 3's
+// with the scanline (`ldr w9, [x2, #0x18]` at 0xc80 and 0x1f7c). The two bodies that
+// clobber x2 on entry — mode 4 at 0xeb8 and 0x21c4, and mode 5's copy — read no
+// Params field of their own, so there is nothing for them to read afterwards.
 // ---------------------------------------------------------------------------
 struct Params {
   int mode = 0;
@@ -283,17 +311,21 @@ unsigned int patternFrame(unsigned int seed, float time);
 //
 // Listing read: /tmp/ae/glitch_uc.txt — the arm64 listing of
 //   __ZN6glitch5applyIhEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf
-// at 0x738..0x1948, 1157 instructions. The 16-bit instantiation
-//   __ZN6glitch5applyItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf
-// at 0x1a04..0x2d30, 1228 instructions, is listed in /tmp/ae/glitch_us.txt.
+// at 0x738..0x1948, 1157 instructions.
 //
-// BOTH are BEHAVIOURAL RECOVERIES: the semantics are transcribed from those listings,
+// This is a BEHAVIOURAL RECOVERY: the semantics are transcribed from that listing,
 // and the behaviour is verified against the shipped bundle by dlopen differential —
 // the bundle's own `apply` is run on the same frames with the same parameters into a
 // sentinel-filled buffer, and the two buffers are compared byte for byte, including
 // the padding past the last row. The instruction STREAM is not a copy of the shipped
-// one, so the differ reports both as DIFFERING. That difference is recorded, not
+// one, so the differ reports it as DIFFERING. That difference is recorded, not
 // hidden.
+//
+// The 16-bit twin `glitch::apply<unsigned short>` — the same source at a wider
+// channel depth, listed in /tmp/ae/glitch_us.txt at 0x1a04..0x2d30, 1228
+// instructions — is recovered too, and it is ALSO a BEHAVIOURAL RECOVERY: the
+// same dlopen differential runs against the shipped 16-bit `apply`, byte for byte,
+// and the differ reports it as DIFFERING for the same reason.
 //
 // The fifth argument is NOT a time: `apply<T>` feeds Params.rate (+0x10) to
 // patternFrame, and the float it receives is the PIXEL RANGE — 255 for 8-bit,
@@ -302,16 +334,16 @@ unsigned int patternFrame(unsigned int seed, float time);
 //
 // ONE PIXEL IS FOUR ELEMENTS of T — A, R, G, B — and View<T>::rowBytes is a stride
 // in ELEMENTS of T, not in bytes. The 16-bit build multiplies it by two when it
-// forms a byte address (`lsl x0, x0, #1` at 0x1ce4 on the input stride and
-// `lsl x11, x1, #1` at 0x28f4 on the output stride in the 16-bit listing). So for a
+// forms a byte address (`lsl x0, x0, #1` at 0x1ce4 on the INPUT stride and
+// `lsl x2, x2, #1` at 0x1cec on the OUTPUT stride; again at 0x28f4 on the input
+// stride and 0x2c00 on the output stride, in the 16-bit listing). So for a
 // tightly packed frame rowBytes is width * 4 for BOTH depths; reading it as
 // width * 4 * sizeof(T) puts the 16-bit build half a row out of step.
 //
 // The body is transcribed from the listing. Its shape:
 //
 //   * an EMPTY frame — a width or a height below 1 — leaves the output
-//     completely untouched (0x738..0x744 in the 8-bit listing, 0x1a24..0x1a30 in
-//     the 16-bit one, which is the same guard over the same paired load);
+//     completely untouched (0x738..0x744);
 //   * amount and spread are capped at 1, and if EITHER is <= 0 the frame is
 //     copied and returned WITHOUT the spread blend (0x794/0x79c -> 0x9a0);
 //   * a per-frame hash is mixed from hashInput, the pattern frame and the mode;

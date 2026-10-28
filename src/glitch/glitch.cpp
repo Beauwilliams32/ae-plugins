@@ -138,9 +138,12 @@ unsigned int patternFrame(unsigned int seed, float time) {
 // transcribed from the arm64 listing of the shipped GlitchKit bundle:
 //
 //   __ZN6glitch5applyIhEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf
-//       0x738 .. 0x194c   (1157 instructions)
+//       0x738 .. 0x1948   (1157 instructions; 0x1948 is the final `ret`,
+//                          0x194c is the NEXT function, `glitch::clampf`)
 //   __ZN6glitch5applyItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf
-//       0x1a04 .. 0x2d34   (1228 instructions)
+//       0x1a04 .. 0x2d30   (1228 instructions; 0x2d30 is the final `b 0x1a34`
+//                          back-edge to the epilogue, 0x2d34 is the NEXT
+//                          function, `glitch::clampi`)
 //
 // Every fact claimed here is read from those listings; src/glitch/RECOVERY-NOTES.md
 // gives the address (and the numbered-listing line) each one was read from.
@@ -832,7 +835,7 @@ template void apply<unsigned char>(const View<const unsigned char>&,
                                    View<unsigned char>&, const Params&,
                                    unsigned, float);
 // The 16-bit twin — `__ZN6glitch5applyItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf`
-// at 0x1a04..0x2d34, 1228 instructions in the bundle, listed in
+// at 0x1a04..0x2d30, 1228 instructions in the bundle, listed in
 // /tmp/ae/glitch_us.txt — is the SAME source at a different channel width: the
 // only difference is that View<T>::rowBytes counts ELEMENTS of T and the
 // element type is a wider unsigned. It is instantiated for the same reason as
