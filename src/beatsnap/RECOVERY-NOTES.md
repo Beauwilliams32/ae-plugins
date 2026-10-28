@@ -20,7 +20,7 @@ Eleven authored functions. **Seven recovered**, four identified only.
 | `adaptiveThreshold` | 78 | Recovered — 91 here; a loop-structure difference, not a maths one |
 | `computeFlux` | 416 | Recovered — differs, 421 here (see below) |
 | `renderValues` | 190 | **Identified only** |
-| `pickOnsets` | 136 | **Identified only** |
+| `pickOnsets` | 136 | Recovered — differs in 37 of 136 positions (see below) |
 | `detectOnsets` | 47 | **Identified only** — but fully read; see below |
 
 `test/beatsnap.test.mjs` asserts that table against `tools/codegen-diff.mjs`, so
@@ -166,6 +166,62 @@ triple), whereas the recovered source uses `std::vector<float>`. The two have
 identical observable behaviour — same values, same order, same lifetime — and
 the difference is confined to allocation and teardown.
 
+## `pickOnsets` — peak picking, and an asymmetric test
+
+136 instructions, read in full. Two guards first: a flux track of fewer than
+three samples, and a threshold track whose length does not match the flux
+track's.
+
+The peak test is where the function's character is, and it is ASYMMETRIC:
+
+```
+fcmp s0, s1 / b.ls skip    ; flux[i] >  thresholds[i]   STRICT
+ldr s1, [x9, x8, lsl #2]   ; flux[i-1]
+fcmp s0, s1 / b.mi skip    ; flux[i] >= flux[i-1]        NOT strict
+ldr s1, [x8, #0x8]         ; flux[i+1]
+fcmp s0, s1 / b.ls skip    ; flux[i] >  flux[i+1]        STRICT
+```
+
+The left neighbour is compared with `>=` and the right neighbour with `>`, so a
+PLATEAU is picked at its LAST sample rather than its first. An implementation
+that used `>` on both sides would pick the first sample of the plateau and
+report a different onset time; the self-check pins the last one.
+
+The onset's time is the frame index scaled by the hop, plus the window:
+`i * hopSeconds + windowSeconds` (`ucvtf` / `ldp d1, d2, [x21, #0x18]` /
+`fmadd`).
+
+The listing also shows the two `emplace_back` overloads, which is how the
+CANDIDATE list and the RESULT list are told apart: the candidate list is
+filled through `emplace_back<double>(double&&)` — a temporary — and the result
+list through the `double const&` overload, which is what ranging over a
+`const` vector of doubles produces.
+
+### The merge
+
+```
+fcvt d0, s8 / fdiv d0, d0, d1     ; scale / 1000.0
+movi.2d v1, #0                    ; the divisor register is reused as 0.0
+fmaxnm d8, d0, d1                 ; tol = max(scale / 1000, 0.0)
+fmov d0, x8                       ; last = -1e18
+fsub d2, d1, d0 / fcmp d2, d8 / b.lt skip
+```
+
+Two details: the tolerance is clamped at ZERO from below, so a negative scale
+merges nothing; and `last` is updated ONLY when a candidate is KEPT, so two
+onsets closer together than the tolerance collapse onto the FIRST of them. The
+keep test is `>=`, so an onset exactly one tolerance after the last is kept.
+
+### Why it differs from the bundle
+
+`shipped=136 mine=136` — the same instruction count — but 37 of the 136
+positions differ. The difference is register allocation and the shape of the
+comparisons: the recovered source computes the three tests as separate
+`if` statements with early `continue`, and clang folds them into a different
+branch structure than the bundle's. The tests themselves are the same three,
+in the same order, with the same strictness — which is what the self-check
+asserts.
+
 ## `medianOfWindow` — an honest improvement target
 
 The shipped implementation allocates a **copy** of the window, `memcpy`s it, runs a
@@ -184,8 +240,6 @@ recovered behaviour without changing the effect.
 
 ## Not recovered, and what would be needed
 
-- `pickOnsets` (136) — peak picking over a flux track against a threshold track.
-  Needs `FluxTrack` and its own return type.
 - `renderValues` (190) — takes `const vector<double>&`, an `int` and a
   `RenderConfig`; the "snap these values to beats" payoff. Needs `RenderConfig`.
 - The host integration (`EffectMain`) — no `plugins/BeatSnap/` exists, and none

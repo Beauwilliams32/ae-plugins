@@ -49,10 +49,11 @@ const OWN_RECOVERED = {
   medianOfWindow: "MATCH",
   adaptiveThreshold: "DIFFER",
   computeFlux: "DIFFER",
+  pickOnsets: "DIFFER",
 };
 
 /** The functions in this bundle that are NOT recovered yet. */
-const OUTSTANDING = ["pickOnsets", "detectOnsets", "renderValues"];
+const OUTSTANDING = ["detectOnsets", "renderValues"];
 
 function bundlesInstalled() {
   return existsSync(BUNDLE);
@@ -107,7 +108,7 @@ test("recovered beatsnap source compiles and its maths verifies", (t) => {
     assert.match(out, /ALL RECOVERED BEATSNAP MATHS VERIFIED/, `self-check failed:\n${out}`);
     assert.doesNotMatch(out, /\bFAIL\b/, out);
     const passes = (out.match(/^  PASS/gm) ?? []).length;
-    assert.ok(passes >= 90, `expected >= 90 checks, saw ${passes}`);
+    assert.ok(passes >= 102, `expected >= 102 checks, saw ${passes}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -171,6 +172,6 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
     "medianOfWindow is no longer instruction-identical to the bundle");
 
   const summary = out.trim().split("\n").pop();
-  assert.match(summary, /3 identical, 5 differing, 3 not implemented/,
+  assert.match(summary, /3 identical, 6 differing, 2 not implemented/,
     `the differ's tally moved: ${summary}`);
 });

@@ -423,6 +423,89 @@ int main() {
     }
   }
 
+  std::printf("beatsnap::pickOnsets\n");
+  {
+    beatsnap::FluxTrack track;
+    track.hopSeconds = 0.25;
+    track.windowSeconds = 0.5;
+
+    // The two guards, in the listing's order: a track shorter than three
+    // samples, and a threshold track that is not the same length.
+    {
+      beatsnap::FluxTrack tiny = track;
+      tiny.flux = {0.0f, 1.0f};
+      const std::vector<float> thr{0.0f, 0.0f};
+      check(beatsnap::pickOnsets(tiny, thr, 0.0f).empty(),
+            "pickOnsets: a flux track of fewer than three samples yields nothing");
+    }
+    {
+      beatsnap::FluxTrack t = track;
+      t.flux = {0.0f, 1.0f, 1.0f, 0.0f};
+      const std::vector<float> shortThr{0.0f, 0.0f, 0.0f};
+      check(beatsnap::pickOnsets(t, shortThr, 0.0f).empty(),
+            "pickOnsets: a threshold track of a different length yields nothing");
+    }
+
+    // THE ASYMMETRIC PEAK TEST. The left neighbour is compared with `>=` and the
+    // right neighbour with `>`, so a plateau is picked at its LAST sample.
+    {
+      beatsnap::FluxTrack t = track;
+      t.flux = {0.0f, 1.0f, 1.0f, 0.0f};
+      const std::vector<float> thr{0.0f, 0.0f, 0.0f, 0.0f};
+      const std::vector<double> got = beatsnap::pickOnsets(t, thr, 0.0f);
+      check(got.size() == 1, "pickOnsets: a two-sample plateau yields exactly one onset");
+      check(got.size() == 1 && got[0] == 2.0 * 0.25 + 0.5,
+            "pickOnsets: a plateau is picked at its LAST sample (index 2)");
+    }
+    {
+      // The right-hand test is STRICT: a plateau that ends the track is not a
+      // peak, because flux[i] > flux[i+1] fails.
+      beatsnap::FluxTrack t = track;
+      t.flux = {0.0f, 1.0f, 1.0f};
+      const std::vector<float> thr{0.0f, 0.0f, 0.0f};
+      check(beatsnap::pickOnsets(t, thr, 0.0f).empty(),
+            "pickOnsets: the right-hand neighbour test is strict, so a trailing plateau is not a peak");
+    }
+    {
+      // The threshold test is strict too: flux[i] must be GREATER than the
+      // threshold, not equal to it.
+      beatsnap::FluxTrack t = track;
+      t.flux = {0.0f, 5.0f, 0.0f};
+      const std::vector<float> thr{0.0f, 5.0f, 0.0f};
+      check(beatsnap::pickOnsets(t, thr, 0.0f).empty(),
+            "pickOnsets: a sample exactly equal to its threshold is NOT an onset");
+    }
+
+    // Two peaks, and the merge that collapses them.
+    {
+      beatsnap::FluxTrack t = track;
+      t.flux = {0.0f, 5.0f, 0.0f, 5.0f, 0.0f};
+      const std::vector<float> thr{0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+
+      const std::vector<double> both = beatsnap::pickOnsets(t, thr, 500.0f);
+      check(both.size() == 2, "pickOnsets: two clear peaks yield two onsets");
+      check(both.size() == 2 && both[0] == 0.25 + 0.5 && both[1] == 3.0 * 0.25 + 0.5,
+            "pickOnsets: an onset's time is i*hopSeconds + windowSeconds");
+
+      // tol = scale/1000 = 0.5, and the two onsets are exactly 0.5 apart, so
+      // `next - last >= tol` KEEPS the second one. Equality is kept.
+      check(both.size() == 2,
+            "pickOnsets: an onset exactly one tolerance after the last is KEPT (the test is >=)");
+
+      // tol = 1.0 now, so the second onset is closer than the tolerance and
+      // collapses onto the FIRST.
+      const std::vector<double> merged = beatsnap::pickOnsets(t, thr, 1000.0f);
+      check(merged.size() == 1, "pickOnsets: two onsets inside the tolerance collapse into one");
+      check(merged.size() == 1 && merged[0] == 0.25 + 0.5,
+            "pickOnsets: the merge keeps the FIRST of the collapsed pair");
+
+      // A negative scale makes the tolerance zero, so nothing is merged away.
+      const std::vector<double> unmerged = beatsnap::pickOnsets(t, thr, -100.0f);
+      check(unmerged.size() == 2,
+            "pickOnsets: a negative scale clamps the tolerance to zero, so both onsets survive");
+    }
+  }
+
   if (failures == 0) std::printf("ALL RECOVERED BEATSNAP MATHS VERIFIED (%d checks)\n", passes);
   else std::printf("%d FAILURES out of %d checks\n", failures, passes + failures);
   return failures == 0 ? 0 : 1;

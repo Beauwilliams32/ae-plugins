@@ -7,10 +7,8 @@
 // re-checks each one against BeatSnap's own instructions, which is what makes this
 // a recovery rather than a copy of a copy.
 //
-// BeatSnap's own onset detection follows below. It is NOT shared with any other
-// bundle — `computeFlux`, `pickOnsets`, `detectOnsets` and `renderValues` exist
-// only in BeatSnap.plugin — so each one was transcribed from this bundle's own
-// instructions, with the listing quoted above each body as the evidence.
+// Nothing else from this bundle is here: BeatSnap's own onset detection is not
+// recovered yet, and inventing it would be worse than leaving it out.
 
 #include "beatsnap.h"
 
@@ -363,6 +361,81 @@ FluxTrack computeFlux(const float* samples, size_t n, const OnsetConfig& config)
     magCur.swap(magPrev);
   }
   return track;
+}
+// ---------------------------------------------------------------------------
+// pickOnsets(const FluxTrack&, const vector<float>&, float)
+//
+// __ZN8beatsnap10pickOnsetsERKNS_9FluxTrackERKNSt3__16vectorIfNS3_9allocatorIfEEEEf, 136 instrs
+//
+//   ldp x9, x8, [x0] / sub x8, x8, x9 / asr x9, x8, #2
+//   cmp x9, #0x3 / b.lo ret              ; flux.size() < 3 -> empty
+//   ldp x11, x10, [x1] / sub x10, x10, x11
+//   cmp x10, x8 / b.ne ret               ; thresholds.size() must MATCH
+//
+// The two sizes are compared as BYTE counts, which is the same test.
+//
+// The peak test is ASYMMETRIC — the left neighbour is `>=` and the right
+// neighbour is `>`, so a plateau picks its LAST sample:
+//
+//   ldr s0, [x11, #0x4]   ; flux[i]
+//   ldr s1, [x10, #0x4]   ; thresholds[i]
+//   fcmp s0, s1 / b.ls skip    ; flux[i] >  thresholds[i]   (strict)
+//   ldr s1, [x9, x8, lsl #2]; flux[i-1]
+//   fcmp s0, s1 / b.mi skip    ; flux[i] >= flux[i-1]      (NOT strict)
+//   ldr s1, [x8, #0x8]     ; flux[i+1]
+//   fcmp s0, s1 / b.ls skip    ; flux[i] >  flux[i+1]       (strict)
+//
+// The time of an onset is the frame index scaled by the hop, plus the window:
+//
+//   ucvtf d0, x27 / ldp d1, d2, [x21, #0x18] / fmadd d0, d0, d1, d2
+//
+// i.e. `i * hopSeconds + windowSeconds`.
+//
+// The CANDIDATE list is filled through
+//
+//   bl __ZZNSt3__16vectorIdNS_9allocatorIdEEE12emplace_backIJdEEERdDpOT_ENKUlvE0_clEv
+//
+// which is `emplace_back<double>(double&&)` — a temporary. The RESULT list is
+// filled through the `double const&` overload of the same name, which is what
+// a range-for over a `const` vector of doubles produces:
+//
+//   bl __ZZNSt3__16vectorIdNS_9allocatorIdEEE12emplace_backIJRKdEEERdDpOT_ENKUlvE0_clEv
+//
+// The merge, with the tolerance in milliseconds:
+//
+//   fcvt d0, s8 / fdiv d0, d0, d1     ; scale / 1000.0
+//   movi.2d v1, #0                    ; the divisor register is reused as 0.0
+//   fmaxnm d8, d0, d1                 ; tol = max(scale / 1000, 0.0)
+//   fmov d0, x8                       ; last = -1e18
+//   fsub d2, d1, d0 / fcmp d2, d8 / b.lt skip   ; next - last >= tol
+//
+// `last` is updated ONLY when a candidate is KEPT, so two onsets closer
+// together than the tolerance collapse onto the FIRST of them.
+// ---------------------------------------------------------------------------
+std::vector<double> pickOnsets(const FluxTrack& track, const std::vector<float>& thresholds,
+                               float scale) {
+  std::vector<double> result;
+  const std::vector<float>& flux = track.flux;
+  if (flux.size() < 3) return result;
+  if (thresholds.size() != flux.size()) return result;
+
+  std::vector<double> candidates;
+  for (size_t i = 1; i + 1 < flux.size(); ++i) {
+    const float v = flux[i];
+    if (!(v > thresholds[i])) continue;
+    if (!(v >= flux[i - 1])) continue;
+    if (!(v > flux[i + 1])) continue;
+    candidates.push_back(static_cast<double>(i) * track.hopSeconds + track.windowSeconds);
+  }
+
+  const double tol = std::fmax(static_cast<double>(scale) / 1000.0, 0.0);
+  double last = -1e18;
+  for (const double t : candidates) {
+    if (t - last < tol) continue;
+    result.push_back(t);
+    last = t;
+  }
+  return result;
 }
 
 }  // namespace beatsnap
