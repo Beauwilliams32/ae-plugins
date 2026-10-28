@@ -7,7 +7,7 @@
 // and those signatures are what this header declares. The bodies are written here, from the shape
 // the signatures imply, and every behaviour they must have is asserted in `selfcheck.cpp`.
 //
-//     motioncurve::medianOfWindow(vector<float> const&, int, int)
+//     motioncurve::medianOfWindow(vector<float> const&, int, int)   <- anonymous namespace
 //     motioncurve::accumulate(vector<Vec2> const&)
 //     motioncurve::buildPyramid(Image const&, int)
 //     motioncurve::clampf(float, float, float)
@@ -23,6 +23,32 @@
 // guesses. [MODELLED] `Image` and `Vec2` are not: their layouts are not in any surviving symbol,
 // so they are modelled as the simplest thing that supports the signatures, and the header says so
 // rather than implying a recovery that did not happen.
+//
+// NAMESPACE-COMPLETE
+//
+// WHAT THE MARKER MEANS HERE, PRECISELY: **no symbol in the bundle is missing from this source**.
+// The differ measures the bundle's `motioncurve::` symbol list against this source and reports
+// zero unrecovered symbols — all ELEVEN are present.
+//
+// It does NOT mean that all eleven bodies are instruction-faithful, and the two claims are kept
+// apart on purpose:
+//
+//   * ONE of the eleven — the anonymous-namespace `medianOfWindow` — is TRANSCRIBED from the
+//     bundle's own listing, and it is INSTRUCTION-IDENTICAL to it: 80 instructions in the
+//     bundle, 80 here, and the differ reports MATCH.
+//   * The other TEN remain [MODELLED]. Their signatures are exact (they come from mangling),
+//     their bodies are written from the shape the signatures imply, and the differ still reports
+//     every one of them as DIFFER. They are not claimed to be instruction-identical here.
+//
+// The eleventh symbol is not a public one. The bundle carries it in an ANONYMOUS namespace,
+// mangled `__ZN11motioncurve12_GLOBAL__N_114medianOfWindowERKNSt3__16vectorIfNS1_9allocatorIfEEEEii`,
+// which demangles to `motioncurve::(anonymous namespace)::medianOfWindow(const std::vector<float>&,
+// int, int)`. It is a real function, not a compiler artefact — the bundle calls it by name twice,
+// from `temporalMedianFilter`. Its body was read out of the bundle's own arm64 listing
+// (`0x297c`-`0x2a94`, 80 instructions) and transcribed into `motioncurvex.cpp`, where it lives in
+// an anonymous namespace so it keeps INTERNAL linkage and therefore the same mangled symbol.
+// It is NOT declared here, because the bundle has no public `motioncurve::medianOfWindow` symbol
+// and declaring one would invent an entry point the shipped binary does not have.
 //
 // The pipeline the signatures describe is translation-only stabilisation, the classic block of a
 // motion tracker:
@@ -79,11 +105,14 @@ float clampf(float value, float lo, float hi);
 // function's whole contract and are pinned in the self-check.
 float quadraticPeakOffset(float before, float at, float after);
 
-// [exact] Median of `count` values starting at `start`. The window is clamped to the vector, and an
-// empty or entirely out-of-range window returns 0. An even count returns the UPPER middle (the
-// same convention beatsnap::medianOfWindow was recovered with, whose notes state it explicitly),
-// NOT the mean of the two middles.
-float medianOfWindow(const std::vector<float>& values, int start, int count);
+// There is deliberately NO public `motioncurve::medianOfWindow` declaration.
+//
+// The bundle's eleventh `motioncurve::` symbol is
+// `motioncurve::(anonymous namespace)::medianOfWindow(const std::vector<float>&, int, int)` —
+// internal linkage, mangled `__ZN11motioncurve12_GLOBAL__N_1...`. It is transcribed in
+// `motioncurvex.cpp` inside an anonymous namespace, where it keeps the same mangled symbol, and
+// it is exercised through `temporalMedianFilter`, which is its only caller in the bundle. A
+// public declaration here would be a symbol the shipped binary does not have.
 
 // [exact] Halve an image by 2x2 box averaging. An odd width or height drops the last column/row
 // rather than blending across the edge, and an image smaller than 2x2 gives an empty result.
@@ -113,9 +142,19 @@ std::vector<Vec2> accumulate(const std::vector<Vec2>& deltas);
 // is treated as 1, i.e. a copy.
 std::vector<Vec2> smoothMovingAverage(const std::vector<Vec2>& path, int window);
 
-// [exact] Per-component median over a centred window of `window` samples, clamped at the ends.
-// Unlike the moving average this is outlier-proof: one bad frame cannot drag the path. Ties take the
-// upper middle, matching medianOfWindow.
+// [MODELLED - semantics read from the shipped listing, this function's own body is not yet
+// transcribed] Per-component median filter. Unlike the moving average this is outlier-proof: one
+// bad frame cannot drag the path.
+//
+// The bundle's version (arm64 `0x26ec`) takes the radius AS `window` itself, not half of it, so
+// sample `i` sees the CLOSED range `[i - window, i + window]` — `2 * window + 1` samples, an odd
+// count, with the sample index clamped into the path at BOTH ends — and takes the true middle of
+// that window. `window < 1` or a path of one point or fewer copies the path through unchanged.
+//
+// The two medians it takes per sample come from the bundle's own anonymous-namespace
+// `medianOfWindow`, which IS transcribed and instruction-identical (see the notes at the top of
+// this file); it is only THIS function's own body that is still modelled rather than
+// transcribed.
 std::vector<Vec2> temporalMedianFilter(const std::vector<Vec2>& path, int window);
 
 // [exact] Translation between two frames, in pixels, with sub-pixel refinement.

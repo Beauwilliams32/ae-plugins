@@ -12,6 +12,91 @@
 
 namespace motioncurve {
 
+// ---------------------------------------------------------------------------
+// [RECOVERED - transcribed from the shipped bundle's arm64 listing]
+//
+// The eleventh `motioncurve::` symbol in the bundle lives in an ANONYMOUS namespace, so it
+// has no name a caller can spell. Its mangled symbol is
+//
+//   __ZN11motioncurve12_GLOBAL__N_114medianOfWindowERKNSt3__16vectorIfNS1_9allocatorIfEEEEii
+//
+// which demangles to `motioncurve::(anonymous namespace)::medianOfWindow(const std::vector<float>&,
+// int, int)`. It is a REAL source-level function, not a compiler artefact: the bundle calls
+// it by name, twice, from `temporalMedianFilter` (arm64 `0x285c` and `0x2870`).
+//
+// Read from: `/tmp/ae/ae05g/mcx-arm64.asm`, the `otool -tV -arch arm64` listing of
+// `/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/MotionCurveX.plugin/
+// Contents/MacOS/MotionCurveX`. The body is 80 arm64 instructions at `0x297c`-`0x2a94`
+// (the x86_64 listing carries the same body at `0x29b0`).
+//
+// What the listing says, instruction by instruction:
+//   * `orr w24, w8, w2, lsl #1` with `w8 = 1` - the buffer is reserved with
+//     `2 * radius + 1` ELEMENTS, computed in 32-bit unsigned arithmetic. That is exactly
+//     the number of samples the loop below pushes, so the buffer never has to grow.
+//   * `sub w21, w21, w20` (start = `centre - radius`) and `add w22, w20, w21` (the exit
+//     bound = `centre + radius`). The body PUSHES a sample and only then compares
+//     (`cmp w21, w22` / `b.lt` at `0x2a20`), so the window is the CLOSED range
+//     `[centre - radius, centre + radius]` - `2 * radius + 1` samples, an odd count, and
+//     the median is the true middle of it. Reading the exit test as a pre-test loop
+//     instead would give `2 * radius` samples and the wrong answer; the shipped binary
+//     was consulted to settle that (see RECOVERY-NOTES.md).
+//   * `bic w8, w21, w21, asr #31` followed by `csel w8, w20, w8, lt` - the sample index
+//     is `min(size - 1, max(0, i))`: clamped to the vector at BOTH ends, so a window
+//     running off the left repeats the first sample and one running off the right
+//     repeats the last.
+//   * `cmp x2, x1` / `b.eq` before the `__nth_element` call - `nth_element` is only
+//     called when the window is non-empty (for an empty window `begin + size/2` is
+//     `end`, and the call is skipped).
+//   * `asr x8, x8, #3` - the median index is `size / 2`. With `2 * radius + 1` samples
+//     that is the exact middle; the shipped code never has an even window to break a
+//     tie in, so no upper/lower convention is observable here.
+//
+// The window is built into a fresh `std::vector<float>` rather than being selected in
+// place: the listing allocates the buffer (`__Znwm`), keeps the samples in it, and
+// partitions that buffer with `std::__nth_element`.
+// ---------------------------------------------------------------------------
+namespace {
+
+float medianOfWindow(const std::vector<float>& values, int centre, int radius) {
+  const int size = static_cast<int>(values.size());
+
+  std::vector<float> window;
+  // `2 * radius + 1` in 32-bit unsigned arithmetic, exactly as the bundle computes it.
+  window.reserve(static_cast<size_t>(1u | (static_cast<unsigned int>(radius) << 1)));
+
+  const int end = centre + radius;
+  const int start = centre - radius;
+  const int last = size - 1;
+
+  // The closed range `[centre - radius, centre + radius]` - `2 * radius + 1` samples.
+  //
+  // The bundle's loop is a DO-WHILE: it PUSHES a sample and only then tests the exit
+  // condition (`cmp w21, w22` / `b.lt` at `0x2a20`), so the window is closed at BOTH ends
+  // and always holds at least one sample. A pre-test loop would take `2 * radius`
+  // samples instead of `2 * radius + 1` and the wrong median; the shipped binary was
+  // consulted to settle that (see RECOVERY-NOTES.md).
+  int i = start;
+  do {
+    // The index is signed in the bundle (`add x8, x9, w8, sxtw #2`), so a clamp of -1
+    // reads one float BEFORE the buffer rather than at a huge offset. The bundle's own
+    // select is `cmp last, clamped` / `csel clamped, last, clamped, lt`, which is
+    // `std::min(clamped, last)` and NOT `std::min(last, clamped)` - the operand order
+    // shows up in the instruction stream, and `std::min` is not commutative in source.
+    const int index = std::min(std::max(0, i), last);
+    window.push_back(*(values.begin() + index));
+    if (i >= end) break;
+    ++i;
+  } while (true);
+
+  const auto middle = window.begin() + static_cast<std::ptrdiff_t>(window.size() / 2);
+  if (middle != window.end()) {
+    std::nth_element(window.begin(), middle, window.end());
+  }
+  return window[window.size() / 2];
+}
+
+}  // namespace
+
 float clampf(float value, float lo, float hi) {
   // The fleet's recovered idiom, not a min/max pair: with lo > hi this returns `lo`, which is what
   // the transcribed copies do (lutblend's self-check pins the inverted case for exactly that reason).
@@ -28,32 +113,6 @@ float quadraticPeakOffset(float before, float at, float after) {
   if (!(curvature > 1e-12f)) return 0.0f;
   const float offset = 0.5f * (before - after) / curvature;
   return clampf(offset, -0.5f, 0.5f);
-}
-
-// The shipped bundle carries this one in an ANONYMOUS namespace
-// (`motioncurve::(anonymous namespace)::medianOfWindow`), so the internal copy lives there and the
-// public entry point below delegates to it. That is not cosmetic: the codegen differ matches on the
-// demangled symbol, and an internal-linkage copy is what the original had.
-namespace {
-
-float medianOfWindowInternal(const std::vector<float>& values, int start, int count) {
-  if (values.empty() || count <= 0) return 0.0f;
-  // `start` is clamped into the vector FIRST, then `count` elements are taken from there — so a
-  // negative start reads from the beginning rather than returning nothing.
-  const int size = static_cast<int>(values.size());
-  const int begin = std::min(std::max(0, start), size);
-  const int end = std::min(size, begin + count);
-  if (end <= begin) return 0.0f;
-  std::vector<float> window(values.begin() + begin, values.begin() + end);
-  std::sort(window.begin(), window.end());
-  // UPPER middle for an even count, as the recovered beatsnap::medianOfWindow does: count/2.
-  return window[window.size() / 2];
-}
-
-}  // namespace
-
-float medianOfWindow(const std::vector<float>& values, int start, int count) {
-  return medianOfWindowInternal(values, start, count);
 }
 
 Image downsample2x(const Image& in) {
@@ -171,23 +230,32 @@ std::vector<Vec2> smoothMovingAverage(const std::vector<Vec2>& path, int window)
 }
 
 std::vector<Vec2> temporalMedianFilter(const std::vector<Vec2>& path, int window) {
-  std::vector<Vec2> out(path.size());
-  const int n = static_cast<int>(path.size());
-  if (n == 0) return out;
-  const int half = std::max(0, (std::max(1, window) - 1) / 2);
-  std::vector<float> xs;
-  std::vector<float> ys;
-  for (int i = 0; i < n; ++i) {
-    const int begin = std::max(0, i - half);
-    const int end = std::min(n - 1, i + half);
-    xs.clear();
-    ys.clear();
-    for (int j = begin; j <= end; ++j) {
-      xs.push_back(path[static_cast<size_t>(j)].x);
-      ys.push_back(path[static_cast<size_t>(j)].y);
-    }
-    out[static_cast<size_t>(i)] = Vec2{medianOfWindowInternal(xs, 0, static_cast<int>(xs.size())),
-                                       medianOfWindowInternal(ys, 0, static_cast<int>(ys.size()))};
+  // [RECOVERED - read from the shipped listing, arm64 `0x26ec`, 164 instructions]
+  //
+  // The bundle's first two tests are `cmp w1, #1; b.lt` (a window below 1) and `cmp x27, #1;
+  // b.hi` (fewer than two samples). Either one copies the path straight through: the
+  // listing allocates a buffer of the path's own size and `memcpy`s it.
+  if (window < 1 || path.size() <= 1) return path;
+
+  // The bundle then de-interleaves the path into two zeroed `std::vector<float>`s, one per
+  // axis, and median-filters each of them INDEPENDENTLY.
+  const size_t n = path.size();
+  std::vector<float> xs(n, 0.0f);
+  std::vector<float> ys(n, 0.0f);
+  for (size_t i = 0; i < n; ++i) {
+    xs[i] = path[i].x;
+    ys[i] = path[i].y;
+  }
+
+  // The radius handed to the helper is the `window` ARGUMENT ITSELF, not half of it, so
+  // sample `i` sees the closed range `[i - window, i + window]` clamped to the path -
+  // `2 * window + 1` samples rather than `window`. The listing's two `bl` calls at
+  // `0x285c` and `0x2870` pass exactly that: `x1 = i`, `x2 = window`.
+  std::vector<Vec2> out(n);
+  for (size_t i = 0; i < n; ++i) {
+    const int centre = static_cast<int>(i);
+    out[i].x = medianOfWindow(xs, centre, window);
+    out[i].y = medianOfWindow(ys, centre, window);
   }
   return out;
 }

@@ -7,7 +7,9 @@
 
 #include "motioncurvex.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <vector>
 
@@ -68,6 +70,68 @@ motioncurve::Image shifted(const motioncurve::Image& src, int dx, int dy) {
   return out;
 }
 
+// An INDEPENDENT reference implementation of the rule the bundle's anonymous-namespace
+// `medianOfWindow` implements: the window is the CLOSED range [centre - radius, centre + radius]
+// (so `2 * radius + 1` samples, an odd count), the sample index is clamped into the vector at
+// BOTH ends (the edge sample is REPEATED, not dropped), and the median is the true middle of the
+// window.
+//
+// It is written with `std::sort` rather than `std::nth_element` so that it shares no code with
+// the implementation under test: a reference that used the same algorithm could agree with a
+// wrong implementation for the wrong reason. It is only ever used with `radius >= 1`, which is
+// the range the shipped helper is defined over.
+float referenceMedianOfWindow(const std::vector<float>& values, int centre, int radius) {
+  const int last = static_cast<int>(values.size()) - 1;
+  std::vector<float> window;
+  for (int i = centre - radius; i <= centre + radius; ++i) {
+    int index = i < 0 ? 0 : i;
+    if (index > last) index = last;
+    window.push_back(values[static_cast<size_t>(index)]);
+  }
+  std::sort(window.begin(), window.end());
+  return window[window.size() / 2];
+}
+
+// The same rule applied to a whole path, per axis, which is exactly how the bundle's
+// `temporalMedianFilter` uses the helper.
+std::vector<motioncurve::Vec2> referenceTemporalMedianFilter(
+    const std::vector<motioncurve::Vec2>& path, int window) {
+  if (window < 1 || path.size() <= 1) return path;
+  const int last = static_cast<int>(path.size()) - 1;
+  std::vector<motioncurve::Vec2> out(path.size());
+  for (size_t i = 0; i < path.size(); ++i) {
+    std::vector<float> xs;
+    std::vector<float> ys;
+    for (int j = static_cast<int>(i) - window; j <= static_cast<int>(i) + window; ++j) {
+      int index = j < 0 ? 0 : j;
+      if (index > last) index = last;
+      xs.push_back(path[static_cast<size_t>(index)].x);
+      ys.push_back(path[static_cast<size_t>(index)].y);
+    }
+    std::sort(xs.begin(), xs.end());
+    std::sort(ys.begin(), ys.end());
+    out[i].x = xs[xs.size() / 2];
+    out[i].y = ys[ys.size() / 2];
+  }
+  return out;
+}
+
+// A deterministic pseudo-random source, so the randomised comparison below is reproducible and
+// does not depend on the platform's `rand()`.
+class Lcg {
+ public:
+  explicit Lcg(uint32_t seed) : state_(seed) {}
+  uint32_t next() {
+    state_ = state_ * 1664525u + 1013904223u;
+    return state_;
+  }
+  float unit() { return static_cast<float>(next() >> 8) / 16777216.0f; }  // [0, 1)
+  int below(int n) { return static_cast<int>(next() % static_cast<uint32_t>(n)); }
+
+ private:
+  uint32_t state_;
+};
+
 }  // namespace
 
 int main() {
@@ -94,18 +158,92 @@ int main() {
   const float extreme = motioncurve::quadraticPeakOffset(0.0f, 100.0f, 100.001f);
   check(extreme >= -0.5f && extreme <= 0.5f, "the offset is always inside [-0.5, 0.5]");
 
-  std::printf("motioncurve::medianOfWindow\n");
+  std::printf("motioncurve::(anonymous namespace)::medianOfWindow, through temporalMedianFilter\n");
   {
-    const std::vector<float> odd{5.0f, 1.0f, 9.0f, 3.0f, 7.0f};
-    checkNear(motioncurve::medianOfWindow(odd, 0, 5), 5.0f, 0.0f, "odd count: the middle element");
-    checkNear(motioncurve::medianOfWindow(odd, 0, 3), 5.0f, 0.0f, "a window from the start");
-    checkNear(motioncurve::medianOfWindow(odd, 2, 3), 7.0f, 0.0f, "a window from the middle");
-    const std::vector<float> even{1.0f, 2.0f, 3.0f, 4.0f};
-    checkNear(motioncurve::medianOfWindow(even, 0, 4), 3.0f, 0.0f, "even count takes the UPPER middle, not the mean");
-    checkNear(motioncurve::medianOfWindow(odd, 10, 3), 0.0f, 0.0f, "a window past the end is 0");
-    checkNear(motioncurve::medianOfWindow(odd, -5, 2), 5.0f, 0.0f, "a negative start reads from the beginning (window {5,1} -> upper middle 5)");
-    checkNear(motioncurve::medianOfWindow({}, 0, 3), 0.0f, 0.0f, "an empty vector is 0");
-    checkNear(motioncurve::medianOfWindow(odd, 0, 0), 0.0f, 0.0f, "a zero count is 0");
+    // The bundle's eleventh symbol is INTERNAL: there is no public `motioncurve::medianOfWindow`
+    // to call, so every check below goes through `temporalMedianFilter`, which is the helper's
+    // only caller in the bundle.
+    //
+    // The values are chosen so that the two plausible readings of the window DISAGREE. The
+    // window is CLOSED - `2 * radius + 1` samples - and the median is the true middle of it.
+    const std::vector<float> v{10.0f, 90.0f, 50.0f, 20.0f, 80.0f, 5.0f};
+    std::vector<motioncurve::Vec2> path;
+    for (float x : v) path.push_back(motioncurve::Vec2{x, 0.0f});
+
+    // radius 1 about sample 2 is the closed window {90, 50, 20} -> 50. A half-open window of
+    // two samples would take the UPPER middle of {90, 50} -> 90, so this distinguishes them.
+    const std::vector<motioncurve::Vec2> w1 = motioncurve::temporalMedianFilter(path, 1);
+    checkNear(w1[2].x, 50.0f, 0.0f, "the window is closed: three samples, the true middle");
+    checkNear(referenceMedianOfWindow(v, 2, 1), 50.0f, 0.0f,
+              "the independent reference agrees on the same window");
+
+    // The radius is the `window` ARGUMENT ITSELF, not half of it: a radius of zero would leave
+    // the spike in place, a radius of one removes it.
+    std::vector<motioncurve::Vec2> spike(5, motioncurve::Vec2{0.0f, 0.0f});
+    spike[2] = motioncurve::Vec2{100.0f, -100.0f};
+    const std::vector<motioncurve::Vec2> filtered = motioncurve::temporalMedianFilter(spike, 1);
+    checkNear(filtered[2].x, 0.0f, 0.0f, "the radius is the window itself, not half of it");
+    checkNear(filtered[2].y, 0.0f, 0.0f, "and the two axes are filtered independently");
+
+    // The window really holds 2*window+1 samples. radius 2 about sample 2 of
+    // {90, 80, 10, 20, 30} is the closed window of five -> 30; a window of four would give the
+    // upper middle of {90, 80, 10, 20} -> 80.
+    std::vector<motioncurve::Vec2> wide;
+    for (float x : {90.0f, 80.0f, 10.0f, 20.0f, 30.0f, 5.0f, 5.0f, 5.0f}) {
+      wide.push_back(motioncurve::Vec2{x, x});
+    }
+    const std::vector<motioncurve::Vec2> w2 = motioncurve::temporalMedianFilter(wide, 2);
+    checkNear(w2[2].x, 30.0f, 0.0f, "a window of two holds five samples, not four");
+
+    // Both ends of the path CLAMP: the edge sample is REPEATED, not dropped. At sample 0 the
+    // window is {-1, 0, 1} -> {10, 10, 90} -> 10; dropping the out-of-range sample would give
+    // the upper middle of {10, 90} -> 90.
+    checkNear(w1[0].x, 10.0f, 0.0f, "the left end clamps by repeating the first sample");
+    // At the last sample the window is {4, 5, 6} -> {80, 5, 5} -> 5; dropping would give 80.
+    checkNear(w1[5].x, 5.0f, 0.0f, "the right end clamps by repeating the last sample");
+
+    // A window below 1, and a path of one point or fewer, copy the path straight through.
+    const std::vector<motioncurve::Vec2> zero = motioncurve::temporalMedianFilter(path, 0);
+    check(zero.size() == path.size() && zero[0].x == path[0].x && zero[3].x == path[3].x,
+          "a window of zero copies the path through");
+    const std::vector<motioncurve::Vec2> single{motioncurve::Vec2{7.0f, 8.0f}};
+    const std::vector<motioncurve::Vec2> one = motioncurve::temporalMedianFilter(single, 3);
+    check(one.size() == 1 && one[0].x == 7.0f && one[0].y == 8.0f, "a path of one point is copied");
+    check(motioncurve::temporalMedianFilter({}, 3).empty(), "an empty path stays empty");
+
+    // The implementation and the INDEPENDENT reference agree bit-for-bit over a table of cases.
+    const int windows[] = {1, 2, 3, 5};
+    bool tableAgrees = true;
+    for (int window : windows) {
+      const std::vector<motioncurve::Vec2> got = motioncurve::temporalMedianFilter(path, window);
+      const std::vector<motioncurve::Vec2> want = referenceTemporalMedianFilter(path, window);
+      if (got.size() != want.size()) { tableAgrees = false; break; }
+      for (size_t i = 0; i < got.size(); ++i) {
+        if (got[i].x != want[i].x || got[i].y != want[i].y) { tableAgrees = false; break; }
+      }
+    }
+    check(tableAgrees, "the implementation matches the independent reference over a table");
+
+    // ...and over a randomised sweep, bit-for-bit.
+    Lcg rng(20261028u);
+    bool sweepAgrees = true;
+    int mismatches = 0;
+    for (int trial = 0; trial < 400; ++trial) {
+      const int n = 1 + rng.below(40);
+      const int window = 1 + rng.below(9);
+      std::vector<motioncurve::Vec2> p;
+      for (int i = 0; i < n; ++i) {
+        p.push_back(motioncurve::Vec2{rng.unit() * 100.0f - 50.0f, rng.unit() * 100.0f - 50.0f});
+      }
+      const std::vector<motioncurve::Vec2> got = motioncurve::temporalMedianFilter(p, window);
+      const std::vector<motioncurve::Vec2> want = referenceTemporalMedianFilter(p, window);
+      if (got.size() != want.size()) { sweepAgrees = false; break; }
+      for (size_t i = 0; i < got.size(); ++i) {
+        if (got[i].x != want[i].x || got[i].y != want[i].y) { ++mismatches; sweepAgrees = false; }
+      }
+    }
+    check(sweepAgrees, "the implementation matches the independent reference over 400 random paths");
+    check(mismatches == 0, "and not one sample differed");
   }
 
   std::printf("motioncurve::downsample2x / buildPyramid\n");
