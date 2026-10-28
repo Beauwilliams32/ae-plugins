@@ -21,7 +21,7 @@ Eleven authored functions. **Seven recovered**, four identified only.
 | `computeFlux` | 416 | Recovered — differs, 421 here (see below) |
 | `renderValues` | 190 | **Identified only** |
 | `pickOnsets` | 136 | Recovered — differs in 37 of 136 positions (see below) |
-| `detectOnsets` | 47 | **Identified only** — but fully read; see below |
+| `detectOnsets` | 47 | Recovered — **instruction-identical** |
 
 `test/beatsnap.test.mjs` asserts that table against `tools/codegen-diff.mjs`, so
 recovering another function fails the test until this file is updated.
@@ -45,7 +45,7 @@ The residual differences are clang emission, not transcription: the twiddle
 recurrence in `fftRadix2` is reassociated, and `downmixToMono` emits two independent
 instructions in the other order.
 
-## `detectOnsets` — the architecture, recovered without transcribing it
+## `detectOnsets` — the architecture of the effect, recovered exactly
 
 47 instructions, read in full. It is a three-call pipeline and it is the whole
 architecture of this effect:
@@ -70,9 +70,16 @@ Readings this gives, none of which required transcribing the callees:
   path: the locals are a `FluxTrack` and a `std::vector<float>`, so `FluxTrack`
   owns a vector, which is consistent with `computeFlux` being handed an sret.
 
-This is why the function is listed as identified-only: transcribing it would
-reference `computeFlux`, `pickOnsets` and the `FluxTrack` layout, none of which are
-recovered, and a stub of any of them would be invention.
+Now that the callees and the `FluxTrack` layout ARE recovered, the function can
+be transcribed rather than merely described — and it is the strongest result in
+this namespace after `medianOfWindow`: **the differ reports all 47 shipped
+instructions reproduced exactly.**
+
+The three config fields are read in the order medianWindow (`+0x1c`),
+thresholdScale (`+0x14`) and pickScale (`+0x18`), and the self-check pins that
+wiring rather than asserting it: a huge `pickScale` merges every onset into
+one, and a LOWER `thresholdScale` — which means a HIGHER threshold, because
+that ramp runs the other way — yields fewer onsets.
 
 ## `adaptiveThreshold` — what it actually computes
 

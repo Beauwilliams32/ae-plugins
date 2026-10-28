@@ -437,5 +437,29 @@ std::vector<double> pickOnsets(const FluxTrack& track, const std::vector<float>&
   }
   return result;
 }
+// ---------------------------------------------------------------------------
+// detectOnsets(const float*, size_t, const OnsetConfig&)
+//
+// __ZN8beatsnap12detectOnsetsEPKfmRKNS_11OnsetConfigE, 47 instrs
+//
+// The whole function is a three-call pipeline:
+//
+//   add x8, sp, #0x18 / bl beatsnap::computeFlux        ; FluxTrack at sp+0x18
+//   ldr w1, [x20, #0x1c]                                ; cfg.medianWindow
+//   ldr s0, [x20, #0x14]                                ; cfg.thresholdScale
+//   mov x8, sp / add x0, sp, #0x18 / bl beatsnap::adaptiveThreshold
+//   ldr s0, [x20, #0x18]                                ; cfg.pickScale
+//   add x0, sp, #0x18 / mov x1, sp / mov x8, x19 / bl beatsnap::pickOnsets
+//
+// `pickOnsets`'s result goes straight into the return slot (`mov x8, x19`),
+// so there is no copy and no conversion on the way out. The three config
+// fields are read in the order medianWindow, thresholdScale, pickScale.
+// ---------------------------------------------------------------------------
+std::vector<double> detectOnsets(const float* samples, size_t n, const OnsetConfig& config) {
+  FluxTrack track = computeFlux(samples, n, config);
+  std::vector<float> thresholds =
+      adaptiveThreshold(track.flux, config.medianWindow, config.thresholdScale);
+  return pickOnsets(track, thresholds, config.pickScale);
+}
 
 }  // namespace beatsnap

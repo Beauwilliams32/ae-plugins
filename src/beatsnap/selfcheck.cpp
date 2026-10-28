@@ -506,6 +506,64 @@ int main() {
     }
   }
 
+  std::printf("beatsnap::detectOnsets\n");
+  {
+    beatsnap::OnsetConfig cfg;
+    cfg.sampleRate = 48000.0;
+    cfg.fftSize = 64;
+    cfg.bandLoHz = 20.0f;
+    cfg.bandHiHz = 8000.0f;
+    cfg.thresholdScale = 100.0f;
+    cfg.pickScale = 0.0f;
+    cfg.medianWindow = 3;
+
+    // A null pointer and a silent signal both leave computeFlux's track empty,
+    // so the whole chain is empty.
+    check(beatsnap::detectOnsets(nullptr, 256, cfg).empty(),
+          "detectOnsets: a null sample pointer yields no onsets");
+    const std::vector<float> silence(256, 0.0f);
+    check(beatsnap::detectOnsets(silence.data(), silence.size(), cfg).empty(),
+          "detectOnsets: a silent signal yields no onsets");
+
+    // Two bursts, so there is something to find.
+    std::vector<float> burst(1024, 0.0f);
+    for (size_t i = 256; i < 320; ++i) burst[i] = 1.0f;
+    for (size_t i = 640; i < 704; ++i) burst[i] = 1.0f;
+
+    // THE CHAIN. The listing is a three-call pipeline, and this asserts the
+    // whole of it: the flux track, the threshold track built from the config's
+    // medianWindow and thresholdScale, and the pick that uses pickScale.
+    const beatsnap::FluxTrack track =
+        beatsnap::computeFlux(burst.data(), burst.size(), cfg);
+    const std::vector<float> thr =
+        beatsnap::adaptiveThreshold(track.flux, cfg.medianWindow, cfg.thresholdScale);
+    const std::vector<double> got = beatsnap::detectOnsets(burst.data(), burst.size(), cfg);
+    check(got == beatsnap::pickOnsets(track, thr, cfg.pickScale),
+          "detectOnsets: the result is exactly flux -> thresholds -> onsets");
+    check(got.size() == 2, "detectOnsets: two bursts produce two onsets");
+
+    // pickScale is the MERGE tolerance — the third argument to pickOnsets. A
+    // huge one collapses every onset into a single one, which is what proves
+    // the field is wired to the merge and not to something else.
+    beatsnap::OnsetConfig merged = cfg;
+    merged.pickScale = 100000.0f;  // a tolerance of 100 seconds
+    const std::vector<double> one = beatsnap::detectOnsets(burst.data(), burst.size(), merged);
+    check(one.size() == 1, "detectOnsets: a huge pickScale merges every onset into one");
+    check(one.size() == 1 && one[0] == got[0],
+          "detectOnsets: the merged onset is the FIRST of the set");
+
+    // thresholdScale is the OTHER sensitivity knob, and its ramp runs the other
+    // way: a HIGHER scale means a LOWER threshold. Scale 0 is the flat 5.0
+    // multiplier and rejects these bursts; scale 100 is the 1.4 multiplier and
+    // finds them. A source that had the ramp the right way round would fail
+    // this, which is the point.
+    beatsnap::OnsetConfig strict = cfg;
+    strict.thresholdScale = 0.0f;
+    const std::vector<double> fewer = beatsnap::detectOnsets(burst.data(), burst.size(), strict);
+    check(fewer.size() < got.size(),
+          "detectOnsets: a LOWER thresholdScale raises the threshold and yields fewer onsets");
+  }
+
   if (failures == 0) std::printf("ALL RECOVERED BEATSNAP MATHS VERIFIED (%d checks)\n", passes);
   else std::printf("%d FAILURES out of %d checks\n", failures, passes + failures);
   return failures == 0 ? 0 : 1;
