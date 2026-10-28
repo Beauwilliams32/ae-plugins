@@ -700,4 +700,43 @@ TempoAnalysis estimateTempoBpm(const OnsetEnvelope& envelope, float minBpm, floa
   return TempoAnalysis{bpmFloat, phase, confidence};
 }
 
+// ---------------------------------------------------------------------------
+// __ZN8beatgrid15analyzeBeatGridEPKfmdfffii, 57 instrs
+//
+// The listing (/tmp/ae/beatgrid.asm lines 1544-1601) says:
+//
+//   mov x8, sp / bl computeOnsetEnvelope   ; the envelope is built first
+//   ldp x0, x8, [sp] / cmp x0, x8 / b.eq    ; an EMPTY envelope
+//   fcmp s8, #0.0 / b.le                    ; fixedBpm > 0?
+//   mov.16b v0, v8 / bl estimatePhaseSeconds ; the fixed-tempo phase
+//   fmov s10, #1.00000000                   ; ... and a confidence of exactly 1
+//   mov w8, #0x999a / movk w8, #0x3f59      ; the 0.85 threshold scale
+//   bl estimateTempoBpm                     ; ... otherwise the tempo search
+//
+// The three argument registers are worth spelling out, because the ABI splits them:
+// the `double` sample rate takes d0, so the three floats arrive in s1, s2 and s3 and
+// the two ints in w4 and w5.
+//
+//     v8 = fixedBpm   v9 = maxBpm   v10 = minBpm
+//
+// so the tempo search is called as estimateTempoBpm(envelope, minBpm, maxBpm, 0.85f)
+// and the fixed branch as estimatePhaseSeconds(envelope, fixedBpm).
+//
+// The result is a three-float aggregate returned in v0/v1/v2: the bpm, the phase in
+// seconds and the confidence.
+// ---------------------------------------------------------------------------
+TempoAnalysis analyzeBeatGrid(const float* samples, size_t frames, double sampleRate,
+                               float minBpm, float maxBpm, float fixedBpm, int windowSize,
+                               int hopSize) {
+  const OnsetEnvelope envelope = computeOnsetEnvelope(samples, frames, sampleRate, windowSize,
+                                                       hopSize);
+  if (envelope.values.empty()) return TempoAnalysis{0.0f, 0.0f, 0.0f};
+
+  if (fixedBpm > 0.0f) {
+    return TempoAnalysis{fixedBpm, estimatePhaseSeconds(envelope, fixedBpm), 1.0f};
+  }
+
+  return estimateTempoBpm(envelope, minBpm, maxBpm, 0.85f);
+}
+
 }  // namespace beatgrid

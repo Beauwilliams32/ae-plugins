@@ -4,17 +4,23 @@
 // BeatGridRuler.plugin, not from source: the original C++ was destroyed on 2026-10-13
 // with no remote and no backup.
 //
-// INCOMPLETE — the beat maths and the tempo analysis are here; the host integration is not.
+// NAMESPACE-COMPLETE: every `beatgrid::` symbol in the bundle is transcribed, so this header is
+// a full reconstruction rather than a partial one. The last one to land was `analyzeBeatGrid`
+// (57 instructions, 2026-10-28), which is instruction-identical to the bundle. All twelve are
+// here; five compile instruction-identical and the other seven are one to seventy-five
+// instructions off, so treat the BEHAVIOUR (pinned by 95 self-check assertions) as the recovered
+// fact rather than the instruction stream.
+//
 //   recovered: clampf, isPowerOfTwo, downmixToMono (shared),
 //              subdivisionFactor, phaseSawtooth, phaseInLayerTime,
 //              OnsetEnvelope::frameTimeSeconds, estimatePhaseSeconds,
-//              generateBeatGrid, computeOnsetEnvelope, estimateTempoBpm
-//   outstanding: analyzeBeatGrid (57)
+//              generateBeatGrid, computeOnsetEnvelope, estimateTempoBpm,
+//              analyzeBeatGrid
 //   excluded: (anonymous namespace)::WriteMarkerGrid (811) — it takes
 //              AEGP_SuiteHandler& and _AEGPp_Stream**, which are Adobe SDK types, so it
 //              stays out of `src/` the way every other host integration does.
 //
-// THREE OF THE EIGHT ARE SHARED. `tools/dsp-duplication.mjs` reports this bundle as a
+// THREE OF THE TWELVE ARE SHARED. `tools/dsp-duplication.mjs` reports this bundle as a
 // carrier of `clampf`, `isPowerOfTwo` and `downmixToMono`, so those are the fleet's
 // code under this namespace, checked by divergence parity.
 

@@ -371,6 +371,63 @@ int main() {
     check(level.bpm == 0.0f, "a flat envelope finds no beat");
   }
 
+  std::printf("beatgrid::analyzeBeatGrid\n");
+  {
+    // The entry point works on AUDIO, so the self-check has to build a signal whose
+    // spectral flux has a beat in it: a click every 0.5 s at 48 kHz is 120 bpm.
+    // The analysis is 1024 samples at a 480-sample hop, so the envelope runs at
+    // 100 frames a second and the onsets land 50 frames apart.
+    const double sampleRate = 48000.0;
+    const int windowSize = 1024;
+    const int hopSize = 480;
+    const size_t frames = 192000;  // four seconds
+    std::vector<float> clicks(frames, 0.0f);
+    for (size_t click = 0; click < frames; click += 24000) {
+      for (size_t i = 0; i < 400 && click + i < frames; ++i) {
+        clicks[click + i] = std::sin(2.0 * 3.14159265358979323846 * 1000.0 *
+                                     static_cast<double>(i) / sampleRate) *
+                            std::exp(-static_cast<double>(i) / 60.0);
+      }
+    }
+
+    // The tempo search path: fixedBpm of 0 sends it to estimateTempoBpm.
+    const auto tempo = beatgrid::analyzeBeatGrid(clicks.data(), frames, sampleRate,
+                                                  60.0f, 180.0f, 0.0f, windowSize, hopSize);
+    checkNear(tempo.bpm, 120.0, 1.5, "clicks every 0.5 s come back as 120 bpm");
+    check(tempo.confidence > 0.5f && tempo.confidence <= 1.0f,
+          "the tempo search reports a high confidence");
+    check(tempo.phaseSeconds >= 0.0f && tempo.phaseSeconds < 0.5f,
+          "and a phase inside the beat period");
+
+    // A SLOWER beat: clicks every 0.6667 s is 90 bpm.
+    std::vector<float> slow(frames, 0.0f);
+    for (size_t click = 0; click < frames; click += 32000) {
+      for (size_t i = 0; i < 400 && click + i < frames; ++i) {
+        slow[click + i] = std::sin(2.0 * 3.14159265358979323846 * 1000.0 *
+                                   static_cast<double>(i) / sampleRate) *
+                          std::exp(-static_cast<double>(i) / 60.0);
+      }
+    }
+    const auto slower = beatgrid::analyzeBeatGrid(slow.data(), frames, sampleRate,
+                                                   60.0f, 180.0f, 0.0f, windowSize, hopSize);
+    checkNear(slower.bpm, 90.0, 1.5, "clicks every 0.667 s come back as 90 bpm");
+
+    // The fixed-tempo path: the bpm is the one asked for, and the confidence is
+    // EXACTLY one — the listing sets it with `fmov s10, #1.00000000`.
+    const auto fixed = beatgrid::analyzeBeatGrid(clicks.data(), frames, sampleRate,
+                                                  60.0f, 180.0f, 120.0f, windowSize, hopSize);
+    checkNear(fixed.bpm, 120.0, 0.0, "a fixed bpm is returned exactly");
+    checkNear(fixed.confidence, 1.0, 0.0, "and the fixed path's confidence is exactly one");
+    check(fixed.phaseSeconds >= 0.0f && fixed.phaseSeconds < 0.5f,
+          "the fixed path still reports a phase");
+
+    // The guard: an empty envelope gives all zeroes.
+    const auto empty = beatgrid::analyzeBeatGrid(nullptr, 0, sampleRate,
+                                                  60.0f, 180.0f, 0.0f, windowSize, hopSize);
+    check(empty.bpm == 0.0f && empty.phaseSeconds == 0.0f && empty.confidence == 0.0f,
+          "no samples gives all zeroes");
+  }
+
   std::printf("the shared DSP, read through this namespace's copy\n");
   {
     check(beatgrid::clampf(5.0f, 10.0f, 0.0f) == 10.0f, "clampf keeps the fleet's inverted-range behaviour");

@@ -7,7 +7,7 @@ unstripped.
 
 ## State
 
-Eleven of the twelve `beatgrid::` symbols are recovered; four are instruction-identical.
+All twelve `beatgrid::` symbols are recovered; five are instruction-identical.
 
 | Function | Instrs | State |
 |---|---|---|
@@ -22,7 +22,7 @@ Eleven of the twelve `beatgrid::` symbols are recovered; four are instruction-id
 | `estimateTempoBpm` | 578 | Recovered — **[partial]**, 503 here |
 | `estimatePhaseSeconds` | 138 | Recovered — **[partial]**, 135 here |
 | `generateBeatGrid` | 94 | Recovered — **[partial]**, 94 here |
-| `analyzeBeatGrid` | 57 | Identified only |
+| `analyzeBeatGrid` | 57 | Recovered — **identical** |
 
 `specs/BeatGridRuler.json` lists fourteen domain entries, of which two are `std::vector`
 member instantiations taking beatgrid types; the differ counts those under `std`, which is
@@ -316,7 +316,58 @@ The BEHAVIOUR is the same, and the self-check pins it: an impulse train at 0.5 s
 intervals comes back as 120 bpm with a confidence inside `[0, 1]`, the degenerate range
 returns exactly the requested bpm, and all five guards return all zeroes.
 
+## `analyzeBeatGrid` (57 instructions) — [exact]
+
+The entry point: build the envelope, then either take the tempo as given or search
+for it. Read in full from `/tmp/ae/beatgrid.asm` lines 1544–1601. **57 instructions
+here against the bundle's 57, and the differ reports them IDENTICAL** — this one is an
+exact recovery, not a paraphrase.
+
+The listing is short enough to transcribe line for line:
+
+```
+mov x8, sp / bl computeOnsetEnvelope   ; the envelope is built first
+ldp x0, x8, [sp] / cmp x0, x8 / b.eq    ; an EMPTY envelope -> all zeroes
+fcmp s8, #0.0 / b.le                    ; fixedBpm > 0?
+mov.16b v0, v8 / bl estimatePhaseSeconds ; the fixed-tempo phase
+fmov s10, #1.00000000                   ; ... and a confidence of exactly 1
+mov w8, #0x999a / movk w8, #0x3f59      ; the 0.85 threshold scale
+bl estimateTempoBpm                     ; ... otherwise the tempo search
+```
+
+Two details worth writing down:
+
+* **The argument registers are split by the ABI.** The `double` sample rate takes d0,
+  so the three floats arrive in **s1, s2 and s3** and the two ints in w4 and w5. The
+  listing shuffles them into `v8 = fixedBpm`, `v9 = maxBpm`, `v10 = minBpm` before the
+  calls, which is what makes the tempo call read
+  `estimateTempoBpm(envelope, minBpm, maxBpm, 0.85f)` — the registers are in the
+  opposite order from the C++ source, and getting that backwards would swap the bpm
+  range.
+* **The 0.85** is the float literal `0x3f59999a` — the threshold scale that
+  `estimateTempoBpm` multiplies the largest correlation peak by. It is the same
+  0.85 in the source, and it is hard-coded here rather than passed in.
+
+The result is a three-float aggregate returned in v0/v1/v2: the bpm, the phase in
+seconds and the confidence. The self-check drives it from real audio — a click every
+0.5 s at 48 kHz comes back as 120 bpm with a confidence above 0.5, a click every
+0.667 s comes back as 90 bpm, the fixed path returns exactly the bpm asked for with a
+confidence of exactly one, and an empty signal gives all zeroes.
+
 ## What is next
 
-`analyzeBeatGrid` (57) is the last one: the entry point that ties the envelope, the
-phase and the tempo search together. Everything else in the namespace is recovered.
+Nothing in this namespace. All twelve `beatgrid::` symbols are recovered and the
+differ reports **0 not implemented**.
+
+The one thing left is `(anonymous namespace)::WriteMarkerGrid` (811 instructions),
+which is **excluded on purpose** — it takes `AEGP_SuiteHandler&` and `_AEGPp_Stream**`,
+which are Adobe SDK types, so it belongs with the other host integrations and not in
+`src/`.
+
+Two things an integrator may want to act on:
+
+* `beatgrid::OnsetEnvelope::frameTimeSeconds` and `beatgrid::analyzeBeatGrid` are both
+  **instruction-identical** to the bundle. That may be worth a written reason for
+  raising `IDENTICAL_FLOOR` in `test/codegen.test.mjs`, which is integrator-owned.
+* `beatgrid::OnsetEnvelope` is now **instruction-identical** too — the struct's real
+  layout, the one `computeOnsetEnvelope` pinned, matches what the differ compares.
