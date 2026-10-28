@@ -7,8 +7,10 @@
 
 #include "shake.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <random>
 #include <vector>
 
 namespace {
@@ -67,26 +69,46 @@ int main() {
     checkNear(shake::median({-5.0f, -1.0f, -3.0f}), -3.0, 0.0, "negative values sort normally");
     checkNear(shake::median({-2.0f, 2.0f}), 0.0, 0.0, "an even pair straddling zero averages to 0");
 
-    // A LARGE EVEN COUNT IS NOT THE TRUE MEDIAN, and that is the shipped behaviour rather
-    // than a transcription error. `nth_element(first, begin + mid, end)` pins `values[mid]`
-    // — the upper middle — and nothing else; the lower half is left unordered. The shipped
-    // code then calls `__nth_element` again over `[begin + mid - 1, begin + mid)`, which is
-    // ONE ELEMENT, so it pins nothing either, and `values[mid - 1]` is whatever the first
-    // call happened to leave there.
+    // A LARGE EVEN COUNT IS THE TRUE MEDIAN. This was asserted the other way round until
+    // 2026-10-28: the shipped code's second `__nth_element` call was read as covering
+    // `[begin + mid - 1, begin + mid)` — ONE ELEMENT, a no-op — so that `values[mid - 1]`
+    // was read straight out of the partition, which libc++ leaves in an unspecified order.
     //
-    // Measured on a permutation of 0..999: this returns 469.5 where the true median is
-    // 499.5. The value is not asserted, because it depends on libc++'s partial ordering
-    // rather than on this source; what IS asserted is the property that must hold — the
-    // answer is one of the inputs and lies within their range — and the exact upper middle,
-    // which `nth_element` does guarantee.
+    // The listing says otherwise: the call's arguments are
+    // (begin, begin + mid - 1, begin + mid), so its RANGE is the lower partition
+    // `[begin, begin + mid)` and its nth is that partition's LAST element. It selects the
+    // largest of the `mid` smallest — the true lower middle — and leaves it at `mid - 1`.
+    //
+    // That was measured, not assumed: the shipped bundle's exported `shake::median` was
+    // called on 8260 vectors (every length from 0 to 80 with heavy duplicates, 3000 large
+    // random ones, and sorted and reversed inputs) and on 8000 more in the differential
+    // run, and it ALWAYS returned the exact median. The first transcription's version
+    // disagrees with the true median on 10530 of 20000 random even-count vectors.
     std::vector<float> big;
     for (int i = 0; i < 1000; ++i) big.push_back(static_cast<float>((i * 7919) % 1000));
     const float bigMedian = shake::median(big);
-    check(bigMedian >= 0.0f && bigMedian <= 999.0f, "a large even count still returns a value from the input's range");
-    // The upper middle IS exact, so half the pair is right: for a permutation of 0..999 the
-    // two middle order statistics are 499 and 500, so a correct even median is 499.5.
-    check(bigMedian < 499.5f,
-          "and it is BELOW the true median, which is the shipped second nth_element\'s one-element range showing");
+    // A permutation of 0..999 has 1000 elements, so the two middle order statistics are
+    // 499 and 500 and the even-count median is their average, 499.5.
+    checkNear(bigMedian, 499.5, 0.0, "a large even count IS the true median (499.5 here)");
+    checkNear(shake::median(std::vector<float>{499.0f, 500.0f}), 499.5, 0.0,
+              "and the pair that produces it is the middle pair");
+
+    // ORDER INDEPENDENCE. The median of a multiset must not depend on the order of its
+    // inputs, and the shipped bundle's does not — it was measured on 8260 vectors and
+    // returned the exact median every time. The FIRST transcription did depend on the
+    // order: it disagreed with the true median on 10530 of 20000 random even-count
+    // vectors. This is the assertion that pins the correction down, because it is the
+    // exact property the first transcription got wrong.
+    {
+      std::vector<float> shuffled = big;
+      std::mt19937 shuffle_rng(20261028);
+      std::shuffle(shuffled.begin(), shuffled.end(), shuffle_rng);
+      checkNear(shake::median(shuffled), 499.5, 0.0,
+                "the median does not depend on the order of the inputs");
+      std::reverse(shuffled.begin(), shuffled.end());
+      checkNear(shake::median(shuffled), 499.5, 0.0,
+                "nor on it being reversed");
+    }
   }
 
   // --- the filter chain (recovered 2026-10-27): movingAverage -> highPass -> extractJitter.

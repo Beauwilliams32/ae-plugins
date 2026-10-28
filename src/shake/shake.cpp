@@ -31,18 +31,41 @@ float clampf(float value, float lo, float hi) {
 // The odd test is `tbnz w8, #0x2` on the byte count: count * 4 has bit 2 set exactly when
 // count is odd, which is a cheaper test than dividing again.
 //
-// ONE MEASURED DIFFERENCE, and it is the compiler's rather than the source's: the shipped
-// bundle makes the second `__nth_element` call over a ONE-ELEMENT range
-// `[begin + mid - 1, begin + mid)`, and this build elides it — libc++ defines
-// `__nth_element` inline, and a one-element range is provably nothing, so the call
-// disappears and the value is loaded directly. The arithmetic is the same; the shipped is
-// 43 instructions and this is 32.
+// CORRECTED 2026-10-28 (row AE-05). The second `__nth_element` call is NOT over a
+// one-element range. Its arguments are (begin, begin + mid - 1, begin + mid), so its RANGE
+// is the lower partition `[begin, begin + mid)` and its nth is that partition's LAST
+// element: it selects the largest of the `mid` smallest - the true lower middle - and
+// leaves it at `data[mid - 1]`. The first transcription read the range as
+// `[begin + mid - 1, begin + mid)` - one element, a no-op - and so read `data[mid - 1]`
+// straight out of the partition, which libc++ leaves in an unspecified order.
+//
+// What the shipped bundle actually returns was measured directly, by calling its exported
+// `shake::median`: on 8260 vectors (every length from 0 to 80 with heavy duplicates, 3000
+// large random ones, and sorted and reversed inputs) it returns the exact median every
+// time - the middle element on an odd count, the AVERAGE of the two middle elements on an
+// even count. The first transcription's version disagrees with the true median on 10530
+// of 20000 random even-count vectors, and that propagated straight into
+// `trackTranslation`, whose medians are taken over an even number of blocks about half
+// the time.
+//
+// This build therefore makes the same selection the shipped code makes: a second
+// `nth_element` over the lower partition with its nth at the partition's last element,
+// which is the true second smallest, and then the shipped arithmetic,
+// (lower + upper) * 0.5f. The shipped calls libc++'s INTERNAL `__nth_element` and this
+// calls the public `std::nth_element`, which reduces to the same algorithm - and the two
+// agree bit for bit on 8000 random vectors.
 float median(std::vector<float> values) {
   if (values.empty()) return 0.0f;
   const size_t mid = values.size() / 2;
   std::nth_element(values.begin(), values.begin() + static_cast<ptrdiff_t>(mid), values.end());
   const float upper = values[mid];
   if (values.size() % 2 == 1) return upper;
+  // The shipped code's second selection: over the lower partition, with the nth at the
+  // partition's LAST element - so the largest of the `mid` smallest, the true lower
+  // middle, ends up at `mid - 1`.
+  std::nth_element(values.begin(),
+                   values.begin() + static_cast<ptrdiff_t>(mid - 1),
+                   values.begin() + static_cast<ptrdiff_t>(mid));
   const float lower = values[mid - 1];
   return (lower + upper) * 0.5f;
 }

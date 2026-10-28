@@ -1,10 +1,10 @@
 // Gate for the recovered shake:: namespace.
 //
-// Two functions, one of them shared with four other bundles. The interesting claim is in
-// the self-check rather than here: `shake::median` averages the two middle values on an odd
-// count and an even one differently from `beatsnap::medianOfWindow`, and for a LARGE even
-// count it is not the true median at all — the shipped second `nth_element` call covers a
-// one-element range.
+// Ten authored functions, nine recovered and the tracker outstanding, and one of the nine
+// shared with four other bundles. The interesting claims are in the self-check rather than
+// here: `shake::median` averages the two middle values on an even count, differently from
+// `beatsnap::medianOfWindow`, it is the exact median, and it does not depend on the order
+// of its inputs.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -59,7 +59,7 @@ test("recovered shake source compiles and its maths verifies", (t) => {
     assert.match(out, /ALL RECOVERED SHAKE MATHS VERIFIED/, `self-check failed:\n${out}`);
     assert.doesNotMatch(out, /\bFAIL\b/, out);
     const passes = (out.match(/^  PASS/gm) ?? []).length;
-    assert.ok(passes >= 17, `expected >= 17 checks, saw ${passes}`);
+    assert.ok(passes >= 71, `expected >= 71 checks, saw ${passes}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -79,11 +79,11 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
 
   assert.match(out, /MATCH\s+shake::clampf\s+5 instructions, identical/,
     "clampf is no longer instruction-identical to the bundle");
-  // median is 32 here against the bundle's 43, and the difference is the compiler's: the
-  // shipped makes a second nth_element call over a one-element range and this build elides
-  // it as a provable no-op.
-  assert.match(out, /DIFFER\s+shake::median\s+shipped=43 mine=32/,
-    "median should report the elided-call difference");
+  // median is 43 here against the bundle's 43, and the 12 positions that differ are register
+  // allocation only — the shipped makes its second nth_element selection over the lower
+  // partition, and so does this build.
+  assert.match(out, /DIFFER\s+shake::median\s+shipped=43 mine=43/,
+    "median should still report the register-allocation difference");
 
   const summary = out.trim().split("\n").pop();
   assert.match(summary, /5 identical, 5 differing, 1 not implemented/,
