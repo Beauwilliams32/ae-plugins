@@ -564,6 +564,88 @@ int main() {
           "detectOnsets: a LOWER thresholdScale raises the threshold and yields fewer onsets");
   }
 
+  std::printf("beatsnap::renderValues\n");
+  {
+    beatsnap::RenderConfig cfg;
+    cfg.mode = 0;            // the curve
+    cfg.timeScale = 1.0;
+    cfg.attackMs = 1000.0f;  // a one-second ramp
+    cfg.decayMs = 3000.0f;   // a one-second Gaussian width (3000ms / 3)
+    cfg.fillValue = 0.25f;
+    cfg.peakValue = 1.0f;
+
+    // The count guard comes first: a count below one returns an EMPTY vector.
+    check(beatsnap::renderValues({}, 0, cfg).empty(),
+          "renderValues: a count of zero renders nothing");
+    check(beatsnap::renderValues({}, -5, cfg).empty(),
+          "renderValues: a negative count renders nothing");
+
+    // THE FILL HAPPENS BEFORE THE TIMESCALE GUARD. The listing allocates and
+    // fills the vector, and only THEN tests timeScale, so a non-positive
+    // timeScale returns the FILLED vector and not an empty one.
+    {
+      beatsnap::RenderConfig zeroScale = cfg;
+      zeroScale.timeScale = 0.0;
+      const std::vector<float> out =
+          beatsnap::renderValues({1.0, 2.0}, 4, zeroScale);
+      check(out.size() == 4,
+            "renderValues: a zero timeScale still returns a vector of the requested length");
+      bool allFill = out.size() == 4;
+      for (float v : out) if (v != 0.25f) allFill = false;
+      check(allFill, "renderValues: ... and every sample is the fill value");
+    }
+    {
+      beatsnap::RenderConfig negativeScale = cfg;
+      negativeScale.timeScale = -1.0;
+      const std::vector<float> out =
+          beatsnap::renderValues({1.0, 2.0}, 3, negativeScale);
+      check(out.size() == 3 && out[0] == 0.25f && out[2] == 0.25f,
+            "renderValues: a negative timeScale returns the filled vector too");
+    }
+
+    // MODE 1 — discrete. One impulse per onset, at the ROUNDED scaled time,
+    // and out-of-range and negative times are ignored.
+    {
+      beatsnap::RenderConfig discrete = cfg;
+      discrete.mode = 1;
+      const std::vector<float> out =
+          beatsnap::renderValues({0.4, 2.6, -1.4, 9.6}, 5, discrete);
+      check(out.size() == 5, "renderValues: the output has one value per requested sample");
+      check(out[0] == 1.0f, "renderValues: an onset at 0.4 lands on index 0 (lround(0.4))");
+      check(out[3] == 1.0f, "renderValues: an onset at 2.6 lands on index 3 (lround(2.6))");
+      check(out[1] == 0.25f && out[2] == 0.25f && out[4] == 0.25f,
+            "renderValues: a negative time and an out-of-range time are both ignored");
+    }
+
+    // MODE 0 — the curve. The value is the fill value until the first onset has
+    // been passed, the attack is a linear ramp from the fill value to the peak,
+    // and the decay is a Gaussian.
+    {
+      const std::vector<float> out = beatsnap::renderValues({2.0}, 5, cfg);
+      check(out.size() == 5, "renderValues: the curve has one value per requested sample");
+      check(out[0] == 0.25f && out[1] == 0.25f,
+            "renderValues: before the first onset the value is the fill value");
+      check(out[2] == 0.25f,
+            "renderValues: AT the onset the ramp starts at the fill value");
+      check(out[3] == 1.0f,
+            "renderValues: at the end of the attack the value is the peak");
+      checkNear(out[4], 0.25f + 0.75f * 0.36787944f, 1e-4f,
+                "renderValues: after the attack the value decays as a Gaussian");
+    }
+
+    // A ZERO-WIDTH RAMP is a separate branch in the listing: the division by
+    // the span is only done when the span is positive, otherwise the ramp
+    // yields 1.0. Without that branch this would be 0/0.
+    {
+      beatsnap::RenderConfig noAttack = cfg;
+      noAttack.attackMs = 0.0f;
+      const std::vector<float> out = beatsnap::renderValues({1.0}, 3, noAttack);
+      check(out[0] == 0.25f, "renderValues: a zero-width attack still holds the fill value before the onset");
+      check(out[1] == 1.0f,
+            "renderValues: a zero-width attack jumps straight to the peak (the span <= 0 branch yields 1.0)");
+    }
+  }
+
   if (failures == 0) std::printf("ALL RECOVERED BEATSNAP MATHS VERIFIED (%d checks)\n", passes);
   else std::printf("%d FAILURES out of %d checks\n", failures, passes + failures);
   return failures == 0 ? 0 : 1;

@@ -19,7 +19,7 @@ Eleven authored functions. **Seven recovered**, four identified only.
 | `fftRadix2` | 100 | Recovered — differs in 4 of 100 positions |
 | `adaptiveThreshold` | 78 | Recovered — 91 here; a loop-structure difference, not a maths one |
 | `computeFlux` | 416 | Recovered — differs, 421 here (see below) |
-| `renderValues` | 190 | **Identified only** |
+| `renderValues` | 190 | Recovered — differs, 188 here (see below) |
 | `pickOnsets` | 136 | Recovered — differs in 37 of 136 positions (see below) |
 | `detectOnsets` | 47 | Recovered — **instruction-identical** |
 
@@ -245,10 +245,70 @@ is the first item in the improvement list below — a speed change with a
 bit-identical output, which is the only kind of change this repository makes to
 recovered behaviour without changing the effect.
 
+## `renderValues` — the payoff, and a fill that happens too early
+
+190 instructions, read in full. It turns onset times into `count` rendered
+values, in one of two modes.
+
+**The fill happens BEFORE the timeScale guard.** The listing allocates and
+fills the vector, and only then tests `timeScale`:
+
+```
+ubfiz x24, x21, #2, #32 / bl __Znwm    ; the allocation
+ldr s0, [x22, #0x18] / ... dup.4s ...  ; the fill, from fillValue
+str x8, [x23, #0x8]                   ; the end pointer
+ldr d8, [x22, #0x8] / fcmp d8, #0.0 / b.ls ret   ; ... and ONLY NOW the guard
+```
+
+so a non-positive `timeScale` returns the FILLED vector of `count` samples, not
+an empty one. The count guard, by contrast, comes FIRST and returns an empty
+vector. The self-check pins both halves.
+
+**Mode 1 is discrete**: one impulse per onset, at the rounded scaled time,
+with a single UNSIGNED bound check that rejects both out-of-range and negative
+indices:
+
+```
+fmul d1, d8, d1 / fcvtas x10, d1      ; index = lround(t * timeScale)
+cmp w21, w10 / b.ls skip              ; count <= index -> skip (UNSIGNED)
+and x10, x10, #0x7fffffff
+str s0, [x19, x10, lsl #2]             ; out[index] = peakValue
+```
+
+**Any other mode is a curve**: a linear attack and a Gaussian decay per onset.
+The value is the fill value until the first onset has been passed — the
+`started` flag in the listing — and the ramp starts AT the fill value and
+reaches the peak at the end of the attack.
+
+Two branches, not one, in the ramp:
+
+```
+fcmp d0, d10 / b.ls ramp              ; delta <= span ?
+fsub d0, d0, d10 / fneg d0, d0 / fdiv d0, d0, d1 / bl _exp
+                                    ; exp(-(delta - span) / sigma)
+fcmp d9, #0.0 / b.le noRamp / fdiv d0, d0, d9
+fmov s1, #1.00000000                 ; a zero-width ramp yields 1.0
+```
+
+The division by the span happens only when the span is positive; otherwise the
+ramp yields 1.0, which is what makes a zero-width attack jump straight to the
+peak instead of producing 0/0. The self-check asserts that case.
+
+The clamp, like the namespace's own `clampf`, tests the HIGH bound first and
+the LOW bound last, and the low test compares the ORIGINAL value — so the
+source is `(v > 1.0f) ? 1.0f : ((v < 0.0f) ? 0.0f : v)`.
+
+### Why it differs from the bundle
+
+`shipped=190 mine=188`, and the differ's first divergence is the branch
+immediately after the count guard: the bundle's `b.lt` targets the shared
+epilogue at a different offset because the recovered source has two fewer
+instructions in the body. The observable behaviour — the count guard, the
+fill-before-the-guard ordering, the discrete impulses, the ramp, the decay and
+the clamp — is asserted case by case in the self-check.
+
 ## Not recovered, and what would be needed
 
-- `renderValues` (190) — takes `const vector<double>&`, an `int` and a
-  `RenderConfig`; the "snap these values to beats" payoff. Needs `RenderConfig`.
 - The host integration (`EffectMain`) — no `plugins/BeatSnap/` exists, and none
   should be invented: the PiPL and parameter table are recovered
   (`specs/BeatSnap.json`, `PARAMETERS.md`) but a rebuilt effect has to meet the

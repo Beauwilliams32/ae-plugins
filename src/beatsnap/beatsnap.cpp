@@ -461,5 +461,137 @@ std::vector<double> detectOnsets(const float* samples, size_t n, const OnsetConf
       adaptiveThreshold(track.flux, config.medianWindow, config.thresholdScale);
   return pickOnsets(track, thresholds, config.pickScale);
 }
+// ---------------------------------------------------------------------------
+// renderValues(const vector<double>&, int, const RenderConfig&)
+//
+// __ZN8beatsnap12renderValuesERKNSt3__16vectorIdNS0_9allocatorIdEEEEiRKNS_12RenderConfigE, 190 instrs
+//
+// The sret is zeroed BEFORE the count guard, and the guard jumps straight to
+// the shared epilogue, so an empty result is a vector of null pointers:
+//
+//   stp xzr, xzr, [x8] / str xzr, [x8, #0x10]
+//   cmp w1, #0x1 / b.lt ret
+//
+// The allocation and the fill follow, and they are the shape of
+// `std::vector<float> v(count, fill)`:
+//
+//   ubfiz x24, x21, #2, #32 / bl __Znwm
+//   str x0, [x23]            ; begin
+//   add x8, x0, x24 / str x8, [x23, #0x10]   ; capacity
+//   ldr s0, [x22, #0x18]     ; fillValue
+//   ... dup.4s ...           ; the fill
+//   str x8, [x23, #0x8]      ; end
+//
+// The timeScale guard comes AFTER the fill, so a non-positive timeScale
+// returns the FILLED vector, not an empty one:
+//
+//   ldr d8, [x22, #0x8] / fcmp d8, #0.0 / b.ls ret
+//
+// Mode 1 is discrete: one impulse per onset, at the ROUNDED scaled time.
+//
+//   ldr w8, [x22] / cmp w8, #0x1 / b.ne curve
+//   ldr s0, [x22, #0x1c]                        ; peakValue
+//   ldr d1, [x8] / fmul d1, d8, d1              ; t * timeScale
+//   fcvtas x10, d1                              ; lround
+//   cmp w21, w10 / b.ls skip                   ; UNSIGNED bounds check
+//   and x10, x10, #0x7fffffff
+//   str s0, [x19, x10, lsl #2]                 ; out[index] = peakValue
+//
+// The single unsigned compare is what rejects a negative index.
+//
+// Any other mode is a curve. The two time constants, in seconds:
+//
+//   fcvt d2, s2 / fdiv d9, d2, d0 / movi.2d v2, #0 / fmaxnm d10, d9, d2
+//                                ; span  = max(attackMs / 1000, 0.0)
+//   fcvt d2, s3 / fdiv d0, d2, d0 / fmaxnm d0, d0, d1 / fmov d1, #3.0
+//   fdiv d0, d0, d1            ; sigma = max(decayMs / 1000, 1e-4) / 3.0
+//   ldp s12, s1, [x22, #0x18] / fsub s13, s1, s12
+//                                ; amp = peakValue - fillValue
+//
+// The per-sample shape: a linear ramp over the attack, then a Gaussian decay.
+//
+//   fsub d0, d1, d11           ; delta = target - reference
+//   fcmp d0, d10 / b.ls ramp   ; delta <= span ?
+//   fsub d0, d0, d10 / fneg d0, d0 / fdiv d0, d0, d1 / bl _exp
+//   fcmp d9, #0.0 / b.le noRamp / fdiv d0, d0, d9
+//   fmov s1, #1.00000000      ; a zero-width ramp yields 1.0
+//
+// TWO branches, not one: the ramp divides by the span only when the span is
+// positive, and otherwise yields 1.0.
+//
+// The clamp tests the HIGH bound first and the LOW bound last, and the low
+// test compares the ORIGINAL value, so this is
+// `(v > 1.0f) ? 1.0f : ((v < 0.0f) ? 0.0f : v)` — the same quirk the
+// namespace's `clampf` has:
+//
+//   fcmp s1, s14 / fcsel s2, s14, s1, gt    ; (v > 1.0) ? 1.0 : v
+//   fcmp s1, #0.0 / fcsel s1, v15, s2, mi   ; (v < 0.0) ? 0.0 : that
+//   fmadd s1, s1, s13, s12                  ; clamped * amp + fillValue
+//
+// The `started` flag keeps the output at the fill value until the first onset
+// has been passed:
+//
+//   mov w9, #0 / movi.2d v1, #0             ; the not-started value is 0
+//
+// The shipped code keeps the `last = -1e18` initialisation in a register even
+// though the not-started path never reads it, so the source keeps it too.
+// ---------------------------------------------------------------------------
+std::vector<float> renderValues(const std::vector<double>& times, int count,
+                                 const RenderConfig& config) {
+  std::vector<float> out(static_cast<size_t>(count < 1 ? 0 : count), config.fillValue);
+  if (count < 1) return out;
+
+  if (config.timeScale <= 0.0) return out;
+
+  if (config.mode == 1) {
+    const float peak = config.peakValue;
+    for (const double t : times) {
+      const long index = std::lround(t * config.timeScale);
+      if (index >= 0 && index < static_cast<long>(count)) {
+        out[static_cast<size_t>(index)] = peak;
+      }
+    }
+    return out;
+  }
+
+  const double span = std::fmax(static_cast<double>(config.attackMs) / 1000.0, 0.0);
+  const double sigma = std::fmax(static_cast<double>(config.decayMs) / 1000.0, 1e-4) / 3.0;
+  const float amp = config.peakValue - config.fillValue;
+  const float fill = config.fillValue;
+
+  double last = -1e18;
+  bool started = false;
+  size_t next = 0;
+
+  for (int j = 0; j < count; ++j) {
+    const double target = static_cast<double>(j) / config.timeScale;
+
+    // Consume every onset at or before this sample; the LAST one wins.
+    while (next < times.size() && times[next] <= target) {
+      last = times[next];
+      ++next;
+      started = true;
+    }
+
+    float v = 0.0f;
+    if (started) {
+      const double delta = target - last;
+      double raw;
+      if (delta <= span) {
+        raw = (span > 0.0) ? (delta / span) : 1.0;
+      } else {
+        raw = std::exp(-(delta - span) / sigma);
+      }
+      v = static_cast<float>(raw);
+    }
+
+    // The high bound is tested first and the low bound last, on the ORIGINAL
+    // value — see the note above.
+    float c = (v > 1.0f) ? 1.0f : v;
+    c = (v < 0.0f) ? 0.0f : c;
+    out[static_cast<size_t>(j)] = c * amp + fill;
+  }
+  return out;
+}
 
 }  // namespace beatsnap
