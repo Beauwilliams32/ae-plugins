@@ -7,7 +7,7 @@ unstripped.
 
 ## State
 
-All twelve `beatgrid::` symbols are recovered; five are instruction-identical.
+All twelve `beatgrid::` symbols are recovered; four are instruction-identical.
 
 | Function | Instrs | State |
 |---|---|---|

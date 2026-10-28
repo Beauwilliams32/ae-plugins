@@ -7,8 +7,9 @@
 // NAMESPACE-COMPLETE: every `beatgrid::` symbol in the bundle is transcribed, so this header is
 // a full reconstruction rather than a partial one. The last one to land was `analyzeBeatGrid`
 // (57 instructions, 2026-10-28), which is instruction-identical to the bundle. All twelve are
-// here; five compile instruction-identical and the other seven are one to seventy-five
-// instructions off, so treat the BEHAVIOUR (pinned by 95 self-check assertions) as the recovered
+// here; four compile instruction-identical (`clampf`, `isPowerOfTwo`,
+// `OnsetEnvelope::frameTimeSeconds` and `analyzeBeatGrid`) and the other eight are one to
+// seventy-five instructions off, so treat the BEHAVIOUR (pinned by 95 self-check assertions) as the recovered
 // fact rather than the instruction stream.
 //
 //   recovered: clampf, isPowerOfTwo, downmixToMono (shared),
