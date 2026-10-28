@@ -288,8 +288,8 @@ float gradientMagnitude(const float* field, int width, int height, long rowStrid
   const int yp1 = (height - 1 < y + 1) ? height - 1 : y + 1;
 
   const long stride = rowStride;
-  const float left = field[stride * ym1 + xm1];
-  const float right = field[stride * ym1 + xp1];
+  const float left = field[stride * y + xm1];
+  const float right = field[stride * y + xp1];
   const float above = field[stride * ym1 + x];
   const float below = field[stride * yp1 + x];
 
