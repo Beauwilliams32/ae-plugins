@@ -363,4 +363,37 @@ std::vector<float> barLevels(const std::vector<float>& values, double duration, 
   return out;
 }
 
+
+// ---------------------------------------------------------------------------
+std::vector<float> smoothedLevelsAtFrame(const std::vector<std::vector<float>>& bands,
+                                          int frameIndex, float a, float b, float c) {
+  std::vector<float> out;
+  if (bands.empty()) return out;
+  out.assign(bands[0].size(), 0.0f);
+
+  // The shipped loop is INCLUSIVE of `last`, and `last` is clamped to the LAST BAND
+  // (band count - 1) rather than to the band count, so a frameIndex past the end
+  // walks every band and stops there. The bundle computes the count with the
+  // divide-by-three magic and subtracts one, which is where the -1 lives.
+  const int last = std::max(0, std::min(static_cast<int>(bands.size()) - 1, frameIndex));
+
+
+  for (int band = 0; band <= last; ++band) {
+    const std::vector<float>& source = bands[static_cast<size_t>(band)];
+    const size_t count = std::min(source.size(), out.size());
+    for (size_t j = 0; j < count; ++j) {
+      const float dst = out[j];
+      const float src = source[j];
+      const float base = (src >= dst) ? b : c;
+      // One expression, not a branch: the bundle evaluates the exponential for every
+      // element and then SELECTS between it and the raw sample, so the condition is a
+      // mask the two paths are combined with, not an early exit.
+      out[j] = (a <= 0.0f || base <= 1e-5f)
+                   ? src
+                   : dst + (1.0f - std::exp(-a / base)) * (src - dst);
+    }
+  }
+  return out;
+}
+
 }  // namespace pathscribe

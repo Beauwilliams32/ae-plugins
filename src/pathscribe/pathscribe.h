@@ -14,9 +14,9 @@
 // INCOMPLETE — the analysis layer is here and the drawing layer is not:
 //   recovered: clampf, isPowerOfTwo, linearToDb, dbToLinear, hannWindow,
 //              hannCoherentGain, fftRadix2, downmixToMono, analyse,
-//              Spectrogram::~Spectrogram, spanCoverage, binEdgeHz, smoothStep
-//   outstanding: barLevels (112), smoothedLevelsAtFrame (179), waveformColumns (80),
-//              rasterizeBars (173), rasterizeRibbon (147)
+//              Spectrogram::~Spectrogram, spanCoverage, binEdgeHz, smoothStep,
+//              barLevels, waveformColumns, smoothedLevelsAtFrame
+//   outstanding: rasterizeBars (173), rasterizeRibbon (147)
 //
 // The recovered types are SpectraKeys' too, since the identical `analyse` and
 // `~Spectrogram` can only compile to the same instructions from the same layout.
@@ -157,5 +157,37 @@ std::vector<float> waveformColumns(const float* samples, size_t count, long star
  */
 std::vector<float> barLevels(const std::vector<float>& values, double duration, int barCount,
                              double a, double b);
+
+/**
+ * [exact] The per-frame level smoother: walks the bands up to `frameIndex`, carrying an
+ * exponential approach from each band's own value toward the smoothed value so far.
+ * 179 instructions, read in full (row AE-06, 2026-10-28).
+ *
+ *   out.assign(bands[0].size(), 0.0f);   if (bands.empty()) return out
+ *   last = max(0, min((int)bands.size(), frameIndex))
+ *   for band i in 0 .. last:
+ *       n = min(bands[i].size(), out.size())
+ *       for j in 0 .. n-1:
+ *           dst = out[j];  src = bands[i][j]
+ *           base = (src >= dst) ? b : c
+ *           if (a <= 0 || base <= 1e-5)   out[j] = src
+ *           else                           out[j] = dst + (1 - expf(-a / base)) * (src - dst)
+ *
+ * Two details a rewrite gets wrong:
+ *
+ * - **The base is chosen by the comparison, not fixed.** `b` is used when the incoming value
+ *   is at least the current one and `c` when it is smaller, so the time constant changes
+ *   direction with the data. The bundle selects it with a single `fcsel`/`blendvps` on the
+ *   `src >= dst` mask.
+ * - **The 1e-5 floor is on the BASE, not on the value.** `base <= 1e-5` (the constant is
+ *   0x3727c5ac) takes the raw sample instead of dividing by a base that is nearly zero.
+ *   The `a <= 0` case takes the same branch.
+ *
+ * `last` is INCLUSIVE, so the shipped code reads one band past the end when
+ * `frameIndex >= bands.size()`. That is a shipped out-of-bounds read; it is preserved here
+ * rather than tidied away, and the self-check does not exercise it.
+ */
+std::vector<float> smoothedLevelsAtFrame(const std::vector<std::vector<float>>& bands,
+                                          int frameIndex, float a, float b, float c);
 
 }  // namespace pathscribe

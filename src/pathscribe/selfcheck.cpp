@@ -261,6 +261,56 @@ int main() {
     check(monotone, "a rising track gives non-decreasing bars");
   }
 
+  // --- smoothedLevelsAtFrame (recovered 2026-10-28): the exponential approach toward the
+  // band's own value, with the time constant chosen by the comparison.
+  std::printf("pathscribe::smoothedLevelsAtFrame\n");
+  {
+    check(pathscribe::smoothedLevelsAtFrame({}, 0, 1.0f, 1.0f, 1.0f).empty(),
+          "no bands gives an empty vector");
+
+    const std::vector<std::vector<float>> one = {{1.0f, 2.0f, 3.0f}};
+    const std::vector<float> first = pathscribe::smoothedLevelsAtFrame(one, 0, 1.0f, 1.0f, 1.0f);
+    check(first.size() == 3, "the output is sized from the FIRST band");
+    // base = 1 in both directions here, so the element is the sample scaled by
+    // (1 - exp(-a/base)) = 1 - exp(-1) = 0.6321206.
+    checkNear(first[0], 0.6321206f, 1e-6, "band 0 element 0: the approach from zero");
+    checkNear(first[1], 1.2642411f, 1e-6, "and it scales with the sample");
+    checkNear(first[2], 1.8963617f, 1e-6, "all the way to the third");
+
+    // a <= 0 takes the raw sample: there is no approach left to make.
+    const std::vector<float> none = pathscribe::smoothedLevelsAtFrame(one, 0, 0.0f, 1.0f, 1.0f);
+    checkNear(none[0], 1.0f, 0.0, "a == 0 takes the raw sample");
+    checkNear(none[2], 3.0f, 0.0, "and every element of it");
+
+    // The base is b when the incoming sample is at least the value so far, and c when it
+    // is smaller. Two bands make the second case reachable: the first band lifts the
+    // value above the second band's sample.
+    const std::vector<std::vector<float>> two = {{4.0f}, {1.0f}};
+    const std::vector<float> withC = pathscribe::smoothedLevelsAtFrame(two, 1, 1.0f, 1.0f, 0.25f);
+    // band 0: dst 0, src 4, base = b = 1  ->  4 * (1 - exp(-1)) = 2.5284822
+    // band 1: dst 2.5284822, src 1, src < dst so base = c = 0.25
+    //         ->  dst + (1 - exp(-1/0.25)) * (1 - dst) = 1.0279951
+    checkNear(withC[0], 1.0279951f, 1e-6,
+              "the smaller sample uses c as the base, not b");
+
+    // A base at or below 1e-5 takes the raw sample instead of dividing by it.
+    const std::vector<float> tiny = pathscribe::smoothedLevelsAtFrame(one, 0, 1.0f, 0.0f, 1.0f);
+    checkNear(tiny[0], 1.0f, 0.0, "a base at or below 1e-5 takes the raw sample");
+    checkNear(tiny[2], 3.0f, 0.0, "for every element");
+
+    // The walk stops at the last band however large the frame index is: `last` is clamped
+    // to band count - 1, and the loop is inclusive of it.
+    const std::vector<float> beyond = pathscribe::smoothedLevelsAtFrame(one, 99, 1.0f, 1.0f, 1.0f);
+    check(beyond.size() == 3, "a frame index past the end still sizes the output");
+    checkNear(beyond[0], first[0], 0.0, "and stops at the last band");
+
+    // A band shorter than the output is truncated to the band's own length.
+    const std::vector<std::vector<float>> ragged = {{1.0f, 2.0f, 3.0f}, {4.0f}};
+    const std::vector<float> shortBand = pathscribe::smoothedLevelsAtFrame(ragged, 1, 1.0f, 1.0f, 1.0f);
+    check(shortBand.size() == 3, "a short band does not shorten the output");
+    checkNear(shortBand[1], first[1], 0.0, "and leaves the elements it does not reach alone");
+  }
+
   if (failures == 0) std::printf("ALL RECOVERED PATHSCRIBE MATHS VERIFIED (%d checks)\n", passes);
   else std::printf("%d FAILURES out of %d checks\n", failures, passes + failures);
   return failures == 0 ? 0 : 1;

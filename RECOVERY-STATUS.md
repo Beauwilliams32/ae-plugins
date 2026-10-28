@@ -17,11 +17,11 @@ a function can be recovered and still differ from the binary in its instruction 
 | Effects in the fleet | 16 |
 | With a recovered source namespace | 16 |
 | Without one | 0 |
-| Named symbols recovered | 151 of 166 |
+| Named symbols recovered | 152 of 166 |
 | — instruction-identical to the shipped binary | 64 |
-| — recovered but differing in codegen | 87 |
-| Authored instructions recovered | 15894 of 23246 (68.4%) |
-| Lines of recovered source | 19829 |
+| — recovered but differing in codegen | 88 |
+| Authored instructions recovered | 16073 of 23246 (69.1%) |
+| Lines of recovered source | 19980 |
 
 ## Per effect
 
@@ -42,7 +42,7 @@ a class member is named after its class.
 | MaskFlow | `maskflow::` | 9/9 | 3 | 6 | 0 | 972/972 | 100.0% |
 | MotionCurveX | `motioncurvex::` | 10/11 | 1 | 9 | 1 | 2283/2363 | 96.6% |
 | NoiseField | `noisefield::` | 6/10 | 3 | 3 | 4 | 368/1577 | 23.3% |
-| PathScribe | `pathscribe::` | 15/18 | 8 | 7 | 3 | 978/1477 | 66.2% |
+| PathScribe | `pathscribe::` | 16/18 | 8 | 8 | 2 | 1157/1477 | 78.3% |
 | ShakeCapture | `shake::` | 10/11 | 5 | 5 | 1 | 762/1722 | 44.3% |
 | SpectraKeys | `spectra::` | 14/14 | 7 | 7 | 0 | 1061/1061 | 100.0% |
 | SpeedRampCurve | `speedramp::` | 5/5 | 2 | 3 | 0 | 261/261 | 100.0% |

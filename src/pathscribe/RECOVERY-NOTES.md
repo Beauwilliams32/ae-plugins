@@ -7,7 +7,7 @@ unstripped.
 
 ## State
 
-Thirteen of the eighteen symbols are recovered. Eight of them are
+Sixteen of the eighteen symbols are recovered. Eight of them are
 **instruction-identical** to this bundle.
 
 | Function | Instrs | State |
@@ -25,9 +25,9 @@ Thirteen of the eighteen symbols are recovered. Eight of them are
 | `downmixToMono` | 116 | Recovered — 2 of 116 (shared) |
 | `analyse` | 341 | Recovered — 328 here (shared) |
 | `smoothStep` | 25 | Recovered — 25 here, allocation differs (own) |
-| `barLevels` | 112 | Identified only |
-| `smoothedLevelsAtFrame` | 179 | Identified only |
-| `waveformColumns` | 80 | Identified only |
+| `barLevels` | 112 | Recovered — 120 here (own) |
+| `waveformColumns` | 80 | Recovered — 83 here (own) |
+| `smoothedLevelsAtFrame` | 179 | Recovered — 177 here (own) |
 | `rasterizeBars` | 173 | Identified only |
 | `rasterizeRibbon` | 147 | Identified only |
 
@@ -110,8 +110,44 @@ it instruction-identical: the exponent is formed *before* the ratio (the shipped
 does `scvtf`, `ucvtf`, `fdiv`, `fdiv`), and the count guard returns `minHz` unchanged
 rather than zero.
 
+### `smoothedLevelsAtFrame` — the time constant changes with the data
+
+The band's own value is approached exponentially, and **which** constant does the
+approaching is decided by the comparison, not fixed:
+
+```
+base = (src >= dst) ? b : c
+out  = (a <= 0 || base <= 1e-5) ? src : dst + (1 - expf(-a / base)) * (src - dst)
+```
+
+Three things a rewrite gets wrong:
+
+- **The base is selected by `src >= dst`.** When the incoming sample is at least the
+  value carried so far, the base is `b`; when it is smaller, the base is `c`. The bundle
+  does this with a single `fcsel` (scalar) or `blendvps` (vector) on that mask, so the
+  time constant changes direction with the data.
+- **The 1e-5 floor is on the BASE, not on the value.** `base <= 1e-5` (the constant is
+  0x3727c5ac) takes the raw sample rather than dividing by a base that is nearly zero,
+  and `a <= 0` takes the same branch. The bundle builds both into one mask: the
+  loop-invariant `a <= 0` test is made once with `fcmp`/`cset` and broadcast as a
+  halfword mask, and OR-ed into the per-element comparison.
+- **`last` is clamped to band count - 1 and the loop is INCLUSIVE of it**, so a frame
+  index past the end walks every band and stops there. The bundle computes the count
+  with the divide-by-three magic and subtracts one — the `- 1` is inside the magic
+  multiply (`madd` with -1), which is how the instruction stream shows it.
+
+The output is sized from the **first** band and zero-filled, and each band is walked
+only as far as the shorter of the band and the output.
+
+It is recovered at 177 instructions against the bundle's 179. The difference is not
+arithmetic: the two streams compute the same thing, and the vectorised path is
+structurally the same — the same `fdiv`, the same four `expf` calls, the same
+`fsub`/`fmla`, the same two `bsl` selects. What differs is how the "skip" mask is
+materialised: the bundle builds it scalar-then-halfword (`fcmp`/`cset`, `dup.4h`,
+`ushll`/`shl`/`cmlt`) and this build builds it two-wide (`fcmge.2s`, `dup.2s`,
+`sshll`). The behaviour is pinned by the self-check instead.
+
 ## What is next
 
-`barLevels` (112) and `waveformColumns` (80) are the analysis-to-drawing step, then
-`smoothedLevelsAtFrame` (179) and the two rasterisers (173 + 147) that turn levels into
-the ribbon and bar geometry this effect is named for.
+The two rasterisers: `rasterizeBars` (173) and `rasterizeRibbon` (147), which turn
+levels into the bar and ribbon geometry this effect is named for.
