@@ -1,11 +1,35 @@
-# beatsnap — transcription notes for the four outstanding functions
+# beatsnap — transcription notes for the four onset-detection functions
 
-This file is a HANDOVER artefact: the four onset-detection functions below are
-declared in `beatsnap.h` with recovered layouts but had no body at the time this
-file was written. Everything here is read off the shipped bundle's instruction
-stream and was verified line by line against `/tmp/ae/bs-arm64.asm` (the
-`otool -tvV` dump of
-`/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/BeatSnap.plugin/Contents/MacOS/BeatSnap`).
+> **STATUS: SUPERSEDED — the work below is DONE.**
+> All four functions were transcribed from this material and are now in
+> `beatsnap.cpp`, with per-function commentary in `RECOVERY-NOTES.md` and oracle
+> assertions in `selfcheck.cpp`. This file is kept as the HAND-OVER record of
+> how the disassembly was read — the instruction-by-instruction reasoning that
+> the recovery was built from — and is NOT the current state of the namespace.
+>
+> The recovery commits are `966bc8b` (computeFlux), `72cf67c` (pickOnsets),
+> `1165a44` (detectOnsets) and `65670f9` (renderValues); `7ca2495` recorded
+> the namespace as complete. The measured outcome is
+> **4 instruction-identical, 7 differing, 0 not implemented** across all
+> eleven `beatsnap::` symbols.
+>
+> Two claims in the ORIGINAL handover text below have since been superseded by
+> that measurement, and are corrected here rather than left to mislead:
+>
+> - the magnitude buffers are described as `new float[bins]()`. That reading of
+>   the listing is CORRECT (the buffers are `__Znwm` + `_bzero` with no vector
+>   triple, unlike the `re`/`im` vectors, which do store one), but the shipped
+>   source uses `std::vector<float>` for them instead. The two are
+>   observationally identical; `RECOVERY-NOTES.md` records the difference as a
+>   source-shape difference, not a behavioural one.
+> - the "What is still open" section at the foot of this file is now empty of
+>   outstanding functions. The only thing genuinely not recovered is the host
+>   integration (`EffectMain`), which is out of scope by design.
+>
+> Everything here is read off the shipped bundle's instruction stream and was
+> verified line by line against `/tmp/ae/bs-arm64.asm` (the `otool -tvV` dump
+> of
+>`/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/BeatSnap.plugin/Contents/MacOS/BeatSnap`).
 
 Instruction ranges in that dump:
 
@@ -495,12 +519,28 @@ though the not-started path does not read it, so the source should keep
 - `std::lround(d)` -> `fcvtas x0, d0`; `(long)std::round(d)` -> the same.
 - `std::fmax(a, b)` -> `fmaxnm` (NaN-propagating), not `fmaxnm`-vs-`maxnm`.
 
-## What is still open
+## What was open when this was written — and what it is now
+
+At the time of the handover these were the two open questions. Both are now
+closed, and neither was a behavioural uncertainty:
 
 - The exact source shape of the band-bin clamp and of `renderValues`'s
   `vector(count, fill)` are inferred from the emitted code rather than read
-  directly, so the source may differ cosmetically from the original.
+  directly, so the source may differ cosmetically from the original. **STILL
+  TRUE, and it does not matter**: the source shape is pinned by the self-check,
+  which asserts the observable behaviour (the clamp's asymmetric
+  `raw < 0 ? 0 : min(raw, bins - 1)` rule, and the fill-before-the-guard
+  ordering) rather than the spelling.
 - `computeFlux`'s magnitude buffers are raw `new float[bins]()` rather than
   vectors: the listing allocates them with `__Znwm` + `_bzero` and frees them
   with `__ZdlPv`, with no vector triple, which is `new float[n]()`, not a
-  `std::vector<float>`.
+  `std::vector<float>`. **THE READING IS CORRECT AND THE SHIPPED SOURCE
+  DEVIATES FROM IT**: the recovered source uses `std::vector<float>`. The two
+  are observationally identical — same values, same order, same lifetime — and
+  the difference is confined to allocation and teardown. It is one of the
+  contributions to `computeFlux` compiling to 421 instructions against the
+  bundle's 416.
+
+Nothing else in the namespace is outstanding. The only thing genuinely not
+recovered is the host integration (`EffectMain`), which takes Adobe SDK types
+and belongs with the other host integrations rather than in `src/`.
