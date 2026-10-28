@@ -1,8 +1,11 @@
 // Gate for the recovered noisefield:: namespace.
 //
-// The three functions are checked by the self-check. The GRADIENT TABLE is checked
-// against the bundle's own bytes, because a table cannot be verified by inspection and
-// a wrong gradient set is a different effect with the same function names.
+// The three instruction-identical functions are checked by the self-check. The
+// GRADIENT TABLE is checked against the bundle's own bytes, because a table cannot be
+// verified by inspection and a wrong gradient set is a different effect with the same
+// function names. The four BEHAVIOURAL recoveries -- fieldAt, curlField and the two
+// apply<T> instantiations -- are checked against the SHIPPED BUNDLE itself, byte for
+// byte, by the differential harness in src/noisefield/differential.cpp.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -17,29 +20,44 @@ const BUNDLE = "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media"
   + "/NoiseField.plugin/Contents/MacOS/NoiseField";
 
 /**
- * The functions transcribed here.
- *
- * `PermTable` is `PermTable::build` — the differ names it by its class, since the
- * mangled symbol carries no method name the differ prints.
- */
-const RECOVERED = ["clampf", "clampi", "fbmAmplitudeSum", "PermTable", "noise3", "fbm3"];
-
-/**
- * The rest, as `tools/codegen-diff.mjs` names them.
+ * Every `noisefield::` symbol the bundle ships, named the way
+ * `tools/codegen-diff.mjs` prints it.
  *
  * Two of these names are the differ's, not the source's: `noisefield::PermTable` is
- * `PermTable::build`, and `noisefield::_GLOBAL__N_1` is the anonymous-namespace
- * `curlField`. They are listed as the differ prints them so the assertion is against
- * the measurement rather than against a tidier list.
+ * `PermTable::build` (the mangled symbol carries no method name the differ prints),
+ * and `noisefield::_GLOBAL__N_1` is the anonymous-namespace `curlField`. They are
+ * listed as the differ prints them so the assertion is against the measurement
+ * rather than against a tidier list.
  */
-const OUTSTANDING = [
-  "fieldAt", "_GLOBAL__N_1",
+const RECOVERED = [
+  "clampf",
+  "clampi",
+  "fbmAmplitudeSum",
+  "PermTable",
+  "noise3",
+  "fbm3",
+  "fieldAt",
+  "_GLOBAL__N_1",
   "apply(IhEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEf)",
   "apply(ItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEf)",
 ];
 
+/**
+ * Nothing: the namespace is 10 of 10.
+ *
+ * The list is kept, empty rather than deleted, so that a future regression has
+ * somewhere to be written down -- and so the assertion below stays a two-way check
+ * between this file and the differ rather than a one-way "at least these".
+ */
+const OUTSTANDING = [];
+
 function bundlesInstalled() {
   return existsSync(BUNDLE);
+}
+
+function haveClang() {
+  try { execFileSync("clang++", ["--version"], { stdio: "ignore" }); return true; }
+  catch { return false; }
 }
 
 function runDiff(fragment) {
@@ -53,11 +71,7 @@ function runDiff(fragment) {
 }
 
 test("recovered noisefield source compiles and its maths verifies", (t) => {
-  const have = (cmd) => {
-    try { execFileSync(cmd, ["--version"], { stdio: "ignore" }); return true; }
-    catch { return false; }
-  };
-  if (!have("clang++")) { t.skip("clang++ not available — compile check skipped"); return; }
+  if (!haveClang()) { t.skip("clang++ not available — compile check skipped"); return; }
 
   const dir = mkdtempSync(path.join(tmpdir(), "noisefield-check-"));
   const bin = path.join(dir, "selfcheck");
@@ -139,7 +153,8 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
   if (!bundlesInstalled()) { t.skip("NoiseField bundle is not installed"); return; }
 
   const out = runDiff();
-  const recovered = [...out.matchAll(/^\s{2}(?:MATCH|DIFFER)\s+noisefield::(\w+)/gm)].map((m) => m[1]).sort();
+  const recovered = [...out.matchAll(/^\s{2}(?:MATCH|DIFFER)\s+noisefield::(\S+)/gm)]
+    .map((m) => m[1]).sort();
   const absent = [...out.matchAll(/^\s+absent\s+noisefield::(\S+)/gm)].map((m) => m[1]);
 
   assert.deepEqual(recovered, [...RECOVERED].sort(),
@@ -158,18 +173,28 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
       `${fn} is no longer instruction-identical to the bundle`);
   }
 
-  // The other three are NOT identical and are not expected to be: `noise3` and `fbm3`
-  // compile to the right instruction COUNT (183 and 51) with a different register
-  // schedule, and `PermTable::build` differs in how clang expands the 256-byte copy.
-  // Their behaviour is verified against the textbook oracle in the self-check instead,
-  // which is the stronger test for this kind of code — so the counts are pinned here
-  // so that a schedule change is visible rather than silent.
+  // `noise3` and `fbm3` compile to the right instruction COUNT (183 and 51) with a
+  // different register schedule, and `PermTable::build` differs in how clang expands
+  // the 256-byte copy. Their behaviour is verified against the textbook oracle in the
+  // self-check instead, which is the stronger test for this kind of code — so the
+  // counts are pinned here so that a schedule change is visible rather than silent.
   assert.match(out, /DIFFER\s+noisefield::noise3\s+shipped=183 mine=183/,
     "noise3 should compile to the same instruction count as the bundle");
   assert.match(out, /DIFFER\s+noisefield::fbm3\s+shipped=51 mine=51/,
     "fbm3 should compile to the same instruction count as the bundle");
 
+  // The four behavioural recoveries: the SHIPPED instruction counts are pinned, because
+  // a change in them means the bundle under test is not the bundle this lane measured.
+  assert.match(out, /DIFFER\s+noisefield::fieldAt\s+shipped=226 mine=226/,
+    "fieldAt should compile to the same instruction count as the bundle");
+  assert.match(out, /DIFFER\s+noisefield::_GLOBAL__N_1\s+shipped=163 mine=163/,
+    "curlField should compile to the same instruction count as the bundle");
+  assert.match(out, /DIFFER\s+noisefield::apply\(IhEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEf\)\s+shipped=408/,
+    "the shipped apply<unsigned char> is 408 instructions");
+  assert.match(out, /DIFFER\s+noisefield::apply\(ItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEf\)\s+shipped=412/,
+    "the shipped apply<unsigned short> is 412 instructions");
+
   const summary = out.trim().split("\n").pop();
-  assert.match(summary, /3 identical, 3 differing, 4 not implemented/,
+  assert.match(summary, /3 identical, 7 differing, 0 not implemented/,
     `the differ's tally moved: ${summary}`);
 });
