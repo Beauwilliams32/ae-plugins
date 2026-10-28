@@ -7,30 +7,28 @@
 // Recovered from the demangled symbol table and disassembly of GlitchKit.plugin.
 // The original C++ was destroyed on 2026-10-13 with no remote and no backup.
 //
-// STATE — FIVE of the SIX `glitch::` symbols are recovered. ONE is outstanding.
+// NAMESPACE-COMPLETE
+//
+// STATE — ALL SIX `glitch::` symbols are recovered. NONE is outstanding.
 //
 //   glitch::clampf                  5 instructions    INSTRUCTION-IDENTICAL
 //   glitch::clampi                  5 instructions    INSTRUCTION-IDENTICAL
 //   glitch::hashKey                34 instructions    INSTRUCTION-IDENTICAL
 //   glitch::patternFrame            7 instructions    INSTRUCTION-IDENTICAL
 //   glitch::apply<unsigned char>  1157 instructions    BEHAVIOURAL RECOVERY
-//
-// OUTSTANDING: `glitch::apply<unsigned short>` — 1228 instructions in the shipped
-// binary, listed in /tmp/ae/glitch_us.txt. It is NOT recovered at this commit: the
-// symbol is not instantiated, so the differ reports it as not implemented and this
-// namespace is NOT complete.
+//   glitch::apply<unsigned short> 1228 instructions    BEHAVIOURAL RECOVERY
 //
 // The four scalar helpers reproduce the bundle's instructions EXACTLY — 5, 5, 34 and 7
-// instructions, all four identical. The recovered `apply<unsigned char>` is a
-// BEHAVIOURAL RECOVERY: its semantics are transcribed from the listing and verified
-// by differential testing against the shipped bundle itself — the shipped `apply` is
-// dlopen'd, run on the same frames, and its output buffer is compared byte for byte —
-// but the instruction stream is a re-expression rather than a copy, so the differ
-// reports it as DIFFERING and not identical. Treat the BEHAVIOUR as the recovered
-// fact for `apply<unsigned char>`, and see src/glitch/RECOVERY-NOTES.md for the
-// reading of each mode body, the addresses it was read from, and what is identical
-// versus behavioural. The differ's tally for this namespace is 4 identical, 1
-// differing, 1 not implemented.
+// instructions, all four identical. BOTH recovered `apply<T>` instantiations are
+// BEHAVIOURAL RECOVERIES: their semantics are transcribed from the listing and
+// verified by differential testing against the shipped bundle itself — the shipped
+// `apply` is dlopen'd, run on the same frames, and its output buffer is compared byte
+// for byte — but the instruction stream is a re-expression rather than a copy, so the
+// differ reports them as DIFFERING and not identical. Treat the BEHAVIOUR as the
+// recovered fact for `apply<T>`, and see src/glitch/RECOVERY-NOTES.md for the reading
+// of each mode body, the addresses it was read from, and what is identical versus
+// behavioural. The differ's tally for this namespace is 4 identical, 2 differing,
+// 0 not implemented.
 //
 // No After Effects host has ever loaded a rebuilt GlitchKit bundle. Nothing in this
 // header is a host-acceptance claim.
@@ -46,10 +44,9 @@
 // listing the RECOVERED 8-bit `apply` was read from.
 //
 // The 16-bit body is `__ZN6glitch5applyItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf`
-// at 0x1a04..0x2d30 (1228 instructions, listed in /tmp/ae/glitch_us.txt). Its listing
-// has been read too, and every structural fact below that describes "the 16-bit build"
-// is read from it — but that symbol is NOT recovered at this commit: it is not
-// instantiated, so the differ reports it as not implemented.
+// at 0x1a04..0x2d30 (1228 instructions, listed in /tmp/ae/glitch_us.txt) — that is the
+// listing the RECOVERED 16-bit `apply` was read from. Every structural fact below that
+// describes "the 16-bit build" is read from it.
 //
 // Addresses quoted in the comments below are the 8-bit body's unless stated otherwise,
 // and every 16-bit address is given as such.
@@ -326,8 +323,9 @@ unsigned int patternFrame(unsigned int seed, float time);
 //
 // The 16-bit twin `glitch::apply<unsigned short>` — the same source at a wider
 // channel depth, listed in /tmp/ae/glitch_us.txt at 0x1a04..0x2d30, 1228
-// instructions — is OUTSTANDING at this commit: the symbol is not instantiated, so
-// the differ reports it as not implemented and this namespace is NOT complete.
+// instructions — is recovered too, and it is ALSO a BEHAVIOURAL RECOVERY: the
+// same dlopen differential runs against the shipped 16-bit `apply`, byte for byte,
+// and the differ reports it as DIFFERING for the same reason.
 //
 // The fifth argument is NOT a time: `apply<T>` feeds Params.rate (+0x10) to
 // patternFrame, and the float it receives is the PIXEL RANGE — 255 for 8-bit,
@@ -345,7 +343,10 @@ unsigned int patternFrame(unsigned int seed, float time);
 // The body is transcribed from the listing. Its shape:
 //
 //   * an EMPTY frame — a width or a height below 1 — leaves the output
-//     completely untouched (0x738..0x744);
+//     completely untouched (0x738..0x744, `ldp w15,w16,[x0,#8] / cmp w15,#1 /
+//     ccmp w16,#1,#8,ge / b.lt`); the `b.lt` is TAKEN for a zero width as well as
+//     for a zero height, because the `ccmp` does not compare in that case and
+//     installs NZCV = 0b1000 (N = 1, V = 0), and `b.lt` branches when N != V;
 //   * amount and spread are capped at 1, and if EITHER is <= 0 the frame is
 //     copied and returned WITHOUT the spread blend (0x794/0x79c -> 0x9a0);
 //   * a per-frame hash is mixed from hashInput, the pattern frame and the mode;

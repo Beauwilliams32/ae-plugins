@@ -18,16 +18,10 @@
 //    others.
 //
 // HONESTY NOTE, which this file asserts rather than merely asserts-about:
-// the recovered `apply<T>` instantiation is a BEHAVIOURAL recovery, not an
-// instruction-identical one. The differ reports it as DIFFERING, and this file
-// requires that. An earlier draft of this test asserted that it was
+// the two `apply<T>` instantiations are BEHAVIOURAL recoveries, not
+// instruction-identical ones. The differ reports them as DIFFERING, and this
+// file requires that. An earlier draft of this test asserted that both were
 // identical; that was wrong and would have passed a lie.
-//
-// This file also asserts that `glitch::apply<unsigned short>` is STILL
-// OUTSTANDING at this commit: it must still be reported as not implemented by
-// the differ, and it must still be named as outstanding here. A test that
-// quietly stopped listing it would let the namespace drift towards a
-// completeness claim it has not earned.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -57,31 +51,10 @@ const STATE = {
   "apply<unsigned char>": {
     status: "DIFFER", shipped: 1157, mine: 1409, kind: "behavioural", tag: "h",
   },
+  "apply<unsigned short>": {
+    status: "DIFFER", shipped: 1228, mine: 1477, kind: "behavioural", tag: "t",
+  },
 };
-
-/**
- * The symbols the differ must STILL report as not implemented.
- *
- * The string is the differ's own label for the symbol — the mangled name with
- * the namespace in front of it — so it cannot drift away from what the
- * measurement actually prints.
- */
-const OUTSTANDING = [
-  "glitch::apply(ItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf)",
-];
-
-/**
- * The shipped bodies this file checks the HEADER'S LAYOUT CLAIMS against.
- *
- * These are checked against the LISTING, not against the recovered source, so
- * the 16-bit entry is here even though that symbol is not recovered at this
- * commit: the header makes claims about what the 16-bit build reads, and those
- * claims are checked against the bundle's own instructions either way.
- */
-const LISTED_BODIES = [
-  { fn: "apply<unsigned char>", tag: "h", shipped: 1157 },
-  { fn: "apply<unsigned short>", tag: "t", shipped: 1228 },
-];
 
 /**
  * The notes' State table uses the C++ spelling of the overloaded `apply`; the
@@ -222,13 +195,12 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
   const absent = rows.filter((r) => r.status === "absent").map((r) => r.symbol).sort();
   const recovered = rows.filter((r) => r.status !== "absent").map((r) => r.symbol).sort();
 
-  assert.deepEqual(absent, OUTSTANDING,
-    "the differ's set of unrecovered glitch symbols does not match the list this file "
-    + "claims — recover them and take them off that list, so the list and the "
-    + "measurement cannot drift apart");
+  assert.deepEqual(absent, [],
+    "the differ still reports unrecovered glitch symbols — recover them and take them "
+    + "off this list, so the list and the measurement cannot drift apart");
 
-  assert.equal(recovered.length, 5,
-    `expected five recovered glitch symbols, saw ${recovered.length}: ${recovered.join(", ")}`);
+  assert.equal(recovered.length, 6,
+    `expected six recovered glitch symbols, saw ${recovered.length}: ${recovered.join(", ")}`);
 
   // Each function's status and its instruction counts, so that a
   // behaviour-preserving edit which breaks instruction-identity is caught
@@ -258,19 +230,13 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
   assert.equal(counts["glitch::hashKey"], 34);
   assert.equal(counts["glitch::patternFrame"], 7);
 
-  // The recovered `apply` instantiation is behavioural, and its shipped count
-  // is the whole effect body.
+  // The two `apply` instantiations are behavioural, and their shipped counts
+  // are the whole effect body.
   assert.equal(findRow(rows, MANGLED["apply<unsigned char>"]).shipped, 1157);
-
-  // The outstanding one is not implemented — not "different" — and the differ
-  // says how big it is in the bundle.
-  const absentLine = out.split("\n").find((l) => /absent\s+glitch::apply\(ItEE/.test(l));
-  assert.ok(absentLine, `the differ did not report the outstanding symbol as absent:\n${out}`);
-  assert.match(absentLine, /1228 instrs in the bundle/,
-    `the outstanding symbol's shipped size moved: ${absentLine}`);
+  assert.equal(findRow(rows, MANGLED["apply<unsigned short>"]).shipped, 1228);
 
   const summary = out.trim().split("\n").pop();
-  assert.match(summary, /4 identical, 1 differing, 1 not implemented/,
+  assert.match(summary, /4 identical, 2 differing, 0 not implemented/,
     `the differ's tally moved: ${summary}`);
 });
 
@@ -280,15 +246,8 @@ test("the notes' State table agrees with the differ", (t) => {
   const notes = readFileSync(path.join(SRC, "RECOVERY-NOTES.md"), "utf8");
   const rows = [...notes.matchAll(/^\|\s*`([^`]+)`\s*\|\s*(\d+)\s*\|\s*(.+?)\s*\|\s*$/gm)]
     .map((m) => ({ fn: m[1], shipped: Number(m[2]), state: m[3] }));
-  assert.equal(rows.length, 5,
-    `the notes' State table should have five rows, saw ${rows.length}`);
-
-  // The outstanding symbol has to be NAMED in the notes, or a reader of the
-  // notes alone would not learn that anything is missing.
-  for (const symbol of OUTSTANDING) {
-    assert.ok(notes.includes(symbol),
-      `the notes do not name the outstanding symbol ${symbol}`);
-  }
+  assert.equal(rows.length, 6,
+    `the notes' State table should have six rows, saw ${rows.length}`);
 
   const out = runDiff("glitch");
   const diffRows = parseDiff(out);
@@ -321,8 +280,8 @@ test("the header's State block agrees with the differ, and says BEHAVIOURAL wher
   const rows = [...header.matchAll(
     /^\/\/\s+glitch::(.+?)\s+(\d+)\s+instructions\s+(.+?)\s*$/gm)]
     .map((m) => ({ fn: m[1].trim(), shipped: Number(m[2]), state: m[3].trim() }));
-  assert.equal(rows.length, 5,
-    `the header's State block should have five rows, saw ${rows.length}: `
+  assert.equal(rows.length, 6,
+    `the header's State block should have six rows, saw ${rows.length}: `
     + rows.map((r) => r.fn).join(", "));
 
   const out = runDiff("glitch");
@@ -515,9 +474,9 @@ test("the recovered View and Params offsets match the shipped bundle", (t) => {
     return [...seen].sort((a, b) => a - b);
   };
 
-  for (const want of LISTED_BODIES) {
-    const fn = want.fn;
+  for (const [fn, want] of Object.entries(STATE)) {
     const tag = want.tag;
+    if (!tag) continue;
     const sym = `__ZN6glitch5applyI${tag}EEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf`;
     const body = sliceFor(sym);
     assert.ok(body.length > 1000,

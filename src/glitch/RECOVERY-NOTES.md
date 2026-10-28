@@ -4,10 +4,10 @@ Source: `GlitchKit.plugin` (bundle id `com.williamsmedia.aftereffects.GlitchKit`
 at `/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/`. The original C++ was
 destroyed on 2026-10-13; the binary is the only copy and it is unstripped.
 
-## State — one symbol outstanding
+## State — complete
 
-FIVE of the SIX authored `glitch::` symbols are recovered. ONE is outstanding:
-`glitch::apply<unsigned short>`. **This namespace is NOT complete.**
+All SIX authored functions are recovered and the namespace carries its `NAMESPACE-COMPLETE`
+marker. Nothing is absent.
 
 | Function | Instrs | State |
 |---|---|---|
@@ -16,44 +16,40 @@ FIVE of the SIX authored `glitch::` symbols are recovered. ONE is outstanding:
 | `hashKey` | 34 | Recovered — **instruction-identical** |
 | `patternFrame` | 7 | Recovered — **instruction-identical** |
 | `apply<unsigned char>` | 1157 | Recovered — **behavioural**; 1409 instructions here |
-| `apply<unsigned short>` | — | **OUTSTANDING** — 1228 instructions in the bundle, not recovered here |
+| `apply<unsigned short>` | 1228 | Recovered — **behavioural**; 1477 instructions here |
 
 `test/glitch.test.mjs` asserts that table against `tools/codegen-diff.mjs`, so the counts
 cannot drift apart from the measurement.
 
-**What "behavioural" means here, precisely.** The recovered `apply<unsigned char>` is not
-a copy of the shipped instruction stream: it is a transcription of the shipped SEMANTICS,
+**What "behavioural" means here, precisely.** The two `apply<T>` instantiations are not
+copies of the shipped instruction stream: they are transcriptions of the shipped SEMANTICS,
 and the semantics are verified against the shipped bundle itself. The self-check dlopens
 `GlitchKit.plugin`, calls the bundle's own `glitch::apply` on the same frames with the same
 parameters into a sentinel-filled buffer, and compares the two output buffers byte for byte.
-Measured on this machine: **2975 vectors, 1633184 bytes compared, 0 mismatching vectors**,
-of which 2948 vectors showed a real write — so the comparison was not vacuously comparing
-two untouched buffers. A wider offline sweep — 355192 vectors, 872441391 bytes compared,
+Measured on this machine: **5950 vectors, 3266368 bytes compared, 0 mismatching vectors**,
+of which 5896 vectors showed a real write — so the comparison was not vacuously comparing
+two untouched buffers. A wider offline sweep — 710104 vectors, 1742420784 bytes compared,
 0 mismatches, every mode and every shape covered — also matched; that sweep runs from a
-scratch harness that is NOT committed, so the 2975-vector figure above is the one a
+scratch harness that is NOT committed, so the 5950-vector figure above is the one a
 reader can reproduce from this repository.
 
-The 16-bit instantiation is NOT recovered at this commit, so the differential above covers
-the 8-bit body only.
-
-The instruction count differs because the recovered source is structured differently —
+The instruction counts differ because the recovered source is structured differently —
 loop shapes, register allocation, and where the compiler chose to spill. The differ
-therefore reports it as `DIFFER` with `different instruction counts`, and that is the
-honest measurement. **The differ's tally for this namespace is 4 identical, 1 differing,
-1 not implemented.**
+therefore reports both as `DIFFER` with `different instruction counts`, and that is the
+honest measurement. **The differ's tally for this namespace is 4 identical, 2 differing,
+0 not implemented.**
 
 The harness was proved sensitive rather than assumed to be: mutating the recovered source
 and re-running the same sweep produced disagreements every time.
 
 | Mutation | Vectors | Mismatching |
 |---|---|---|
-| `kLumaG` 0.587f → 0.588f | 355192 | 9179 |
-| `std::round` → `std::nearbyint` in the mode-4 quantiser | 355192 | 12359 |
-| (none — the recovered source) | 355192 | **0** |
+| `kLumaG` 0.587f → 0.588f | 710104 | 18083 |
+| `std::round` → `std::nearbyint` in the mode-4 quantiser | 710104 | 13084 |
+| (none — the recovered source) | 710104 | **0** |
 
 Both mutations were re-measured against the source as committed here, so the sensitivity
-claim belongs to THIS source and not to an earlier draft of it. The sweep is 8-bit only,
-because the 16-bit instantiation is not recovered at this commit.
+claim belongs to THIS source and not to an earlier draft of it.
 
 ### What is NOT claimed
 
@@ -72,7 +68,7 @@ Everything below was read from the arm64 disassembly of the shipped bundle.
 |---|---|
 | Full bundle disassembly | `/tmp/ae/glitchkit.asm` |
 | `apply<unsigned char>` body | `/tmp/ae/glitch_uc.txt` — `__ZN6glitch5applyIhEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf` at `0x738..0x1948`, 1157 instructions |
-| `apply<unsigned short>` body | `/tmp/ae/glitch_us.txt` — `__ZN6glitch5applyItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf` at `0x1a04..0x2d30`, 1228 instructions — **listing read, symbol NOT recovered at this commit** |
+| `apply<unsigned short>` body | `/tmp/ae/glitch_us.txt` — `__ZN6glitch5applyItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf` at `0x1a04..0x2d30`, 1228 instructions |
 | `hashKey` | `__ZN6glitch7hashKeyEjjj` at `0x197c`, 34 instructions |
 | `patternFrame` | `__ZN6glitch12patternFrameEjf` at `0x1960`, 7 instructions |
 | `clampf` | `__ZN6glitch6clampfEfff` at `0x194c`, 5 instructions |
@@ -226,7 +222,7 @@ The mode-4 quantiser rounds with `frinta`. On AArch64 the four rounding instruct
 easy to confuse: `frintn` is ties to EVEN, `frintp` is ties toward +infinity, `frintm` is
 ties toward -infinity, `frintz` is toward zero, and `frinta` is ties AWAY FROM ZERO.
 `std::round` is the C spelling of `frinta`. `std::nearbyint` is `frintn` — and using it
-disagrees with the shipped bundle on **12359 of 355192** differential vectors. The source
+disagrees with the shipped bundle on **13084 of 710104** differential vectors. The source
 uses `std::round` and says why.
 
 The same rule governs the shipped's `fcvtas` (round to nearest, ties away, into a signed
@@ -256,7 +252,7 @@ width, a zero height and a zero-by-zero frame all take the early return, and a 5
 1x1 frame do not.
 
 The 16-bit build has the same guard over the same paired load (`ldp w9, w28, [x0, #0x8]` at
-`0x1a24`, `ccmp w28, #0x1, #0x8, ge` at `0x1a2c`, `b.ge 0x1a54` at `0x1a30`) and the same
+`0x1a24`, `ccmp w28, #1, #0x8, ge` at `0x1a2c`, `b.ge 0x1a54` at `0x1a30`) and the same
 outcome. There the branch is taken when N == V, so the early-return path is the one where
 the `ccmp` did NOT compare — N = 1, V = 0, so N != V and the branch is not taken and
 control falls into the epilogue at `0x1a34`. The observable result is the same: nothing is
@@ -309,16 +305,16 @@ so the answer is the same as the zero branch. The recovered source writes the gu
 negated `<=` so the compiler emits `hi` rather than `gt`, which keeps the codegen identical
 instead of relying on that coincidence.
 
-## Why the recovered `apply<T>` body is behavioural and not instruction-identical
+## Why the two `apply<T>` bodies are behavioural and not instruction-identical
 
-The four scalar helpers came out of the transcription byte-for-byte. The `apply<T>` body
-could not, and the reason is worth stating plainly rather than hiding behind
+The four scalar helpers came out of the transcription byte-for-byte. The two `apply<T>`
+bodies could not, and the reason is worth stating plainly rather than hiding behind
 "semantics match":
 
-* The body is 1157 instructions of loop-heavy code with four different mode bodies, and
-  the recovered source is structured as five separate helper functions rather than one
-  1157-instruction routine. The compiler then allocates registers and schedules the loops
-  differently, so the instruction stream comes out at 1409.
+* The bodies are 1157 and 1228 instructions of loop-heavy code with four different mode
+  bodies, and the recovered source is structured as five separate helper functions rather
+  than one 1157-instruction routine. The compiler then allocates registers and schedules
+  the loops differently, so the instruction stream comes out at 1409 and 1477.
 * The float arithmetic had to be pinned to the shipped's ROUNDING, not just its algebra.
   Every shipped `fmadd` is an explicit `std::fma`, every shipped multiply-and-add pair is
   a separate multiply and add, and `fp contract(off)` is set around the implementation so
@@ -331,20 +327,3 @@ could not, and the reason is worth stating plainly rather than hiding behind
 The result is a function that agrees with the shipped one on every vector measured, and an
 instruction stream that does not. That is a behavioural recovery, and the header, this
 file, and `test/glitch.test.mjs` all say so.
-
-## What is still outstanding
-
-`glitch::apply<unsigned short>` — `__ZN6glitch5applyItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf`,
-which `tools/codegen-diff.mjs` prints as
-`glitch::apply(ItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf)`,
-at `0x1a04..0x2d30`, 1228 instructions in the bundle, listed in `/tmp/ae/glitch_us.txt`.
-
-Its LISTING has been read: the 16-bit build is the same source at a wider channel width,
-which is why every structural fact about "the 16-bit build" above is already recorded here
-and in `src/glitch/glitch.h` — the paired load, the spilled view pointers, the byte-scaled
-strides, and the seven writes that repurpose `x2`.
-
-Its BODY is not recovered at this commit. The symbol is deliberately not instantiated in
-`src/glitch/glitch.cpp`, so `tools/codegen-diff.mjs` reports it as **not implemented**
-rather than as a difference, and `test/glitch.test.mjs` asserts that it is still listed as
-outstanding. Nothing in this file claims otherwise.

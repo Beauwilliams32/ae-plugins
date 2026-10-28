@@ -13,17 +13,6 @@
 #include <random>
 #include <vector>
 
-// Whether this build of the self-check exercises the 16-bit instantiation.
-//
-// Naming `glitch::apply<unsigned short>` ANYWHERE in this translation unit
-// would instantiate the template and put the symbol back into the differ's
-// comparison — so a commit at which the 16-bit body is still outstanding must
-// not name it here either, and this switch is how that is expressed. It is 0
-// exactly when the recovered source does not instantiate the 16-bit body.
-#ifndef GLITCH_HAVE_16BIT
-#define GLITCH_HAVE_16BIT 0
-#endif
-
 namespace {
 
 int failures = 0;
@@ -565,7 +554,6 @@ void runDifferential() {
 
   auto ship8 = reinterpret_cast<ShippedApplyFn<unsigned char>>(
       dlsym(handle, "_ZN6glitch5applyIhEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf"));
-#if GLITCH_HAVE_16BIT
   auto ship16 = reinterpret_cast<ShippedApplyFn<unsigned short>>(
       dlsym(handle, "_ZN6glitch5applyItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf"));
   if (!ship8 || !ship16) {
@@ -574,14 +562,6 @@ void runDifferential() {
     dlclose(handle);
     return;
   }
-#else
-  if (!ship8) {
-    std::printf("  SKIP the shipped bundle does not export apply<unsigned char>, "
-                "so the dlopen differential did not run\n");
-    dlclose(handle);
-    return;
-  }
-#endif
 
   DiffCounters c;
   std::mt19937 rng(0xC0FFEEu);
@@ -629,9 +609,7 @@ void runDifferential() {
 
           const unsigned seed = (unsigned)(si * 2654435761u);
           compareOne<unsigned char>(ship8, p, w, h, inRB, outRB, seed, 255.0f, rng, c);
-#if GLITCH_HAVE_16BIT
           compareOne<unsigned short>(ship16, p, w, h, inRB, outRB, seed, 65535.0f, rng, c);
-#endif
         }
       }
     }
@@ -650,15 +628,11 @@ void runDifferential() {
       const int dims[][2] = {{0, 5}, {5, 0}, {0, 0}, {1, 1}};
       for (const auto& d : dims) {
         compareOne<unsigned char>(ship8, p, d[0], d[1], 4, 4, 3u, 255.0f, rng, c);
-#if GLITCH_HAVE_16BIT
         compareOne<unsigned short>(ship16, p, d[0], d[1], 4, 4, 3u, 65535.0f, rng, c);
-#endif
       }
       // An output view that is smaller than the input's frame.
       compareOne<unsigned char>(ship8, p, 16, 12, 64, 64, 5u, 255.0f, rng, c);
-#if GLITCH_HAVE_16BIT
       compareOne<unsigned short>(ship16, p, 16, 12, 64, 64, 5u, 65535.0f, rng, c);
-#endif
     }
   }
 
@@ -676,9 +650,7 @@ void runDifferential() {
         p.blockSize = s;
         p.scanline = s;
         compareOne<unsigned char>(ship8, p, 33, 7, 33 * 4, 33 * 4, 11u, 255.0f, rng, c);
-#if GLITCH_HAVE_16BIT
         compareOne<unsigned short>(ship16, p, 33, 7, 33 * 4, 33 * 4, 11u, 65535.0f, rng, c);
-#endif
       }
     }
   }
@@ -694,9 +666,7 @@ void runDifferential() {
       p.mode = mode;
       for (unsigned seed = 0; seed < 64u; ++seed) {
         compareOne<unsigned char>(ship8, p, 24, 9, 24 * 4, 24 * 4, seed, 255.0f, rng, c);
-#if GLITCH_HAVE_16BIT
         compareOne<unsigned short>(ship16, p, 24, 9, 24 * 4, 24 * 4, seed, 65535.0f, rng, c);
-#endif
       }
     }
   }
@@ -712,9 +682,7 @@ void runDifferential() {
       for (int luma : {0, 1}) {
         p.luma = (unsigned char)luma;
         compareOne<unsigned char>(ship8, p, 40, 6, 40 * 4, 40 * 4, 17u, 255.0f, rng, c);
-#if GLITCH_HAVE_16BIT
         compareOne<unsigned short>(ship16, p, 40, 6, 40 * 4, 40 * 4, 17u, 65535.0f, rng, c);
-#endif
       }
     }
   }
@@ -745,15 +713,11 @@ void runDifferential() {
               p.spread = spread;
               p.luma = (unsigned char)luma;
               compareOne<unsigned char>(ship8, p, w, h, packedRB, packedRB, 9u, 255.0f, rng, c);
-#if GLITCH_HAVE_16BIT
               compareOne<unsigned short>(ship16, p, w, h, packedRB, packedRB, 9u, 65535.0f, rng, c);
-#endif
               // And once with a padded input stride, so the source stride is
               // not always the tightly packed one.
               compareOne<unsigned char>(ship8, p, w, h, packedRB + 4, packedRB, 9u, 255.0f, rng, c);
-#if GLITCH_HAVE_16BIT
               compareOne<unsigned short>(ship16, p, w, h, packedRB + 4, packedRB, 9u, 65535.0f, rng, c);
-#endif
             }
           }
         }

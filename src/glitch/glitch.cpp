@@ -145,11 +145,6 @@ unsigned int patternFrame(unsigned int seed, float time) {
 //                          back-edge to the epilogue, 0x2d34 is the NEXT
 //                          function, `glitch::clampi`)
 //
-// The RECOVERED body is the 8-bit one, at 0x738..0x1948, listed in
-// /tmp/ae/glitch_uc.txt. The 16-bit listing (/tmp/ae/glitch_us.txt) has been read
-// as well — it is the same source at a wider channel depth — but its symbol is NOT
-// instantiated at this commit, so `apply<unsigned short>` is still outstanding.
-//
 // Every fact claimed here is read from those listings; src/glitch/RECOVERY-NOTES.md
 // gives the address (and the numbered-listing line) each one was read from.
 //
@@ -844,10 +839,13 @@ template void apply<unsigned char>(const View<const unsigned char>&,
                                    unsigned, float);
 // The 16-bit twin — `__ZN6glitch5applyItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf`
 // at 0x1a04..0x2d30, 1228 instructions in the bundle, listed in
-// /tmp/ae/glitch_us.txt — is the SAME source at a different channel width, and it
-// is NOT instantiated at this commit: it is still outstanding, so the differ
-// reports it as not implemented. Naming it anywhere in this translation unit
-// would instantiate it implicitly and put it back into the comparison, so it is
-// deliberately not named.
+// /tmp/ae/glitch_us.txt — is the SAME source at a different channel width: the
+// only difference is that View<T>::rowBytes counts ELEMENTS of T and the
+// element type is a wider unsigned. It is instantiated for the same reason as
+// the 8-bit one: the differ discovers the bundle's symbols by NAME, so a
+// template with no explicit instantiation is ABSENT from the comparison.
+template void apply<unsigned short>(const View<const unsigned short>&,
+                                    View<unsigned short>&, const Params&,
+                                    unsigned, float);
 
 }  // namespace glitch
