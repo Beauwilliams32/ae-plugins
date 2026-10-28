@@ -130,37 +130,119 @@ int main() {
   std::printf("beatgrid::OnsetEnvelope::frameTimeSeconds\n");
   {
     beatgrid::OnsetEnvelope env{};
-    env.hopInterval = 20.0;
-    env.startFrameHalf = 4;
-    env.step = 2;
+    env.sampleRate = 20.0;
+    env.windowSize = 8;
+    env.hopSize = 2;
 
-    // (frame * step + startHalf / 2) / hopInterval = (6 + 2) / 20
-    checkNear(env.frameTimeSeconds(3), 0.4, 1e-12, "frame 3 with step 2 and start 4/2 is 0.4 s");
-    checkNear(env.frameTimeSeconds(0), 0.1, 1e-12, "frame 0 is the start alone: 2/20");
+    // (frame * hopSize + windowSize / 2) / sampleRate = (6 + 4) / 20
+    checkNear(env.frameTimeSeconds(3), 0.5, 1e-12, "frame 3 with hop 2 and window 8 is 0.5 s");
+    checkNear(env.frameTimeSeconds(0), 0.2, 1e-12, "frame 0 is the window's HALF: 4/20");
 
-    // THE HALF-FRAME SCALE. `startFrameHalf` counts half frames — the compiler emits
-    // `scvtf d3, w8, #0x1`, a fixed-point convert with one fractional bit — so setting
-    // it to 1 contributes 0.5 frames, not 1.
+    // THE WINDOW IS HALVED ON THE WAY IN. The compiler emits `scvtf d3, w8, #0x1`, a
+    // fixed-point convert with one fractional bit, so the window size is a HALF-window
+    // count: a window of 2 contributes one frame, not two.
     beatgrid::OnsetEnvelope half{};
-    half.hopInterval = 20.0;
-    half.startFrameHalf = 1;
-    half.step = 0;
-    checkNear(half.frameTimeSeconds(0), 0.025, 1e-12, "a startFrameHalf of 1 contributes HALF a frame (0.5/20)");
+    half.sampleRate = 20.0;
+    half.windowSize = 2;
+    half.hopSize = 0;
+    checkNear(half.frameTimeSeconds(0), 0.05, 1e-12, "a window of 2 contributes HALF a frame (1/20)");
 
-    // A negative step is carried through with its sign.
+    // A negative hop is carried through with its sign.
     beatgrid::OnsetEnvelope backwards{};
-    backwards.hopInterval = 10.0;
-    backwards.startFrameHalf = 0;
-    backwards.step = -3;
-    checkNear(backwards.frameTimeSeconds(4), -1.2, 1e-12, "a negative step moves backwards in time");
+    backwards.sampleRate = 10.0;
+    backwards.windowSize = 0;
+    backwards.hopSize = -3;
+    checkNear(backwards.frameTimeSeconds(4), -1.2, 1e-12, "a negative hop moves backwards in time");
 
     // The guard, which returns zero rather than dividing.
     beatgrid::OnsetEnvelope zero{};
-    zero.hopInterval = 0.0;
-    zero.step = 5;
-    check(zero.frameTimeSeconds(100) == 0.0, "hopInterval 0 returns 0");
-    zero.hopInterval = -1.0;
-    check(zero.frameTimeSeconds(100) == 0.0, "a negative hopInterval returns 0");
+    zero.sampleRate = 0.0;
+    zero.hopSize = 5;
+    check(zero.frameTimeSeconds(100) == 0.0, "a sample rate of 0 returns 0");
+    zero.sampleRate = -1.0;
+    check(zero.frameTimeSeconds(100) == 0.0, "a negative sample rate returns 0");
+  }
+
+  std::printf("beatgrid::estimatePhaseSeconds\n");
+  {
+    // An envelope at 100 frames a second (a 1000 Hz sample rate and a hop of 10) with a
+    // single onset in it. The window's half is 50 samples, so frame 20 sits 0.20 s into
+    // the envelope but is the CENTRE of the 100-sample window that starts at 0.15 s.
+    beatgrid::OnsetEnvelope env{};
+    env.sampleRate = 1000.0;
+    env.windowSize = 100;
+    env.hopSize = 10;
+    env.framesPerSecond = 100.0;
+    env.values.assign(100, 0.0f);
+    env.values[20] = 1.0f;
+
+    // At 120 bpm the beat is half a second and the candidates are half a beat apart, so
+    // the onset at 0.25 s is exactly one of them.
+    const float phase = beatgrid::estimatePhaseSeconds(env, 120.0f);
+    checkNear(phase, 0.25, 1e-5, "the onset at 0.25 s is the phase at 120 bpm");
+    check(phase >= 0.0f && phase < 0.5f, "the phase is inside one beat period");
+
+    // The guards.
+    beatgrid::OnsetEnvelope empty{};
+    check(beatgrid::estimatePhaseSeconds(empty, 120.0f) == 0.0f, "an empty envelope gives 0");
+    check(beatgrid::estimatePhaseSeconds(env, 0.0f) == 0.0f, "a bpm of 0 gives 0");
+    check(beatgrid::estimatePhaseSeconds(env, -120.0f) == 0.0f, "a negative bpm gives 0");
+
+    // A non-positive frame rate is a guard too: the listing checks +0x28 before it does
+    // any arithmetic at all.
+    beatgrid::OnsetEnvelope noRate = env;
+    noRate.framesPerSecond = 0.0;
+    check(beatgrid::estimatePhaseSeconds(noRate, 120.0f) == 0.0f,
+          "a frame rate of 0 gives 0");
+  }
+
+  std::printf("beatgrid::generateBeatGrid\n");
+  {
+    const auto Beat = beatgrid::Subdivision::Beat;
+    const auto Half = beatgrid::Subdivision::Half;
+    const auto Four = beatgrid::Subdivision::FourBeats;
+
+    // 120 bpm is a half-second beat, and the region is two seconds long.
+    const auto grid = beatgrid::generateBeatGrid(120.0, 0.0, Beat, 0.0, 2.0);
+    check(grid.size() == 4, "four beats in two seconds at 120 bpm");
+    checkNear(grid[0].timeSeconds, 0.0, 1e-9, "the first marker is at the origin");
+    checkNear(grid[1].timeSeconds, 0.5, 1e-9, "the second marker is half a beat later");
+    checkNear(grid[3].timeSeconds, 1.5, 1e-9, "the fourth marker is 1.5 s in");
+
+    // THE MARKER NUMBERS ARE ONE-BASED. The listing adds one to the beat index.
+    checkNear(grid[0].beatNumber, 1.0, 1e-9, "the first marker is beat 1");
+    checkNear(grid[1].beatNumber, 2.0, 1e-9, "the second marker is beat 2");
+    checkNear(grid[3].beatNumber, 4.0, 1e-9, "the fourth marker is beat 4");
+
+    // A half subdivision halves the period, so twice as many markers.
+    const auto halves = beatgrid::generateBeatGrid(120.0, 0.0, Half, 0.0, 2.0);
+    check(halves.size() == 8, "a half subdivision doubles the marker count");
+    checkNear(halves[1].timeSeconds, 0.25, 1e-9, "the half-beat markers are a quarter of a beat apart");
+
+    // Four beats is NOT a fraction: the period is four beats long.
+    const auto fours = beatgrid::generateBeatGrid(120.0, 0.0, Four, 0.0, 2.0);
+    check(fours.size() == 1, "a four-beat subdivision puts one marker in two seconds");
+    checkNear(fours[0].timeSeconds, 0.0, 1e-9, "and that marker is at the origin");
+
+    // The origin offsets the whole grid.
+    const auto offset = beatgrid::generateBeatGrid(120.0, 0.25, Beat, 0.0, 2.0);
+    check(offset.size() == 4, "an origin of 0.25 s still gives four markers");
+    checkNear(offset[0].timeSeconds, 0.25, 1e-9, "the first marker is at the origin");
+    checkNear(offset[0].beatNumber, 1.0, 1e-9, "and it is still beat 1");
+
+    // The region bounds the grid: it starts at or after the region's start.
+    const auto clipped = beatgrid::generateBeatGrid(120.0, 0.0, Beat, 0.1, 1.0);
+    check(clipped.size() == 2, "a region from 0.1 s to 1.1 s holds two markers");
+    checkNear(clipped[0].timeSeconds, 0.5, 1e-9, "the first marker is rounded UP to 0.5 s");
+
+    // The guards.
+    check(beatgrid::generateBeatGrid(0.0, 0.0, Beat, 0.0, 2.0).empty(), "a bpm of 0 gives no grid");
+    check(beatgrid::generateBeatGrid(-120.0, 0.0, Beat, 0.0, 2.0).empty(),
+          "a negative bpm gives no grid");
+    check(beatgrid::generateBeatGrid(120.0, 0.0, Beat, 0.0, 0.0).empty(),
+          "a region of no length gives no grid");
+    check(beatgrid::generateBeatGrid(120.0, 0.0, Beat, 0.0, -1.0).empty(),
+          "a negative region length gives no grid");
   }
 
   std::printf("the shared DSP, read through this namespace's copy\n");

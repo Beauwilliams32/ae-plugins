@@ -59,18 +59,18 @@ std::vector<float> downmixToMono(const float* interleaved, size_t frames, int ch
 // __ZNK8beatgrid13OnsetEnvelope16frameTimeSecondsEi, 13 instrs
 //
 //   ldr d1, [x0, #0x18] / movi.2d v0, #0 / fcmp d1, #0.0 / b.ls <ret>
-//       ; hopInterval <= 0 -> return 0.0
+//       ; sampleRate <= 0 -> return 0.0
 //   scvtf d0, w1                       ; (double)frame
 //   ldr s2, [x0, #0x24] / sshll.2d v2, v2, #0x0 / scvtf d2, d2
-//       ; the 16-bit field at +0x24, SIGN-EXTENDED, then converted
+//       ; the hop size at +0x24, SIGN-EXTENDED, then converted
 //   ldr w8, [x0, #0x20] / scvtf d3, w8, #0x1
-//       ; (double)that field, fixed-point scaled by 1/2 -- so it counts half-frames
+//       ; (double)the window size, fixed-point scaled by 1/2 -- the window's half
 //   fmadd d0, d0, d2, d3 / fdiv d0, d0, d1
-//       ; (frame * step + startHalf / 2) / hopInterval
+//       ; (frame * hopSize + windowSize / 2) / sampleRate
 double OnsetEnvelope::frameTimeSeconds(int frame) const {
-  if (hopInterval <= 0.0) return 0.0;
-  return (static_cast<double>(frame) * static_cast<double>(step)
-          + static_cast<double>(startFrameHalf) / 2.0) / hopInterval;
+  if (sampleRate <= 0.0) return 0.0;
+  return (static_cast<double>(frame) * static_cast<double>(hopSize)
+          + static_cast<double>(windowSize) * 0.5) / sampleRate;
 }
 
 // __ZN8beatgrid17subdivisionFactorENS_11SubdivisionE, 8 instrs
@@ -133,6 +133,174 @@ float phaseSawtooth(double bpm, double startTime, Subdivision subdivision, doubl
   double phase = std::fmod(time - startTime, period);
   if (phase < 0.0) phase = period + phase;
   return static_cast<float>(phase / period);
+}
+
+// ---------------------------------------------------------------------------
+// __ZN8beatgrid20estimatePhaseSecondsERKNS_13OnsetEnvelopeEf, 138 instrs
+//
+// The listing (/tmp/ae/beatgrid.asm lines 1405-1543) says:
+//
+//   ldp x20, x8, [x0]        ; the envelope's values, begin and end
+//   cmp x20, x8 / b.eq       ; empty -> 0
+//   fcmp s1, #0.0 / b.ls     ; bpm <= 0 -> 0
+//   ldr d10, [x0, #0x28]     ; the frame rate
+//   fcmp d10, #0.0 / b.ls    ; a non-positive frame rate -> 0
+//   fdiv d8, d1, d0          ; period = 60 / bpm
+//   ucvtf d2, x22            ; the frame count
+//   fdiv d12, d2, d10        ; duration = count / frameRate
+//   ldr d3, [x0, #0x18]      ; the sample rate
+//   ldr w9, [x0, #0x20] / scvtf d4, w9, #0x1 / fdiv d11, d4, d3
+//       ; halfWindow = (windowSize / 2) / sampleRate, and ZERO when the sample
+//       ; rate is not positive
+//   mov w0, #0x1000 / bl __Znwm / bl _bzero
+//       ; a 512-entry DOUBLE score table, zeroed
+//
+// and then, for each of the 512 candidates, a score that is the sum of the envelope
+// sampled every `period` seconds, linearly interpolated between frames:
+//
+//   fcvtms w12, d7           ; the frame index, truncated toward zero
+//   cmp w10, w12 / b.gt      ; below the last frame -> interpolate
+//   fsub s7, s2, s6          ; 1 - the fraction
+//   fmadd s6, s16, s7, s6    ; values[f] * (1 - frac) + values[f+1] * frac
+//
+// The winner is then refined against its two neighbours:
+//
+//   fmadd d1, d1, d3, d0     ; p - 2c
+//   fadd d3, d1, d2          ; p - 2c + n
+//   fabs d4, d3 / fcmp d4, 1e-12
+//   fsub d0, d0, d2 / fmul d0, d0, 0.5 / fdiv d0, d0, d3
+//       ; shift = (p - n) / 2 / curvature, clamped to [-1, 1]
+//
+// and the phase is wrapped into [0, period) with `fmod`.
+// ---------------------------------------------------------------------------
+float estimatePhaseSeconds(const OnsetEnvelope& envelope, float bpm) {
+  const std::vector<float>& values = envelope.values;
+  if (values.empty()) return 0.0f;
+  if (bpm <= 0.0f) return 0.0f;
+
+  const double rate = envelope.framesPerSecond;
+  if (rate <= 0.0) return 0.0f;
+
+  const double period = 60.0 / static_cast<double>(bpm);
+  const size_t count = values.size();
+  const double duration = static_cast<double>(count) / rate;
+
+  // The half window is the time from the START of a frame to its CENTRE. It is zero
+  // when the sample rate is not positive, exactly as the listing guards it.
+  double halfWindow = 0.0;
+  if (envelope.sampleRate > 0.0) {
+    halfWindow = (static_cast<double>(envelope.windowSize) * 0.5) / envelope.sampleRate;
+  }
+
+  std::vector<double> scores(512);
+  double bestScore = -1.0;
+  double bestTime = 0.0;
+  size_t bestIndex = 0;
+
+  for (size_t i = 0; i < 512; ++i) {
+    const double t0 = static_cast<double>(i) * period * 0.5;
+    double score = 0.0;
+    double t = t0;
+    while (t < duration) {
+      const double frameF = rate * (t - halfWindow);
+      float v = 0.0f;
+      if (frameF >= 0.0) {
+        const int f = static_cast<int>(frameF);
+        if (f < static_cast<int>(count) - 1) {
+          const float frac = static_cast<float>(frameF - static_cast<double>(f));
+          v = values[static_cast<size_t>(f)] * (1.0f - frac)
+            + values[static_cast<size_t>(f) + 1] * frac;
+        } else if (count >= 1) {
+          v = values[count - 1];
+        }
+      }
+      score += static_cast<double>(v);
+      t += period;
+    }
+    scores[i] = score;
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = i;
+      bestTime = t0;
+    }
+  }
+
+  // The neighbours of the winner, WRAPPED: 511 and 0 are neighbours of 0.
+  const size_t prev = (bestIndex + 511) & 511;
+  const size_t next = (bestIndex + 1) & 511;
+  const double p = scores[prev];
+  const double c = scores[bestIndex];
+  const double n = scores[next];
+  const double curvature = (p - 2.0 * c) + n;
+
+  double shift = 0.0;
+  if (std::fabs(curvature) >= 1e-12) {
+    shift = (p - n) * 0.5 / curvature;
+    if (shift < -1.0) shift = -1.0;
+    if (shift > 1.0) shift = 1.0;
+  }
+
+  double phase = std::fmod(bestTime + shift * (0.5 * period), period);
+  if (phase < 0.0) phase += period;
+  return static_cast<float>(phase);
+}
+
+// ---------------------------------------------------------------------------
+// __ZN8beatgrid16generateBeatGridEddNS_11SubdivisionEdd, 94 instrs
+//
+// The listing (/tmp/ae/beatgrid.asm lines 1611-1705) says:
+//
+//   stp xzr, xzr, [x8] / str xzr, [x8, #0x10]
+//       ; the returned vector is emptied FIRST, so every early exit is an empty grid
+//   fcmp d0, #0.0 / b.ls   ; bpm <= 0 -> empty
+//   fcmp d3, #0.0 / b.ls   ; the region length <= 0 -> empty
+//   fdiv d9, d4, d0        ; the beat period, 60 / bpm
+//   ldr d1, [x9, w8, uxtw #3]   ; the same four-entry subdivision table
+//   fmul d10, d9, d1       ; the marker period
+//   fcmp d10, #0.0 / b.ls  ; a non-positive period -> empty
+//   fadd d11, d2, d3       ; the end of the region
+//   fsub d0, d2, d8 / fdiv d0, d0, d10 / frintp d0
+//       ; ceil((regionStart - origin) / period)
+//   fmadd d12, d0, d10, d8 ; ... * period + origin
+//   fcmp d12, d0 / b.pl    ; and then advanced while it is before the region
+//   fcmp d12, d11 / b.pl   ; past the end of the region -> empty
+//
+// and the marker number:
+//
+//   fsub d0, d12, d8 / fdiv d0, d0, d9   ; the beat index from the origin
+//   fmul d1, d0, 0.25 / frinta d1, d1    ; rounded to the nearest quarter beat
+//   cmp w20, #0x5 / fcsel d0, d1, d0, eq ; ... but only for the four-beat subdivision
+//   fadd d0, d0, d14                    ; the marker number is that plus one
+//   stp d12, d0, [sp]                   ; the marker: its time, then its number
+// ---------------------------------------------------------------------------
+std::vector<BeatMarker> generateBeatGrid(double bpm, double origin, Subdivision subdivision,
+                                          double regionStart, double regionLength) {
+  std::vector<BeatMarker> markers;
+  if (bpm <= 0.0) return markers;
+  if (regionLength <= 0.0) return markers;
+
+  const double beatPeriod = 60.0 / bpm;
+  const double period = beatPeriod * subdivisionFactor(subdivision);
+  if (period <= 0.0) return markers;
+
+  const double regionEnd = regionStart + regionLength;
+  double t = std::ceil((regionStart - origin) / period) * period + origin;
+  // The shipped code compares against `regionStart - 1e-9`, so a marker that lands a
+  // hair before the region is still emitted rather than dropped by a rounding error.
+  while (t < regionStart - 1e-9) t += period;
+  if (t >= regionEnd) return markers;
+
+  while (t < regionEnd) {
+    double index = (t - origin) / beatPeriod;
+    if (subdivision == Subdivision::FourBeats) {
+      // The four-beat subdivision numbers its markers in QUARTER beats.
+      index = std::nearbyint(index * 0.25);
+    }
+    index += 1.0;
+    markers.push_back(BeatMarker{t, index});
+    t += period;
+  }
+  return markers;
 }
 
 }  // namespace beatgrid

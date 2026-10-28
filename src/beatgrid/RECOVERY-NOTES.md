@@ -7,8 +7,7 @@ unstripped.
 
 ## State
 
-Seven of the twelve `beatgrid::` symbols are recovered; every one compiles to the
-bundle's instruction COUNT, and two are instruction-identical.
+Nine of the twelve `beatgrid::` symbols are recovered; three are instruction-identical.
 
 | Function | Instrs | State |
 |---|---|---|
@@ -21,8 +20,8 @@ bundle's instruction COUNT, and two are instruction-identical.
 | `OnsetEnvelope::frameTimeSeconds` | 13 | Recovered — 14 here (see below) |
 | `computeOnsetEnvelope` | 436 | Identified only |
 | `estimateTempoBpm` | 578 | Identified only |
-| `estimatePhaseSeconds` | 138 | Identified only |
-| `generateBeatGrid` | 94 | Identified only |
+| `estimatePhaseSeconds` | 138 | Recovered — **[partial]**, 135 here |
+| `generateBeatGrid` | 94 | Recovered — **[partial]**, 94 here |
 | `analyzeBeatGrid` | 57 | Identified only |
 
 `specs/BeatGridRuler.json` lists fourteen domain entries, of which two are `std::vector`
@@ -93,6 +92,58 @@ completeness marker was measured against a list with holes in it. Fixing the par
 this function appear (14 instructions here against the bundle's 13: the shipped code
 folds the halving into the convert and this build does not) and exposed two more that had
 never been compared: `spectra::Spectrogram::hzToBin` and `lutblend::CubeLUT::valid`.
+
+## `estimatePhaseSeconds` (138 instructions) — [partial]
+
+The phase of the beat, in seconds, within one beat period. Read in full from
+`/tmp/ae/beatgrid.asm` lines 1405–1543.
+
+It is a coarse-to-fine search, and both halves of that matter:
+
+* 512 candidates, **half a beat apart** (`t0 = i * period * 0.5`), each scored by
+  summing the envelope sampled every `period` seconds;
+* the winner is then refined against its two neighbours — `shift = (p - n) / 2 /
+  (p - 2c + n)`, clamped to [-1, 1] — which buys a **sub-half-beat** resolution, and
+  the result is wrapped into `[0, period)` with `fmod`.
+
+Three details the listing pins and a paraphrase would lose:
+
+* the samples are offset by the **half window** (`(windowSize / 2) / sampleRate`), so
+  the score reads the centre of the analysis window and not its start. The half window
+  is **zero** when the sample rate is not positive — the listing guards the field at
+  `+0x18` before it does any arithmetic;
+* the interpolation between frames is **linear** and in **float**:
+  `values[f] * (1 - frac) + values[f + 1] * frac`, with `frac` the fractional part of
+  the frame position truncated toward zero (`fcvtms`);
+* the neighbour indices **wrap**: `511` and `0` are the neighbours of `0`.
+
+**Why it is `[partial]` and not `[exact]`: 135 instructions here against the bundle's
+138.** The three are the empty-and-tempo guards: this build folds the two early exits
+into a single `cmp`/`ccmp` pair where the shipped code tests them separately. The
+BEHAVIOUR is the same — the self-check pins the phase of a known onset to 1e-5 s.
+
+## `generateBeatGrid` (94 instructions) — [partial]
+
+The markers of the beat grid across a region. Read in full from `/tmp/ae/beatgrid.asm`
+lines 1611–1705. **94 instructions here against the bundle's 94, and only four
+positions differ** — and those four are the switch table's address, which this build
+annotates symbolically (`adrp x9, l_switch.table...@PAGE`) where the shipped listing
+prints the resolved page and offset. The same difference is already recorded against
+`subdivisionFactor`; it is an annotation, not a code difference.
+
+What the listing pins:
+
+* the returned vector is **emptied first** (`stp xzr, xzr, [x8]` / `str xzr, [x8, #0x10]`),
+  so every guard — a non-positive bpm, a region of no length, a non-positive period —
+  returns an empty grid rather than a partially built one;
+* the first marker is rounded **UP** from the origin onto the subdivision period
+  (`frintp`), and then advanced while it is still before the region — against
+  `regionStart - 1e-9`, so a marker that lands a hair early is not dropped by a
+  rounding error;
+* the marker number is the beat index from the origin **plus one**;
+* the four-beat subdivision numbers its markers in **quarter beats**
+  (`nearbyint(index * 0.25)`), and only that subdivision gets the treatment — the
+  listing computes it unconditionally and then selects, which is the same answer.
 
 ## What is next
 
