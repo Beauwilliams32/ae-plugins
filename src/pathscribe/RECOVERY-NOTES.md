@@ -283,7 +283,16 @@ verified against the **shipped arm64 bundle itself** by a dlopen differential
 harness (`/tmp/ae/ae05o/bars-diff.cpp`): the installed bundle is dlopened, its
 `pathscribe::rasterizeBars` is called through `dlsym`, and the result is compared
 bit-for-bit against this transcription over randomised inputs. **60,000 randomised
-vectors, 410,950,444 cells compared, 68,652,909 of them non-zero, 0 disagreements.**
+vectors over three seeds, 634,072,063 cells compared, 107,637,806 of them non-zero,
+0 disagreements.** Reproduce with:
+
+```
+clang++ -std=c++17 -O2 -I src/pathscribe -o /tmp/ae/ae05o/bars-diff /tmp/ae/ae05o/bars-diff.cpp src/pathscribe/pathscribe.cpp
+for s in 20261028 20261029 20261030; do /tmp/ae/ae05o/bars-diff 20000 $s wide; done
+```
+
+(the `wide` argument widens the grid to 200x200 and up to 64 levels; without it the same
+60,000 vectors compare 34,543,188 cells, also with 0 disagreements.)
 
 ## A discrepancy found while recovering `rasterizeBars` — NOT fixed here
 

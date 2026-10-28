@@ -17,11 +17,11 @@ a function can be recovered and still differ from the binary in its instruction 
 | Effects in the fleet | 16 |
 | With a recovered source namespace | 16 |
 | Without one | 0 |
-| Named symbols recovered | 155 of 166 |
-| — instruction-identical to the shipped binary | 65 |
+| Named symbols recovered | 156 of 166 |
+| — instruction-identical to the shipped binary | 66 |
 | — recovered but differing in codegen | 90 |
-| Authored instructions recovered | 17353 of 23246 (74.6%) |
-| Lines of recovered source | 21400 |
+| Authored instructions recovered | 17433 of 23246 (75.0%) |
+| Lines of recovered source | 21918 |
 
 ## Per effect
 
@@ -40,7 +40,7 @@ a class member is named after its class.
 | GlitchKit | `glitch::` | 4/6 | 4 | 0 | 2 | 51/2436 | 2.1% |
 | LUTBlend | `lutblend::` | 8/8 | 3 | 5 | 0 | 2548/2548 | 100.0% |
 | MaskFlow | `maskflow::` | 9/9 | 3 | 6 | 0 | 972/972 | 100.0% |
-| MotionCurveX | `motioncurvex::` | 10/11 | 1 | 9 | 1 | 2283/2363 | 96.6% |
+| MotionCurveX | `motioncurvex::` | 11/11 | 2 | 9 | 0 | 2363/2363 | 100.0% |
 | NoiseField | `noisefield::` | 6/10 | 3 | 3 | 4 | 368/1577 | 23.3% |
 | PathScribe | `pathscribe::` | 18/18 | 8 | 10 | 0 | 1477/1477 | 100.0% |
 | ShakeCapture | `shake::` | 11/11 | 5 | 6 | 0 | 1722/1722 | 100.0% |
