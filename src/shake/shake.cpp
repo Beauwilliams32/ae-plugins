@@ -248,4 +248,155 @@ std::vector<float> resampleProfile(const std::vector<float>& values, double step
   return out;
 }
 
+
+// __ZN5shake16trackTranslationEPKfS1_iiii, 960 instrs
+//
+// The largest function in the bundle and the effect's whole point: a block-matching search for
+// how far the picture in `b` has moved relative to the picture in `a`.
+//
+//   0x830-0x864   the five guards: null a, null b, block < 4, radius < 1, and
+//                 width/height < block + 2*radius  ->  {0, 0}
+//   0x868-0x8f4   the per-block setup, and four constants:
+//                 s9  = 0x358637bd = 1e-6f   (the flatness threshold)
+//                 s10 = -2.0f                (the parabola's -2*best)
+//                 s11 =  0.5f                (the parabola's half, and the clamp)
+//                 s12 = -0.5f                (the clamp's other end)
+//   0x900-0x9a4   the band loop (bandRow = radius, radius+block, ...) and the column loop
+//                 (col = radius, radius+block, ...), both bounded by `+ block <= size - radius`
+//   0x9a8-0xa10   the TEXTURE TEST on the template block: sum and sumsq in DOUBLE, then
+//                     mean = sum/(block*block);  var = sumsq/(block*block) - mean*mean
+//                 compared as a FLOAT against 1e-6f, and `b.mi` SKIPS the block when the
+//                 variance is below it — a flat block carries no position information
+//   0xa24-0xa90   the search: for each candidate the block is compared with the template and
+//                 the ABSOLUTE DIFFERENCE is summed in FLOAT; the best cost updates only on a
+//                 STRICTLY smaller cost (or while best is still negative, i.e. before the first
+//                 candidate), so a TIE KEEPS THE EARLIER CANDIDATE — first minimum wins
+//   0xc08-0xc18   the horizontal sub-pixel refinement runs only when -radius < bestDx < radius
+//   0xc38/0xdd8   its two extra costs: the same block one column LEFT and one column RIGHT
+//   0xf64-0xfa8   the parabola:  t = ((c1 - c2) * 0.5f) / (c1 + c2 - 2*best), clamped to
+//                 [-0.5, 0.5]; the denominator is skipped when best <= 1e-12f or the
+//                 denominator <= 1e-12f, and then the answer is the integer offset unchanged
+//   0xfac-0xfb4   the vertical refinement runs only when -radius < bestDy < radius
+//   0xfc0/0x1160  its two extra costs: the block one row ABOVE and one row BELOW
+//   0x135c/0x1498 the two results are pushed into two std::vector<float>s
+//   0x14f4-0x160c the medians: each vector is copied and `nth_element`-ed, exactly as
+//                 `shake::median` does
+//   0x1624        the return: {horizontal median, vertical median}
+namespace {
+
+// The absolute-difference cost of one block against one block, accumulated in FLOAT.
+//
+// The shipped code vectorises the subtraction and the absolute value but keeps the ADDS
+// sequential and scalar, so the running total is the plain left-to-right sum of the row-major
+// differences. Writing it this way gives the same number bit for bit: the fabd is exact, and a
+// sequential float sum is a fixed sequence of roundings.
+//
+// `a` is the template and `b` the frame being searched.
+float blockCost(const float* a, const float* b, int width, int block,
+                int rowA, int colA, int rowB, int colB) {
+  float cost = 0.0f;
+  for (int i = 0; i < block; ++i) {
+    const float* pa = a + static_cast<size_t>(rowA + i) * static_cast<size_t>(width) + static_cast<size_t>(colA);
+    const float* pb = b + static_cast<size_t>(rowB + i) * static_cast<size_t>(width) + static_cast<size_t>(colB);
+    for (int j = 0; j < block; ++j) {
+      cost += std::fabs(pa[j] - pb[j]);
+    }
+  }
+  return cost;
+}
+
+// The sub-pixel offset of a parabolic minimum through three costs.
+//
+//     if (best <= 1e-12f)              return 0
+//     denom = fma(-2, best, c1) + c2
+//     if (denom <= 1e-12f)             return 0
+//     t = ((c1 - c2) * 0.5f) / denom, clamped to [-0.5f, 0.5f]
+//
+// The denominator is built as `(c1 - 2*best) + c2` — a single fused multiply-add and then a
+// separate add — because that is the order the listing uses and float addition is not
+// associative. The clamp compares the UNCLAMPED t against both ends, so it is a clamp and not
+// a sequence of independent selections.
+float parabolaOffset(float best, float c1, float c2) {
+  if (best <= 9.99999996e-13f) return 0.0f;
+  const float denom = std::fma(-2.0f, best, c1) + c2;
+  if (denom <= 9.99999996e-13f) return 0.0f;
+  float t = ((c1 - c2) * 0.5f) / denom;
+  if (t > 0.5f) t = 0.5f;
+  if (t < -0.5f) t = -0.5f;
+  return t;
+}
+
+}  // namespace
+
+Vec2 trackTranslation(const float* a, const float* b, int width, int height, int block, int radius) {
+  if (a == nullptr || b == nullptr) return Vec2{0.0f, 0.0f};
+  if (block < 4) return Vec2{0.0f, 0.0f};
+  if (radius < 1) return Vec2{0.0f, 0.0f};
+  if (width < block + 2 * radius) return Vec2{0.0f, 0.0f};
+  if (height < block + 2 * radius) return Vec2{0.0f, 0.0f};
+
+  std::vector<float> horizontal;
+  std::vector<float> vertical;
+
+  for (int bandRow = radius; bandRow + block <= height - radius; bandRow += block) {
+    for (int col = radius; col + block <= width - radius; col += block) {
+      // The TEXTURE TEST: a block with no variance has no position to find, and the shipped
+      // code skips it outright rather than reporting a position for it.
+      double sum = 0.0;
+      double sumsq = 0.0;
+      for (int i = 0; i < block; ++i) {
+        const float* pa = a + static_cast<size_t>(bandRow + i) * static_cast<size_t>(width) + static_cast<size_t>(col);
+        for (int j = 0; j < block; ++j) {
+          const double v = static_cast<double>(pa[j]);
+          sum += v;
+          sumsq += v * v;
+        }
+      }
+      const double cells = static_cast<double>(block) * static_cast<double>(block);
+      const double mean = sum / cells;
+      const double variance = std::fma(-mean, mean, sumsq / cells);
+      if (static_cast<float>(variance) < 9.99999996e-07f) continue;   // 0x358637bd
+
+      float best = -1.0f;
+      int bestDx = 0;
+      int bestDy = 0;
+      for (int dy = -radius; dy <= radius; ++dy) {
+        for (int dx = -radius; dx <= radius; ++dx) {
+          const float cost = blockCost(a, b, width, block, bandRow, col,
+                                       bandRow + dy, col + dx);
+          // `best < 0` covers the first candidate, before any cost has been seen; after that a
+          // candidate has to be STRICTLY cheaper, so a tie leaves the earlier one in place.
+          if (best < 0.0f || cost < best) {
+            best = cost;
+            bestDx = dx;
+            bestDy = dy;
+          }
+        }
+      }
+
+      float horizontalOffset = static_cast<float>(bestDx);
+      if (bestDx > -radius && bestDx < radius) {
+        const float left = blockCost(a, b, width, block, bandRow, col, bandRow + bestDy, col + bestDx - 1);
+        const float right = blockCost(a, b, width, block, bandRow, col, bandRow + bestDy, col + bestDx + 1);
+        horizontalOffset = static_cast<float>(bestDx) + parabolaOffset(best, left, right);
+      }
+
+      float verticalOffset = static_cast<float>(bestDy);
+      if (bestDy > -radius && bestDy < radius) {
+        const float above = blockCost(a, b, width, block, bandRow, col, bandRow + bestDy - 1, col + bestDx);
+        const float below = blockCost(a, b, width, block, bandRow, col, bandRow + bestDy + 1, col + bestDx);
+        verticalOffset = static_cast<float>(bestDy) + parabolaOffset(best, above, below);
+      }
+
+      horizontal.push_back(horizontalOffset);
+      vertical.push_back(verticalOffset);
+    }
+  }
+
+  // The medians are the shipped `shake::median`, so this is a call and not a re-implementation.
+  // `shake::median` returns the exact median (see its own note), which is what the bundle
+  // measurably returns on an even count as well.
+  return Vec2{median(horizontal), median(vertical)};
+}
+
 }  // namespace shake

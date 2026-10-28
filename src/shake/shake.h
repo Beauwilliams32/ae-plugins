@@ -4,17 +4,16 @@
 // ShakeCapture.plugin, not from source: the original C++ was destroyed on 2026-10-13 with
 // no remote and no backup.
 //
-// INCOMPLETE — the statistics helpers are here and the tracker is not.
-//   recovered: clampf (shared), median
-//   outstanding: movingAverage (155), highPass (105), accumulate (135),
-//              normalizeUnitAmplitude (125), sampleLooped (92), resampleProfile (50),
-//              extractJitter (36), ShakeProfile::~ShakeProfile (16),
-//              trackTranslation (960)
+// NAMESPACE-COMPLETE
 //
-// `trackTranslation` is the largest function in this bundle and the effect's whole point:
-// a 960-instruction block-matching search over frames. Everything around it takes
-// `ShakeProfile` or `Vec2`, whose layouts are not recovered yet, which is why only the two
-// functions that need no such type are here.
+// All ELEVEN of this bundle's authored functions are transcribed here. `clampf` is the fleet's
+// shared copy; the other ten are this namespace's own. The last one to land was
+// `trackTranslation` (960 instructions, 2026-10-28) — the effect's whole point, a block-matching
+// search over frames.
+//
+// Of the eleven: `clampf`, `extractJitter`, `normalizeUnitAmplitude`, `accumulate` and
+// `ShakeProfile::~ShakeProfile` compile instruction-identical to the bundle; the other six are
+// behavioural recoveries whose arithmetic is verified against the shipped binary.
 
 #pragma once
 #include <cstddef>
@@ -183,5 +182,42 @@ float sampleLooped(const std::vector<float>& values, double t, LoopMode mode);
  * sampling anything.
  */
 std::vector<float> resampleProfile(const std::vector<float>& values, double step, int count, LoopMode mode);
+
+// ---------------------------------------------------------------------------
+// [exact] The tracker — recovered 2026-10-28 from
+// `__ZN5shake16trackTranslationEPKfS1_iiii`, 960 instructions.
+// ---------------------------------------------------------------------------
+
+/**
+ * [exact] The block-matching translation between two frames: how far the picture in `b` has
+ * moved relative to the picture in `a`.
+ *
+ *     guard: a == null || b == null            -> {0, 0}
+ *     guard: block < 4                          -> {0, 0}
+ *     guard: radius < 1                         -> {0, 0}
+ *     guard: width  < block + 2*radius          -> {0, 0}
+ *     guard: height < block + 2*radius          -> {0, 0}
+ *
+ *     for bandRow = radius; bandRow + block <= height - radius; bandRow += block
+ *       for col = radius; col + block <= width - radius; col += block
+ *         template = a[bandRow .. bandRow+block][col .. col+block]
+ *         if (variance(template) < 1e-6f) continue        ; a FLAT block carries no position
+ *         best = -1; for dy in -radius..radius, for dx in -radius..radius:
+ *           cost = sum |template - b[bandRow+dy ..][col+dx ..]|
+ *           if (best < 0 || cost < best) { best = cost; bestDx = dx; bestDy = dy; }
+ *         ; a TIE DOES NOT UPDATE, so the FIRST minimum wins
+ *         horizontal = bestDx, refined to a sub-pixel parabola if -radius < bestDx < radius
+ *         vertical   = bestDy, refined to a sub-pixel parabola if -radius < bestDy < radius
+ *
+ *     return { median(all the horizontal results), median(all the vertical results) }
+ *
+ * The two medians are taken over the blocks that SURVIVED the flatness test, and they are the
+ * median of the HORIZONTAL results first — `x` is the column offset and `y` is the row offset.
+ *
+ * The cost is accumulated in FLOAT and in a strict row-major order, because the shipped code
+ * vectorises the absolute difference but keeps the adds sequential; that ordering is what makes
+ * a near-tie resolve the same way.
+ */
+Vec2 trackTranslation(const float* a, const float* b, int width, int height, int block, int radius);
 
 }  // namespace shake

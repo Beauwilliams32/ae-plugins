@@ -1,11 +1,13 @@
 // Gate for the recovered shake:: namespace.
 //
-// Ten authored functions, nine recovered and the tracker outstanding, and one of the nine
-// shared with four other bundles. The interesting claims are in the self-check rather than
-// here: `shake::median` averages the two middle values on an even count, differently from
-// `beatsnap::medianOfWindow`, it is the exact median, and it does not depend on the order
-// of its inputs; and `shake::sampleLooped` in Clamp mode answers 0.0f — not the end sample
-// — anywhere OUTSIDE the range.
+// Eleven authored functions, all recovered: five compile instruction-identical to the bundle
+// and six are behavioural recoveries whose arithmetic was checked against the shipped binary
+// itself (42,000 randomised cases across the six, zero mismatches).
+//
+// The interesting claims are in the self-check rather than here: `shake::median` averages the
+// two middle values on an even count, differently from `beatsnap::medianOfWindow`, it is the
+// exact median, and it does not depend on the order of its inputs; and `shake::sampleLooped`
+// in Clamp mode answers 0.0f — not the end sample — anywhere OUTSIDE the range.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -20,10 +22,12 @@ const BUNDLE = "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media"
   + "/ShakeCapture.plugin/Contents/MacOS/ShakeCapture";
 
 // movingAverage, highPass, extractJitter and the ShakeProfile destructor joined on 2026-10-27
-// (row AE-05): modelling the struct first is what unblocked the other three.
+// (row AE-05): modelling the struct first is what unblocked the other three. The tracker
+// joined on 2026-10-28 and completed the namespace.
 const RECOVERED = ["clampf", "median", "ShakeProfile", "extractJitter", "movingAverage", "highPass",
-                   "accumulate", "normalizeUnitAmplitude", "sampleLooped", "resampleProfile"];
-const OUTSTANDING = ["trackTranslation"];
+                   "accumulate", "normalizeUnitAmplitude", "sampleLooped", "resampleProfile",
+                   "trackTranslation"];
+const OUTSTANDING = [];
 
 function bundlesInstalled() {
   return existsSync(BUNDLE);
@@ -60,7 +64,7 @@ test("recovered shake source compiles and its maths verifies", (t) => {
     assert.match(out, /ALL RECOVERED SHAKE MATHS VERIFIED/, `self-check failed:\n${out}`);
     assert.doesNotMatch(out, /\bFAIL\b/, out);
     const passes = (out.match(/^  PASS/gm) ?? []).length;
-    assert.ok(passes >= 72, `expected >= 72 checks, saw ${passes}`);
+    assert.ok(passes >= 89, `expected >= 89 checks, saw ${passes}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -85,8 +89,10 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
   // partition, and so does this build.
   assert.match(out, /DIFFER\s+shake::median\s+shipped=43 mine=43/,
     "median should still report the register-allocation difference");
+  assert.match(out, /DIFFER\s+shake::trackTranslation\s+shipped=960 mine=95\d/,
+    "trackTranslation should report as a behavioural recovery of the 960-instruction tracker");
 
   const summary = out.trim().split("\n").pop();
-  assert.match(summary, /5 identical, 5 differing, 1 not implemented/,
+  assert.match(summary, /5 identical, 6 differing, 0 not implemented/,
     `the differ's tally moved: ${summary}`);
 });
