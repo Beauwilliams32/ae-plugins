@@ -1,14 +1,18 @@
 // Gate for the recovered beatgrid:: namespace.
 //
-// Three of the six recovered functions are the fleet's shared DSP, so the parity check
-// applies here too: a copy is trustworthy when it diverges from THIS bundle exactly as
-// the spectra original diverges from SpectraKeys.
+// All twelve `beatgrid::` symbols are recovered. Three of them are the fleet's shared
+// DSP, so the parity check applies here too: a copy is trustworthy when it diverges
+// from THIS bundle exactly as the spectra original diverges from SpectraKeys.
 //
 // Note also what is NOT asserted: `subdivisionFactor` compiles to the bundle's 8
 // instructions and still reports DIFFER, because the differ compares disassembly TEXT
 // and this build annotates the switch table's address symbolically
 // (`adrp x9, l_switch.table...@PAGE`) where the shipped listing prints the resolved
 // page and offset. The instructions are the same; the text is not.
+//
+// Four symbols now compile INSTRUCTION-IDENTICAL to the bundle: `clampf`,
+// `isPowerOfTwo`, `OnsetEnvelope::frameTimeSeconds` and `analyzeBeatGrid`. The first
+// two are the shared DSP; the last two are this lane's own recoveries.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -30,9 +34,11 @@ const SHARED = ["clampf", "isPowerOfTwo", "downmixToMono"];
  * name at the second `::` — the way `spectra::Spectrogram` stands for its destructor —
  * so it reports the pair as `beatgrid::OnsetEnvelope`.
  */
-const OWN = ["subdivisionFactor", "phaseSawtooth", "phaseInLayerTime", "OnsetEnvelope"];
-const OUTSTANDING = ["computeOnsetEnvelope", "estimateTempoBpm", "estimatePhaseSeconds",
-                     "generateBeatGrid", "analyzeBeatGrid"];
+const OWN = ["subdivisionFactor", "phaseSawtooth", "phaseInLayerTime", "OnsetEnvelope",
+             "computeOnsetEnvelope", "estimateTempoBpm", "estimatePhaseSeconds",
+             "generateBeatGrid", "analyzeBeatGrid"];
+/** Nothing is outstanding any more: the differ reports zero unrecovered symbols. */
+const OUTSTANDING = [];
 
 function bundlesInstalled() {
   return existsSync(BUNDLE);
@@ -128,19 +134,32 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
   // four that differ in schedule. Pinned so a source change that alters the shape is
   // visible rather than absorbed by the tally.
   for (const [fn, count] of [["subdivisionFactor", 8], ["phaseInLayerTime", 24],
-                             ["phaseSawtooth", 31], ["downmixToMono", 116]]) {
+                             ["phaseSawtooth", 31], ["downmixToMono", 116],
+                             ["generateBeatGrid", 94]]) {
     assert.match(out, new RegExp(`DIFFER\\s+beatgrid::${fn}\\s+shipped=${count} mine=${count}`),
       `${fn} should compile to the bundle's ${count} instructions`);
   }
 
+  // The three BIG ones are behavioural recoveries: they are close, but not the same
+  // instruction stream, and the counts are pinned so a regression is visible.
+  for (const [fn, shipped, mine] of [["computeOnsetEnvelope", 436, 434],
+                                     ["estimateTempoBpm", 578, 503],
+                                     ["estimatePhaseSeconds", 138, 135]]) {
+    assert.match(out, new RegExp(`DIFFER\\s+beatgrid::${fn}\\s+shipped=${shipped} mine=${mine}`),
+      `${fn} should compile to ${mine} instructions against the bundle's ${shipped}`);
+  }
+
   const summary = out.trim().split("\n").pop();
-  // FIVE differing, not four: `frameTimeSeconds` is a CONST member (`__ZNK…`) and the
-  // differ used to skip those entirely, so this function was never compared at all
-  // until `parseNested` learnt about qualifier letters. It compiles to 14 instructions
-  // against the bundle's 13 — the half-frame scale, `scvtf d3, w8, #0x1`, is one
-  // instruction in the shipped code and two here. Recorded rather than chased.
-  assert.match(out, /DIFFER\s+beatgrid::OnsetEnvelope\s+shipped=13 mine=14/,
-    "frameTimeSeconds should report its one-instruction difference");
-  assert.match(summary, /2 identical, 5 differing, 5 not implemented/,
+  // `frameTimeSeconds` is a CONST member (`__ZNK…`) and the differ used to skip those
+  // entirely, so this function was never compared at all until `parseNested` learnt about
+  // qualifier letters. It now compiles IDENTICALLY — the shipped code folds the
+  // half-window scale into the convert (`scvtf d3, w8, #0x1`) and so does this build.
+  assert.match(out, /MATCH\s+beatgrid::OnsetEnvelope\s+13 instructions, identical/,
+    "frameTimeSeconds should now compile instruction-identical to the bundle");
+  // `analyzeBeatGrid` came back identical as well: 57 instructions, transcribed line
+  // for line from the listing.
+  assert.match(out, /MATCH\s+beatgrid::analyzeBeatGrid\s+57 instructions, identical/,
+    "analyzeBeatGrid should compile instruction-identical to the bundle");
+  assert.match(summary, /4 identical, 8 differing, 0 not implemented/,
     `the differ's tally moved: ${summary}`);
 });
