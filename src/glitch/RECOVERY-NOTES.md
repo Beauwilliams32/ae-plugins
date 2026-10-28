@@ -229,7 +229,7 @@ The same rule governs the shipped's `fcvtas` (round to nearest, ties away, into 
 integer), which is why the recovered source spells that conversion out rather than
 delegating to `llroundf`, whose NaN and overflow behaviour is unspecified.
 
-### A zero width FALLS THROUGH the empty-frame guard
+### A zero width ALSO RETURNS EARLY — the `ccmp` does not compare
 
 ```
 ldp    w15, w16, [x0, #0x8]   0x738
@@ -238,17 +238,25 @@ ccmp   w16, #0x1, #0x8, ge    0x740
 b.lt   0x1948                 0x744
 ```
 
-The `ccmp` only compares the HEIGHT when the width is already >= 1; otherwise it sets the
-flags to `#0x8` (greater-than), which the `b.lt` does not take. So the shipped code
-returns EARLY for (width >= 1 && height <= 0) and FALLS THROUGH into the body for a zero
-width. It does not matter observably — with a zero width or a zero height every loop in
-every mode body is empty, so the bundle writes NOTHING to the output for any degenerate
-shape, in any mode, with any amount and spread — but it was MEASURED against the shipped
-bundle rather than assumed, and the recovered source's guard reproduces the observable
-outcome.
+The `ccmp` only compares the HEIGHT when the width is already >= 1; otherwise it does NOT
+compare, and installs the immediate `#0x8` as the WHOLE NZCV byte — N = 1, V = 0, Z = 0.
+`b.lt` branches when N != V, and 1 != 0, so the branch IS TAKEN and the shipped code
+returns EARLY for a zero width as well as for a zero height.
+
+**An earlier draft of this file claimed the opposite** — that a zero width FALLS THROUGH
+the guard into the body. That was wrong. It read `#0x8` as "greater-than", which is what
+the immediate means for the `cmp` it stands in for, but `ccmp` installs the immediate as
+the entire flags byte, and `b.lt` then reads N and V out of it. The claim was re-checked by
+assembling the exact four-instruction sequence on this machine and running it: a zero
+width, a zero height and a zero-by-zero frame all take the early return, and a 5x5 and a
+1x1 frame do not.
 
 The 16-bit build has the same guard over the same paired load (`ldp w9, w28, [x0, #0x8]` at
-`0x1a24`, `b.ge 0x1a54` at `0x1a30`) and the same behaviour.
+`0x1a24`, `ccmp w28, #1, #0x8, ge` at `0x1a2c`, `b.ge 0x1a54` at `0x1a30`) and the same
+outcome. There the branch is taken when N == V, so the early-return path is the one where
+the `ccmp` did NOT compare — N = 1, V = 0, so N != V and the branch is not taken and
+control falls into the epilogue at `0x1a34`. The observable result is the same: nothing is
+written for a degenerate frame.
 
 ### A NaN amount does NOT take the copy-and-return path
 

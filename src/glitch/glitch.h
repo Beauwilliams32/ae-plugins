@@ -343,7 +343,10 @@ unsigned int patternFrame(unsigned int seed, float time);
 // The body is transcribed from the listing. Its shape:
 //
 //   * an EMPTY frame — a width or a height below 1 — leaves the output
-//     completely untouched (0x738..0x744);
+//     completely untouched (0x738..0x744, `ldp w15,w16,[x0,#8] / cmp w15,#1 /
+//     ccmp w16,#1,#8,ge / b.lt`); the `b.lt` is TAKEN for a zero width as well as
+//     for a zero height, because the `ccmp` does not compare in that case and
+//     installs NZCV = 0b1000 (N = 1, V = 0), and `b.lt` branches when N != V;
 //   * amount and spread are capped at 1, and if EITHER is <= 0 the frame is
 //     copied and returned WITHOUT the spread blend (0x794/0x79c -> 0x9a0);
 //   * a per-frame hash is mixed from hashInput, the pattern frame and the mode;

@@ -152,6 +152,9 @@ unsigned int patternFrame(unsigned int seed, float time) {
 //
 //   * an EMPTY frame leaves the output completely untouched
 //     (0x738..0x744, `ldp w15,w16,[x0,#8] / cmp w15,#1 / ccmp w16,#1,#8,ge / b.lt`).
+//     The `b.lt` IS TAKEN for a zero width as well as for a zero height: when the
+//     width is below 1 the `ccmp` does not compare and installs NZCV = 0b1000
+//     (N = 1, V = 0), and `b.lt` branches when N != V.
 //   * amount and spread are clamped at the TOP by two fcsel pairs (0x764..0x790), and
 //     if EITHER of them is <= 0 (or unordered, i.e. NaN) the frame is copied and the
 //     function returns WITHOUT the spread blend (0x794 / 0x79c -> 0x9a0).
