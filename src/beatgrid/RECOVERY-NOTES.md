@@ -7,7 +7,7 @@ unstripped.
 
 ## State
 
-Nine of the twelve `beatgrid::` symbols are recovered; three are instruction-identical.
+Ten of the twelve `beatgrid::` symbols are recovered; four are instruction-identical.
 
 | Function | Instrs | State |
 |---|---|---|
@@ -17,8 +17,8 @@ Nine of the twelve `beatgrid::` symbols are recovered; three are instruction-ide
 | `subdivisionFactor` | 8 | Recovered — 8 here; the only difference is that this build prints the switch table's address symbolically |
 | `phaseInLayerTime` | 24 | Recovered — 24 here, one condition-code alias |
 | `phaseSawtooth` | 31 | Recovered — 31 here |
-| `OnsetEnvelope::frameTimeSeconds` | 13 | Recovered — 14 here (see below) |
-| `computeOnsetEnvelope` | 436 | Identified only |
+| `OnsetEnvelope::frameTimeSeconds` | 13 | Recovered — **identical** (see below) |
+| `computeOnsetEnvelope` | 436 | Recovered — **[partial]**, 434 here |
 | `estimateTempoBpm` | 578 | Identified only |
 | `estimatePhaseSeconds` | 138 | Recovered — **[partial]**, 135 here |
 | `generateBeatGrid` | 94 | Recovered — **[partial]**, 94 here |
@@ -72,25 +72,28 @@ binary.
 ## `frameTimeSeconds`, and the differ hole it was hiding in
 
 ```
-if (hopInterval <= 0.0) return 0.0;
-return (frame * step + startFrameHalf / 2.0) / hopInterval;
+if (sampleRate <= 0.0) return 0.0;
+return (frame * hopSize + windowSize / 2.0) / sampleRate;
 ```
 
-Three of the four `OnsetEnvelope` fields are read here and nothing else recovered touches
-the struct, so only those three are declared and everything else is opaque bytes with
-`static_assert`s on the offsets.
+which is the **frame-centre** time: the frame's start plus half the analysis window.
 
-`startFrameHalf` counts HALF frames: the compiler emits `scvtf d3, w8, #0x1`, a
-fixed-point convert with one fractional bit. What it counts half-frames *of* is not
-established — nothing recovered writes it — and the name describes the arithmetic rather
-than being recovered.
+It reads `hopInterval` (+0x18), `startFrameHalf` (+0x20) and `step` (+0x24) — but those
+three names were themselves a guess, and `computeOnsetEnvelope` has since shown the
+struct's real layout: `+0x18` is the **sample rate**, `+0x20` the **window size** and
+`+0x24` the **hop size**. The arithmetic below is therefore restated in the recovered
+names, and the header now declares the whole struct.
+
+The window size counts HALF frames: the compiler emits `scvtf d3, w8, #0x1`, a
+fixed-point convert with one fractional bit, so the halving of the window is folded into
+the convert rather than written as a separate divide.
 
 This function is also the reason a real defect in the differ was found. It is a CONST
 member, mangled `__ZNK…`, and `parseNested` required `__ZN…`: **every const member in the
 fleet was invisible to the tool** — not reported as absent, not reported at all, so a
 completeness marker was measured against a list with holes in it. Fixing the parser made
-this function appear (14 instructions here against the bundle's 13: the shipped code
-folds the halving into the convert and this build does not) and exposed two more that had
+this function appear (and it is now **instruction-identical** — the shipped code folds
+the halving into the convert and so does this build) and exposed two more that had
 never been compared: `spectra::Spectrogram::hzToBin` and `lutblend::CubeLUT::valid`.
 
 ## `estimatePhaseSeconds` (138 instructions) — [partial]
@@ -145,9 +148,97 @@ What the listing pins:
   (`nearbyint(index * 0.25)`), and only that subdivision gets the treatment — the
   listing computes it unconditionally and then selects, which is the same answer.
 
+## `computeOnsetEnvelope` (436 instructions) — [partial]
+
+The spectral-flux onset envelope. Read in full from `/tmp/ae/beatgrid.asm` lines 216–652.
+
+### The `OnsetEnvelope` layout, corrected
+
+The header used to declare only three fields, with the first `0x18` bytes opaque:
+
+```
++0x00  unknown[0x18]
++0x18  hopInterval   (double)
++0x20  startFrameHalf(int)
++0x24  step          (int)
+```
+
+That was wrong, and the listing says so. The function's very first act is to zero the
+whole 0x30-byte result (`stp q1, q1, [x8, #0x10]` / `str q1, [x8]`), and then it writes:
+
+```
+str  d0, [x8, #0x18]      ; the sample rate
+stp  w9, w3, [x8, #0x20]  ; the window size, then the hop size
+str  d0, [x8, #0x28]      ; the frame rate: sampleRate / hopSize
+```
+
+and, before that, `vector<float>::assign(numFrames, 0.0f)` fills `+0x00`. So the real
+layout is:
+
+```
++0x00  std::vector<float> values        (24 bytes: three words)
++0x18  double             sampleRate
++0x20  int                windowSize
++0x24  int32_t            hopSize
++0x28  double             framesPerSecond
+sizeof == 0x30
+```
+
+Every one of those offsets is pinned by a `static_assert(offsetof(...))` in
+`beatgrid.h`, whose message quotes the store that establishes it. The two old field
+names are gone — `hopInterval` was the sample rate and `step` was the hop size, so
+keeping them would have been worse than useless.
+
+### The algorithm
+
+* **Guards**, in the listing's own order: no samples (`cbz x0`), no frames (`cbz x1`),
+  a non-positive sample rate (`fcmp d0, #0.0`), a window below one
+  (`ccmp w9, #0x1, #0x8, hi` / `b.lt`), a hop below one (`cmp w3, #0x1` / `b.lt`), a
+  window below two (`cmp w9, #0x2` / `b.lo`), and a window that is **not a power of
+  two** (`sub w9, w10, #0x1` / `and w9, w10, w9` / `cbnz w9`). Every one of them returns
+  the **zeroed** envelope — empty vector and zeroed scalars — because the zeroing
+  happens before the guards.
+* The four scalars are stored **before** the frame count is worked out, so even the
+  frame-count overflow return (`cmp w9, #0x7ffffffe` / `b.hi`) keeps them. The self-check
+  pins that ordering.
+* The frame count is `(frames - window) / hop + 1`, and is **one** when the signal is
+  shorter than the window (`subs x9, x21, x20` / `b.ge`).
+* The window is a **periodic** Hann: `0.5f * (1 - cosf(i * 2pi / N))`, dividing by the
+  window SIZE and not by size - 1 (`fdiv s0, s0, s1`). `2*pi` is the float literal
+  `0x40c90fdb`.
+* The transform is an **in-place radix-2 decimation-in-time** FFT: an incremental
+  bit-reversal permutation (`tst`/`eor`/`b.ne` at 0xdf0 — the reversal counter is XORed at
+  every level and the loop stops at the first level whose bit was clear), then
+  butterflies of length 2, 4, ... N whose twiddle advances by a **recurrence**
+  (`nextRe = wr*stepRe - wi*stepIm`) rather than being recomputed from an angle.
+* The flux of a frame is the sum of the **positive** differences between this frame's
+  half-spectrum magnitudes and the previous frame's, accumulated in **double**
+  (`fcvt d2, s1`) and only then narrowed to a float. The **first** frame has no
+  predecessor and is zero (`cbz x23` at 0xf48), and the two magnitude buffers alternate,
+  so the previous frame's magnitudes are always the other buffer.
+
+### Why it is `[partial]` and not `[exact]`: 434 instructions here against the bundle's
+### 436.
+
+The two are a stack-frame size and a register spill, not a behavioural difference: the
+shipped code allocates `0x140` bytes of frame and this build allocates `0x150`, which
+shifts the `stp d11, d10` / `stp d9, d8` spills by one slot. The instruction bodies are
+otherwise the same — same guards in the same order, same periodic window, same
+bit-reversal shape, same recurrence-stepped butterflies, same double-accumulated
+positive-difference flux.
+
+Two source-level details were needed to get within two instructions at all, and they are
+worth recording because they are the kind of thing a paraphrase loses:
+
+* the window loop's index must be an **`int`**, not a `size_t` — with a `size_t` index
+  this build splits the loop into two four-wide lanes and adds about eighteen
+  instructions;
+* the bit-reversal must be written as an infinite `for(;;)` with a `carry` boolean, so
+  that the XOR happens on every level and the shift only on the continue path, which is
+  the shape the shipped `tst`/`eor`/`b.ne` has.
+
 ## What is next
 
-`analyzeBeatGrid` (57) is the smallest outstanding function and the entry point that ties
-these together; `generateBeatGrid` (94) and `estimatePhaseSeconds` (138) follow. The two
-big ones — `computeOnsetEnvelope` (436) and `estimateTempoBpm` (578) — are the tempo
-analysis proper.
+`estimateTempoBpm` (578) is the biggest outstanding function and the tempo analysis
+proper; `analyzeBeatGrid` (57) is the entry point that ties these together. `generateBeatGrid`
+(94), `estimatePhaseSeconds` (138) and `computeOnsetEnvelope` (436) are recovered.

@@ -44,6 +44,8 @@ static_assert(std::is_same_v<decltype(beatgrid::subdivisionFactor(beatgrid::Subd
               "subdivisionFactor returns a double");
 static_assert(std::is_same_v<decltype(std::declval<const beatgrid::OnsetEnvelope&>().frameTimeSeconds(0)), double>,
               "frameTimeSeconds returns a double");
+static_assert(std::is_same_v<decltype(beatgrid::computeOnsetEnvelope(nullptr, 0, 0.0, 0, 0)), beatgrid::OnsetEnvelope>,
+              "computeOnsetEnvelope returns an OnsetEnvelope BY VALUE (the 0x30-byte result is zeroed at +0x00)");
 
 int main() {
   std::printf("beatgrid::subdivisionFactor\n");
@@ -194,6 +196,65 @@ int main() {
     noRate.framesPerSecond = 0.0;
     check(beatgrid::estimatePhaseSeconds(noRate, 120.0f) == 0.0f,
           "a frame rate of 0 gives 0");
+  }
+
+  std::printf("beatgrid::computeOnsetEnvelope\n");
+  {
+    // A 1000 Hz signal, a 64-sample window and a 32-sample hop. The listing divides
+    // the frame count as (frames - window) / hop + 1, and floors the hop division.
+    const int windowSize = 64;
+    const int hopSize = 32;
+    const size_t frames = 1000;
+    std::vector<float> silence(frames, 0.0f);
+    const auto quiet = beatgrid::computeOnsetEnvelope(silence.data(), frames, 1000.0, windowSize, hopSize);
+
+    check(quiet.values.size() == (frames - windowSize) / hopSize + 1,
+          "the frame count is (frames - window) / hop + 1");
+    checkNear(quiet.sampleRate, 1000.0, 0.0, "the sample rate round-trips");
+    check(quiet.windowSize == windowSize, "the window size round-trips");
+    check(quiet.hopSize == hopSize, "the hop size round-trips");
+    checkNear(quiet.framesPerSecond, 1000.0 / hopSize, 1e-12,
+              "the frame rate is the sample rate divided by the hop");
+    checkNear(quiet.values[0], 0.0, 0.0,
+              "the FIRST frame is zero: it has no predecessor to difference against");
+
+    // Silence has no onsets, so every frame after the first is zero too. This pins the
+    // flux as a difference against the PREVIOUS frame rather than an absolute level.
+    bool allZero = true;
+    for (float v : quiet.values) {
+      if (v != 0.0f) { allZero = false; break; }
+    }
+    check(allZero, "a silent signal gives an all-zero envelope");
+
+    // A burst of energy part way through: the frames that overlap it must see a
+    // POSITIVE flux.
+    std::vector<float> burst(frames, 0.0f);
+    for (size_t i = 500; i < 560; ++i) burst[i] = 1.0f;
+    const auto loud = beatgrid::computeOnsetEnvelope(burst.data(), frames, 1000.0, windowSize, hopSize);
+    check(loud.values.size() == quiet.values.size(), "the burst envelope has the same frame count");
+    float peak = 0.0f;
+    for (float v : loud.values) if (v > peak) peak = v;
+    check(peak > 0.0f, "a burst produces a positive spectral flux");
+    check(loud.values[0] == 0.0f, "and the burst envelope still starts at zero");
+
+    // The guards, in the listing's own order: no samples, no frames, a non-positive
+    // sample rate, a window below one, a hop below one, a window below two, and a
+    // window that is not a power of two. Each returns a ZEROED envelope.
+    const auto nullSamples = beatgrid::computeOnsetEnvelope(nullptr, frames, 1000.0, windowSize, hopSize);
+    check(nullSamples.values.empty() && nullSamples.sampleRate == 0.0,
+          "no samples gives a zeroed envelope");
+    const auto noFrames = beatgrid::computeOnsetEnvelope(silence.data(), 0, 1000.0, windowSize, hopSize);
+    check(noFrames.values.empty(), "no frames gives a zeroed envelope");
+    const auto noRate = beatgrid::computeOnsetEnvelope(silence.data(), frames, 0.0, windowSize, hopSize);
+    check(noRate.values.empty() && noRate.sampleRate == 0.0, "a sample rate of 0 gives a zeroed envelope");
+    const auto badWindow = beatgrid::computeOnsetEnvelope(silence.data(), frames, 1000.0, 0, hopSize);
+    check(badWindow.values.empty(), "a window of 0 gives a zeroed envelope");
+    const auto badHop = beatgrid::computeOnsetEnvelope(silence.data(), frames, 1000.0, windowSize, 0);
+    check(badHop.values.empty(), "a hop of 0 gives a zeroed envelope");
+    const auto tinyWindow = beatgrid::computeOnsetEnvelope(silence.data(), frames, 1000.0, 1, hopSize);
+    check(tinyWindow.values.empty(), "a window of 1 gives a zeroed envelope");
+    const auto oddWindow = beatgrid::computeOnsetEnvelope(silence.data(), frames, 1000.0, 48, hopSize);
+    check(oddWindow.values.empty(), "a window that is not a power of two gives a zeroed envelope");
   }
 
   std::printf("beatgrid::generateBeatGrid\n");

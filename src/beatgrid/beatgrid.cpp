@@ -2,6 +2,7 @@
 
 #include "beatgrid.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace beatgrid {
@@ -301,6 +302,168 @@ std::vector<BeatMarker> generateBeatGrid(double bpm, double origin, Subdivision 
     t += period;
   }
   return markers;
+}
+
+// ---------------------------------------------------------------------------
+// __ZN8beatgrid20computeOnsetEnvelopeEPKfmdii, 436 instrs
+//
+// The listing (/tmp/ae/beatgrid.asm lines 216-652) says:
+//
+//   stp q1, q1, [x8, #0x10] / str q1, [x8]
+//       ; the 0x30-byte result is ZEROED first, so every early exit returns an
+//       ; envelope with an empty vector AND zeroed scalars
+//   cbz x0 / cbz x1 / fcmp d0, #0.0
+//       ; no samples, no frames, or a non-positive sample rate
+//   ccmp w9, #0x1, #0x8, hi / b.lt    ; a window below one
+//   cmp w3, #0x1 / b.lt                ; a hop below one
+//   cmp w9, #0x2 / b.lo                ; a window below two
+//   sub w9, w10, #0x1 / and w9, w10, w9 / cbnz w9
+//       ; and a window that is NOT a power of two
+//
+// The four stores pin the envelope's layout:
+//
+//   str  d0, [x8, #0x18]         ; the sample rate
+//   stp  w9, w3, [x8, #0x20]     ; the window size, then the hop size
+//   str  d0, [x8, #0x28]         ; the frame rate, sampleRate / hopSize
+//   vector<float>::assign(numFrames, 0.0f)
+//
+// The window is a PERIODIC Hann -- `fdiv s0, s0, s1` divides by the window SIZE, not
+// by size - 1 -- with 2*pi as the float literal 0x40c90fdb. The FFT is an in-place
+// radix-2 decimation-in-time transform: a bit-reversal permutation (the incremental
+// `tst`/`eor` reversal at 0xdf0) followed by butterflies of length 2, 4, ... N with
+// the twiddle stepped by a recurrence rather than recomputed.
+//
+// The flux of a frame is the sum of the POSITIVE differences between the half-spectrum
+// magnitudes of this frame and the previous one, accumulated in DOUBLE (`fcvt d2, s1`)
+// and only then narrowed to a float. The FIRST frame has no predecessor and so is
+// zero -- `cbz x23` at 0xf48 -- and the two magnitude buffers alternate, so the
+// previous frame's magnitudes are always the other buffer.
+// ---------------------------------------------------------------------------
+OnsetEnvelope computeOnsetEnvelope(const float* samples, size_t frames, double sampleRate,
+                                    int windowSize, int hopSize) {
+  OnsetEnvelope envelope{};
+  if (samples == nullptr) return envelope;
+  if (frames == 0) return envelope;
+  if (!(sampleRate > 0.0)) return envelope;
+  if (windowSize < 1) return envelope;
+  if (hopSize < 1) return envelope;
+  if (windowSize < 2) return envelope;
+  if (!isPowerOfTwo(windowSize)) return envelope;
+
+  // The scalars are stored BEFORE the frame count is worked out, so the overflow
+  // return below keeps them: the listing writes them at 0xaf4-0xb08 and only then
+  // computes `numFrames`.
+  envelope.sampleRate = sampleRate;
+  envelope.windowSize = windowSize;
+  envelope.hopSize = hopSize;
+  envelope.framesPerSecond = sampleRate / static_cast<double>(hopSize);
+
+  const size_t n = static_cast<size_t>(windowSize);
+  size_t numFrames = 1;
+  if (frames >= n) {
+    const size_t steps = (frames - n) / static_cast<size_t>(hopSize);
+    if (steps > 0x7ffffffe) return envelope;
+    numFrames = steps + 1;
+  }
+
+  // The Hann window. 2*pi as a float is 0x40c90fdb, and the divisor is the window
+  // SIZE: this is the periodic window, not the symmetric one.
+  const float twoPi = 6.283185307179586f;
+  const float nFloat = static_cast<float>(n);
+  std::vector<float> window(n);
+  for (int i = 0; i < windowSize; ++i) {
+    window[i] = 0.5f * (1.0f - std::cos(static_cast<float>(i) * twoPi / nFloat));
+  }
+
+  const size_t half = n >> 1;
+  std::vector<float> real(n, 0.0f);
+  std::vector<float> imag(n, 0.0f);
+  std::vector<float> magnitudes(half, 0.0f);
+  std::vector<float> previous(half, 0.0f);
+
+  envelope.values.assign(numFrames, 0.0f);
+
+  for (size_t frame = 0; frame < numFrames; ++frame) {
+    const size_t offset = frame * static_cast<size_t>(hopSize);
+
+    // The windowed frame. A sample past the end of the signal is ZERO, not clamped.
+    for (size_t i = 0; i < n; ++i) {
+      const size_t s = i + offset;
+      const float value = (s < frames) ? samples[s] : 0.0f;
+      real[i] = value * window[i];
+      imag[i] = 0.0f;
+    }
+
+    // The bit-reversal permutation, applied to the real and imaginary parts alike.
+    // The listing folds the final `j ^= bit` into the loop — `tst`/`eor`/`b.ne` at
+    // 0xdf8-0xe00, with the shift on the continue path — so the counter is XORed at
+    // every level and the loop stops at the first level whose bit was clear.
+    for (size_t i = 1, j = 0; i < n; ++i) {
+      size_t bit = n >> 1;
+      for (;;) {
+        const bool carry = (j & bit) != 0;
+        j ^= bit;
+        if (!carry) break;
+        bit >>= 1;
+      }
+      if (i < j) {
+        std::swap(real[i], real[j]);
+        std::swap(imag[i], imag[j]);
+      }
+    }
+
+    // The in-place radix-2 DIT transform. The twiddle advances by a recurrence, and
+    // it starts again at 1 for each block of `len` butterflies.
+    for (size_t len = 2; len <= n; len <<= 1) {
+      const float theta = -twoPi / static_cast<float>(len);
+      const float stepRe = std::cos(theta);
+      const float stepIm = std::sin(theta);
+      const size_t span = len >> 1;
+      for (size_t block = 0; block < n; block += len) {
+        float wr = 1.0f;
+        float wi = 0.0f;
+        for (size_t k = 0; k < span; ++k) {
+          const float ur = real[block + k];
+          const float ui = imag[block + k];
+          const float vr = real[block + k + span];
+          const float vi = imag[block + k + span];
+          const float tr = vr * wr - vi * wi;
+          const float ti = vr * wi + vi * wr;
+          real[block + k] = ur + tr;
+          imag[block + k] = ui + ti;
+          real[block + k + span] = ur - tr;
+          imag[block + k + span] = ui - ti;
+          const float nextRe = wr * stepRe - wi * stepIm;
+          const float nextIm = wr * stepIm + wi * stepRe;
+          wr = nextRe;
+          wi = nextIm;
+        }
+      }
+    }
+
+    // The half-spectrum magnitudes.
+    for (size_t i = 0; i < half; ++i) {
+      const float r = real[i];
+      const float m = imag[i];
+      magnitudes[i] = std::sqrt(r * r + m * m);
+    }
+
+    // The spectral flux: the sum of the POSITIVE differences against the previous
+    // frame, accumulated in double. The first frame has no predecessor and is zero.
+    if (frame == 0) {
+      envelope.values[frame] = 0.0f;
+    } else {
+      double flux = 0.0;
+      for (size_t i = 0; i < half; ++i) {
+        const float difference = magnitudes[i] - previous[i];
+        if (difference > 0.0f) flux += static_cast<double>(difference);
+      }
+      envelope.values[frame] = static_cast<float>(flux);
+    }
+    previous.swap(magnitudes);
+  }
+
+  return envelope;
 }
 
 }  // namespace beatgrid

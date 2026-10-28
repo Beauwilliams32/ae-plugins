@@ -7,8 +7,9 @@
 // INCOMPLETE — the beat maths and the tempo analysis are here; the host integration is not.
 //   recovered: clampf, isPowerOfTwo, downmixToMono (shared),
 //              subdivisionFactor, phaseSawtooth, phaseInLayerTime,
-//              OnsetEnvelope::frameTimeSeconds
-//   outstanding: computeOnsetEnvelope (436), estimateTempoBpm (578), analyzeBeatGrid (57)
+//              OnsetEnvelope::frameTimeSeconds, estimatePhaseSeconds,
+//              generateBeatGrid, computeOnsetEnvelope
+//   outstanding: estimateTempoBpm (578), analyzeBeatGrid (57)
 //   excluded: (anonymous namespace)::WriteMarkerGrid (811) — it takes
 //              AEGP_SuiteHandler& and _AEGPp_Stream**, which are Adobe SDK types, so it
 //              stays out of `src/` the way every other host integration does.
