@@ -7,6 +7,16 @@
 
 namespace beatgrid {
 
+namespace {
+
+// The two literals the tempo search uses, read out of the listing as raw doubles:
+// `mov x8, #0x1eb8 / movk ... / movk #0x3f7e, lsl #48` is 0.0075, and
+// `mov x9, #0xea11 / movk #0x812d / movk #0x9799 / movk #0x3d71, lsl #48` is 1e-12.
+constexpr double kTempoLagMargin = 0.0075;
+constexpr double kTempoCurvatureEpsilon = 1e-12;
+
+}  // namespace
+
 // The three shared functions are the fleet's DSP, machine-code-identical to SpectraKeys'
 // copies and to the ones already recovered in beatgrid's siblings. `tools/dsp-duplication.mjs`
 // is what establishes that; `test/beatgrid.test.mjs` checks the copying by divergence
@@ -464,6 +474,230 @@ OnsetEnvelope computeOnsetEnvelope(const float* samples, size_t frames, double s
   }
 
   return envelope;
+}
+
+// ---------------------------------------------------------------------------
+// __ZN8beatgrid16estimateTempoBpmERKNS_13OnsetEnvelopeEfff, 578 instrs
+//
+// The listing (/tmp/ae/beatgrid.asm lines 826-1404) says:
+//
+//   ldp x21, x8, [x0]      ; the envelope's value vector
+//   cmp x21, x8 / b.eq     ; an empty envelope
+//   fcmp s1, s8 / b.mi     ; maxBpm < minBpm
+//   fcmp s1, #0.0 / b.ls   ; maxBpm <= 0
+//   fcmp s8, #0.0 / b.ls   ; minBpm <= 0
+//   ldr d4, [x0, #0x28]    ; the frame rate
+//   fcmp d4, #0.0 / b.ls   ; a frame rate of zero
+//       ; every one of those returns {0, 0, 0}
+//
+// The two lag bounds come straight out of the frame rate:
+//
+//   d13 = 60 * rate / maxBpm   ; the SHORTEST lag the range allows
+//   d15 = 60 * rate / minBpm   ; the LONGEST lag the range allows
+//   margin  = max(d13 * 0.0075, 0.25)
+//   margin2 = max(d15 * 0.0075, 0.25)
+//   minLag  = max(1, (int)(d13 - margin))          ; fcvtms truncates
+//   maxLag  = min(count - 2, (int)ceil(d15 + margin2))
+//
+// 0.0075 is the double literal 0x3f7eb851eb851eb8 and 0.25 is `fmov d5, #0.25`.
+//
+// The signal is smoothed TWICE by a centred box filter, and each pass rebuilds a
+// double prefix sum (`bzero` then `fcvt`/`fadd` into a (count + 1) element array).
+//
+// The correlation is a COVARIANCE, not a Pearson coefficient: the listing sums the
+// products, the two series and the count, and then forms `meanXY - meanX * meanY`
+// (`fmadd d0, d1, d0, d2`, with d1 already negated). The window SHRINKS with the lag:
+// at lag L the two series are signal[0 .. count-L-1] and signal[L .. count-1].
+//
+// The peak test is `mid > 0 && mid > left && mid >= right`, with the three `fccmp`s
+// chained so that a mid of exactly zero fails the `> 0` test. The sub-lag
+// interpolation is `shift = (left - right) * 0.5 / (left - 2*mid + right)`, clamped to
+// [-1, 1], and is skipped when the curvature's magnitude is below 1e-12
+// (0x3d719799812dea11). The peak's POSITION is the lag plus that shift, floored at 1.
+//
+// A peak is accepted when the lag itself is inside the rounded lag range OR when the
+// interpolated position is inside the lagged range -- the listing tests the two with
+// `b.le` and `cbz` and keeps the peak if EITHER holds.
+//
+// The returned bpm is 60 * rate / position, clamped into [minBpm, maxBpm], and the
+// confidence is the peak's value over the signal's variance, capped at one.
+// ---------------------------------------------------------------------------
+TempoAnalysis estimateTempoBpm(const OnsetEnvelope& envelope, float minBpm, float maxBpm,
+                                float thresholdScale) {
+  TempoAnalysis result{0.0f, 0.0f, 0.0f};
+
+  const std::vector<float>& values = envelope.values;
+  if (values.empty()) return result;
+  if (maxBpm < minBpm) return result;
+  if (!(maxBpm > 0.0f)) return result;
+  if (!(minBpm > 0.0f)) return result;
+
+  const double rate = envelope.framesPerSecond;
+  if (!(rate > 0.0)) return result;
+
+  const double sixtyRate = rate * 60.0;
+  const double minLagFrames = sixtyRate / static_cast<double>(maxBpm);
+  const double maxLagFrames = sixtyRate / static_cast<double>(minBpm);
+
+  // The two margins are the same 0.0075 of the lag, floored at a quarter of a frame.
+  const double margin = std::max(minLagFrames * kTempoLagMargin, 0.25);
+  const double margin2 = std::max(maxLagFrames * kTempoLagMargin, 0.25);
+
+  const int count = static_cast<int>(values.size());
+  const int minLag = std::max(1, static_cast<int>(std::trunc(minLagFrames - margin)));
+  const int maxLag = std::min(count - 2, static_cast<int>(std::ceil(maxLagFrames + margin2)));
+  if (maxLag < minLag) return result;
+
+  // The box filter's half-width: 32 ms of the frame rate, at least one frame.
+  const int window = std::max(1, static_cast<int>(std::round(rate * 0.032)));
+
+  // The signal, smoothed twice.
+  std::vector<float> signal(values.begin(), values.end());
+  for (int pass = 0; pass < 2; ++pass) {
+    std::vector<double> prefix(signal.size() + 1, 0.0);
+    for (size_t i = 0; i < signal.size(); ++i) {
+      prefix[i + 1] = prefix[i] + static_cast<double>(signal[i]);
+    }
+    for (size_t i = 0; i < signal.size(); ++i) {
+      const int hi = std::min(static_cast<int>(i) + window + 1, count);
+      const int lo = std::max(0, static_cast<int>(i) - window);
+      const double span = static_cast<double>(hi - lo);
+      signal[i] = static_cast<float>((prefix[hi] - prefix[lo]) / span);
+    }
+  }
+
+  // The autocorrelation, one covariance per lag.
+  std::vector<float> correlation(static_cast<size_t>(maxLag - minLag + 3), 0.0f);
+  for (int lag = minLag - 1; lag <= maxLag; ++lag) {
+    const int samples = count - lag;
+    const size_t index = static_cast<size_t>(lag - (minLag - 1));
+    if (samples < 1) {
+      correlation[index] = 0.0f;
+      continue;
+    }
+    double sumXY = 0.0;
+    double sumX = 0.0;
+    double sumY = 0.0;
+    for (int i = 0; i < samples; ++i) {
+      const double x = static_cast<double>(signal[i]);
+      const double y = static_cast<double>(signal[i + lag]);
+      sumXY += x * y;
+      sumX += x;
+      sumY += y;
+    }
+    const double n = static_cast<double>(samples);
+    const double meanXY = sumXY / n;
+    const double meanY = sumY / n;
+    const double minusMeanX = -sumX / n;
+    correlation[index] = static_cast<float>(minusMeanX * meanY + meanXY);
+  }
+
+  // The signal's variance: mean of the squares minus the square of the mean.
+  double sum = 0.0;
+  double sumSquares = 0.0;
+  for (float v : signal) {
+    const double d = static_cast<double>(v);
+    sum += d;
+    sumSquares += d * d;
+  }
+  const double mean = sum / static_cast<double>(count);
+  const float variance = static_cast<float>(sumSquares / static_cast<double>(count) - mean * mean);
+
+  // The degenerate range: one bpm, so there is nothing to search for.
+  if (minBpm == maxBpm) {
+    if (!(variance > 0.0f)) return result;
+    int index = static_cast<int>(std::round(minLagFrames));
+    index = std::min(index, maxLag);
+    index = std::max(index, minLag);
+    index -= (minLag - 1);
+    const float confidence = std::min(correlation[static_cast<size_t>(index)] / variance, 1.0f);
+    const float phase = estimatePhaseSeconds(envelope, minBpm);
+    return TempoAnalysis{minBpm, phase, confidence};
+  }
+
+  // The peaks of the autocorrelation.
+  struct Peak {
+    double position;  // in frames
+    float value;
+  };
+  std::vector<Peak> peaks;
+  const long long roundedMaxLag = static_cast<long long>(std::round(maxLagFrames));
+  const long long roundedMinLag = static_cast<long long>(std::round(minLagFrames));
+  for (int lag = minLag; lag < maxLag; ++lag) {
+    // The listing stops the scan once the lag is too long for the data left.
+    const long long k = lag - minLag;
+    if (!(static_cast<long long>(count) - minLag - 1 - k > lag)) break;
+
+    const int index = lag - minLag + 1;
+    const float mid = correlation[static_cast<size_t>(index)];
+    const float left = correlation[static_cast<size_t>(index - 1)];
+    const float right = correlation[static_cast<size_t>(index + 1)];
+    if (!(mid > 0.0f && mid > left && mid >= right)) continue;
+
+    const double leftD = static_cast<double>(left);
+    const double midD = static_cast<double>(mid);
+    const double rightD = static_cast<double>(right);
+    const double curvature = (leftD - 2.0 * midD) + rightD;
+    double shift = 0.0;
+    if (std::fabs(curvature) >= kTempoCurvatureEpsilon) {
+      shift = ((leftD - rightD) * 0.5) / curvature;
+      shift = std::clamp(shift, -1.0, 1.0);
+    }
+    double position = shift + static_cast<double>(lag);
+    position = std::max(position, 1.0);
+
+    const bool inRange = (position >= minLagFrames - margin) && (position <= maxLagFrames + margin2);
+    const bool lagOk = (roundedMaxLag < lag) || (roundedMinLag <= lag);
+    if (!(lagOk || inRange)) continue;
+
+    peaks.push_back(Peak{position, mid});
+  }
+
+  if (peaks.empty()) return result;
+
+  // The listing reduces the peak values to their LARGEST one — the accumulator starts
+  // at zero and the reduction is
+  //
+  //     fcmp  s1, s0            ; the running value against this peak
+  //     fcsel s1, s0, s1, mi    ; take the peak when the running value is smaller
+  //
+  // so `fcsel` with the `mi` condition keeps the GREATER of the two, and the zero it
+  // starts from only matters when every peak is negative.
+  //
+  // The best peak has to be worth at least a hundredth of the variance or the search
+  // gives up; the listing's `fccmp` only makes that test when the variance is
+  // POSITIVE, so a variance of zero carries on.
+  float bestPeakValue = 0.0f;
+  for (const Peak& peak : peaks) {
+    if (peak.value > bestPeakValue) bestPeakValue = peak.value;
+  }
+  if (variance > 0.0f && bestPeakValue < 0.01f * variance) return result;
+
+  // The peak to pick: the first one whose PREDECESSOR clears the threshold, and then
+  // the strongest of that one and the ones after it, stopping as soon as a peak sits
+  // more than a fifth beyond the best.
+  const size_t peakCount = peaks.size();
+  size_t best = peakCount - 1;
+  const float threshold = thresholdScale * bestPeakValue;
+  size_t i = 1;
+  for (; i != peakCount; ++i) {
+    if (peaks[i - 1].value >= threshold) break;
+  }
+  if (i != peakCount) {
+    best = i - 1;
+    for (; i < peakCount; ++i) {
+      if (peaks[i].position > peaks[best].position * 1.2) break;
+      if (peaks[i].value > peaks[best].value) best = i;
+    }
+  }
+
+  double bpm = sixtyRate / peaks[best].position;
+  bpm = (bpm < static_cast<double>(maxBpm)) ? bpm : static_cast<double>(maxBpm);
+  const float bpmFloat = (bpm > static_cast<double>(minBpm)) ? static_cast<float>(bpm) : minBpm;
+
+  const float phase = estimatePhaseSeconds(envelope, bpmFloat);
+  const float confidence = std::min(peaks[best].value / variance, 1.0f);
+  return TempoAnalysis{bpmFloat, phase, confidence};
 }
 
 }  // namespace beatgrid

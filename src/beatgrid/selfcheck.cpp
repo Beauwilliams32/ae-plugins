@@ -46,6 +46,13 @@ static_assert(std::is_same_v<decltype(std::declval<const beatgrid::OnsetEnvelope
               "frameTimeSeconds returns a double");
 static_assert(std::is_same_v<decltype(beatgrid::computeOnsetEnvelope(nullptr, 0, 0.0, 0, 0)), beatgrid::OnsetEnvelope>,
               "computeOnsetEnvelope returns an OnsetEnvelope BY VALUE (the 0x30-byte result is zeroed at +0x00)");
+static_assert(std::is_same_v<decltype(beatgrid::estimateTempoBpm(std::declval<const beatgrid::OnsetEnvelope&>(),
+                                                                0.0f, 0.0f, 0.0f)),
+                           beatgrid::TempoAnalysis>,
+              "estimateTempoBpm returns a TempoAnalysis of three floats (the 12-byte HFA in v0/v1/v2)");
+static_assert(std::is_same_v<decltype(beatgrid::analyzeBeatGrid(nullptr, 0, 0.0, 0.0f, 0.0f, 0.0f, 0, 0)),
+                           beatgrid::TempoAnalysis>,
+              "analyzeBeatGrid returns a TempoAnalysis of three floats (the 12-byte HFA in v0/v1/v2)");
 
 int main() {
   std::printf("beatgrid::subdivisionFactor\n");
@@ -304,6 +311,64 @@ int main() {
           "a region of no length gives no grid");
     check(beatgrid::generateBeatGrid(120.0, 0.0, Beat, 0.0, -1.0).empty(),
           "a negative region length gives no grid");
+  }
+
+  std::printf("beatgrid::estimateTempoBpm\n");
+  {
+    // An envelope at 100 frames a second with an onset every 50 frames, which is a
+    // 0.5 s beat — 120 bpm. The onsets are impulses, which is the cleanest thing the
+    // covariance search can be pointed at.
+    beatgrid::OnsetEnvelope env{};
+    env.sampleRate = 1000.0;
+    env.windowSize = 100;
+    env.hopSize = 10;
+    env.framesPerSecond = 100.0;
+    env.values.assign(500, 0.0f);
+    for (size_t i = 0; i < env.values.size(); i += 50) env.values[i] = 1.0f;
+
+    const auto tempo = beatgrid::estimateTempoBpm(env, 60.0f, 180.0f, 0.85f);
+    checkNear(tempo.bpm, 120.0, 1.2, "the 0.5 s beat period comes back as 120 bpm");
+    check(tempo.confidence > 0.0f && tempo.confidence <= 1.0f,
+          "the confidence is a fraction and never exceeds one");
+    check(tempo.phaseSeconds >= 0.0f && tempo.phaseSeconds < 0.5f,
+          "the phase is inside the 0.5 s beat period");
+
+    // The DEGENERATE range: one bpm, so there is nothing to search for and the listing
+    // takes a separate branch that indexes the correlation directly.
+    const auto fixed = beatgrid::estimateTempoBpm(env, 120.0f, 120.0f, 0.85f);
+    checkNear(fixed.bpm, 120.0, 1e-6, "a range of one bpm returns exactly that bpm");
+
+    // The guards. Every one of them returns all three fields as zero.
+    const beatgrid::OnsetEnvelope empty{};
+    const auto none = beatgrid::estimateTempoBpm(empty, 60.0f, 180.0f, 0.85f);
+    check(none.bpm == 0.0f && none.phaseSeconds == 0.0f && none.confidence == 0.0f,
+          "an empty envelope gives all zeroes");
+
+    const auto inverted = beatgrid::estimateTempoBpm(env, 180.0f, 60.0f, 0.85f);
+    check(inverted.bpm == 0.0f && inverted.confidence == 0.0f,
+          "a range with maxBpm below minBpm gives all zeroes");
+
+    const auto noMax = beatgrid::estimateTempoBpm(env, 60.0f, 0.0f, 0.85f);
+    check(noMax.bpm == 0.0f && noMax.confidence == 0.0f,
+          "a maxBpm of 0 gives all zeroes");
+
+    const auto noMin = beatgrid::estimateTempoBpm(env, 0.0f, 180.0f, 0.85f);
+    check(noMin.bpm == 0.0f && noMin.confidence == 0.0f,
+          "a minBpm of 0 gives all zeroes");
+
+    beatgrid::OnsetEnvelope noRate = env;
+    noRate.framesPerSecond = 0.0;
+    const auto still = beatgrid::estimateTempoBpm(noRate, 60.0f, 180.0f, 0.85f);
+    check(still.bpm == 0.0f && still.confidence == 0.0f,
+          "a frame rate of 0 gives all zeroes");
+
+    // A FLAT envelope has no variance, and the listing's threshold test only applies
+    // when the variance is positive — so a flat signal falls through the guard rather
+    // than being rescued by it.
+    beatgrid::OnsetEnvelope flat = env;
+    flat.values.assign(500, 0.25f);
+    const auto level = beatgrid::estimateTempoBpm(flat, 60.0f, 180.0f, 0.85f);
+    check(level.bpm == 0.0f, "a flat envelope finds no beat");
   }
 
   std::printf("the shared DSP, read through this namespace's copy\n");

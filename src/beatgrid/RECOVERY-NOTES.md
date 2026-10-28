@@ -7,7 +7,7 @@ unstripped.
 
 ## State
 
-Ten of the twelve `beatgrid::` symbols are recovered; four are instruction-identical.
+Eleven of the twelve `beatgrid::` symbols are recovered; four are instruction-identical.
 
 | Function | Instrs | State |
 |---|---|---|
@@ -19,7 +19,7 @@ Ten of the twelve `beatgrid::` symbols are recovered; four are instruction-ident
 | `phaseSawtooth` | 31 | Recovered — 31 here |
 | `OnsetEnvelope::frameTimeSeconds` | 13 | Recovered — **identical** (see below) |
 | `computeOnsetEnvelope` | 436 | Recovered — **[partial]**, 434 here |
-| `estimateTempoBpm` | 578 | Identified only |
+| `estimateTempoBpm` | 578 | Recovered — **[partial]**, 503 here |
 | `estimatePhaseSeconds` | 138 | Recovered — **[partial]**, 135 here |
 | `generateBeatGrid` | 94 | Recovered — **[partial]**, 94 here |
 | `analyzeBeatGrid` | 57 | Identified only |
@@ -237,8 +237,86 @@ worth recording because they are the kind of thing a paraphrase loses:
   that the XOR happens on every level and the shift only on the continue path, which is
   the shape the shipped `tst`/`eor`/`b.ne` has.
 
+## `estimateTempoBpm` (578 instructions) — [partial]
+
+The tempo search. Read in full from `/tmp/ae/beatgrid.asm` lines 826–1404. **503
+instructions here against the bundle's 578** — see the closing note on why.
+
+### The one bug this recovery nearly shipped
+
+The listing reduces the autocorrelation peaks to a single number, and the reduction
+looks like a minimum at first glance:
+
+```
+fcmp  s1, s0            ; the running value against this peak
+fcsel s1, s0, s1, mi    ; take s0 when the running value is SMALLER
+```
+
+`fcsel` with the `mi` condition takes the **greater** of the two operands, so the
+accumulator is the **LARGEST** peak value — not the smallest. A first transcription used
+`std::min` starting from zero, which made `lowest` permanently zero; the guard that
+follows (`lowest < 0.01f * variance`) therefore always fired and **the function returned
+all zeroes for every real input**. The self-check now pins the answer against a known
+120 bpm impulse train, which is what caught it.
+
+The same reduction is why the third argument is not "unused": it scales the LARGEST peak
+into the threshold that picks between the peaks (`fmul s0, s9, s1`), so the header calls
+it `thresholdScale`. The name is inferred — the binary carries only the type and the
+position.
+
+### What the listing pins
+
+* **Guards**, each returning `{0, 0, 0}`: an empty envelope; `maxBpm < minBpm`;
+  `maxBpm <= 0`; `minBpm <= 0`; and a frame rate (`+0x28`) of zero or less.
+* **The lag bounds** come from the frame rate: `60 * rate / maxBpm` is the shortest lag
+  the range allows and `60 * rate / minBpm` the longest. Each gets a margin of
+  `max(lag * 0.0075, 0.25)` frames, and then `minLag = max(1, trunc(shortest - margin))`
+  and `maxLag = min(count - 2, ceil(longest + margin))`. If `maxLag < minLag` the search
+  gives up.
+* **The smoothing** is a centred box filter applied **twice**, and each pass rebuilds a
+  `(count + 1)`-element **double** prefix sum — the shipped build does this with
+  `operator new` and `bzero`, then explicit loops, rather than with a running sum.
+  The half-width is `max(1, round(rate * 0.032))`, i.e. 32 ms of signal.
+* **The correlation is a COVARIANCE, not a Pearson coefficient.** The listing sums the
+  products, the two series and the count, and forms `meanXY - meanX * meanY`
+  (`fmadd d0, d1, d0, d2` with `d1` already negated). The window **shrinks** with the
+  lag: at lag `L` the two series are `signal[0 .. count-L-1]` and `signal[L .. count-1]`,
+  so the two means are taken over different numbers of samples.
+* **The peak test** is `mid > 0 && mid > left && mid >= right`, chained through three
+  `fccmp`s so that a mid of exactly zero fails the `> 0` test. The sub-lag
+  interpolation is `shift = (left - right) * 0.5 / (left - 2*mid + right)`, clamped to
+  `[-1, 1]`, and is skipped when the curvature is below `1e-12`
+  (`0x3d719799812dea11`). The peak's **position** is the lag plus that shift, floored
+  at one frame.
+* **A peak is accepted** when the lag itself is inside the rounded lag range **or** when
+  the interpolated position is inside the lagged range — the listing tests the two and
+  keeps the peak if **either** holds.
+* **The degenerate range** `minBpm == maxBpm` has its own branch (`fcmp s8, s11` /
+  `b.ne` at 0x1774): the correlation is indexed directly at the clamped rounded lag,
+  the bpm is the requested one, the phase comes from `estimatePhaseSeconds`, and the
+  confidence is `min(correlation / variance, 1)`.
+* **The final answer** is `bpm = 60 * rate / position`, clamped into `[minBpm, maxBpm]`,
+  the phase from `estimatePhaseSeconds(envelope, bpm)`, and the confidence is
+  `min(peakValue / variance, 1)`.
+
+### Why it is `[partial]` and not `[exact]`: 503 instructions here against the bundle's
+### 578.
+
+The seventy-five missing instructions are not behavioural. Two source-level choices
+account for them:
+
+* the shipped build computes the signal's **variance twice** — once for the degenerate
+  `minBpm == maxBpm` branch and once for the peak search — while this build shares one
+  computation between the two;
+* the shipped build allocates its prefix sums with `operator new` plus `bzero` and
+  writes them with explicit loops, where this build uses a `std::vector<double>`,
+  which the compiler initialises in one go.
+
+The BEHAVIOUR is the same, and the self-check pins it: an impulse train at 0.5 s
+intervals comes back as 120 bpm with a confidence inside `[0, 1]`, the degenerate range
+returns exactly the requested bpm, and all five guards return all zeroes.
+
 ## What is next
 
-`estimateTempoBpm` (578) is the biggest outstanding function and the tempo analysis
-proper; `analyzeBeatGrid` (57) is the entry point that ties these together. `generateBeatGrid`
-(94), `estimatePhaseSeconds` (138) and `computeOnsetEnvelope` (436) are recovered.
+`analyzeBeatGrid` (57) is the last one: the entry point that ties the envelope, the
+phase and the tempo search together. Everything else in the namespace is recovered.

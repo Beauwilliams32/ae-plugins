@@ -8,8 +8,8 @@
 //   recovered: clampf, isPowerOfTwo, downmixToMono (shared),
 //              subdivisionFactor, phaseSawtooth, phaseInLayerTime,
 //              OnsetEnvelope::frameTimeSeconds, estimatePhaseSeconds,
-//              generateBeatGrid, computeOnsetEnvelope
-//   outstanding: estimateTempoBpm (578), analyzeBeatGrid (57)
+//              generateBeatGrid, computeOnsetEnvelope, estimateTempoBpm
+//   outstanding: analyzeBeatGrid (57)
 //   excluded: (anonymous namespace)::WriteMarkerGrid (811) — it takes
 //              AEGP_SuiteHandler& and _AEGPp_Stream**, which are Adobe SDK types, so it
 //              stays out of `src/` the way every other host integration does.
@@ -243,13 +243,24 @@ OnsetEnvelope computeOnsetEnvelope(const float* samples, size_t frames, double s
  *
  * The envelope is smoothed twice by a centred box filter, and then correlated against
  * itself at every lag the bpm range allows; the strongest local maximum of that
- * autocorrelation is the beat period.
+ * autocorrelation is the beat period. The correlation is a COVARIANCE, not a Pearson
+ * coefficient: the listing forms `meanXY - meanX * meanY`, and the window SHRINKS with
+ * the lag, so at lag L the two series are signal[0 .. count-L-1] and signal[L .. count-1].
  *
  *     guard:   the envelope is empty            -> all zeroes
- *     guard:   the bpm range is empty or non-positive -> all zeroes
+ *     guard:   maxBpm < minBpm                   -> all zeroes
+ *     guard:   maxBpm <= 0, or minBpm <= 0       -> all zeroes
+ *     guard:   the frame rate is not positive    -> all zeroes
+ *
+ * `thresholdScale` is the third argument and it is NOT unused: it scales the largest
+ * correlation peak into the threshold that chooses between the peaks. The listing
+ * reduces the peak values to their LARGEST one and then multiplies THAT by
+ * `thresholdScale` (`fmul s0, s9, s1`), so the name is inferred from what it does.
+ *
+ * The NAME of the argument is not in the binary — only its type and its position are.
  */
 TempoAnalysis estimateTempoBpm(const OnsetEnvelope& envelope, float minBpm, float maxBpm,
-                                float unusedThreshold);
+                                float thresholdScale);
 
 /**
  * [partial] The entry point: envelope, then either a fixed-tempo phase or a tempo search.
@@ -258,6 +269,8 @@ TempoAnalysis estimateTempoBpm(const OnsetEnvelope& envelope, float minBpm, floa
  *     guard:   the envelope comes back empty    -> all zeroes
  *     if (fixedBpm > 0) -> { fixedBpm, the phase at that tempo, 1.0 }
  *     else              -> estimateTempoBpm(envelope, minBpm, maxBpm, 0.85f)
+ *
+ * The 0.85 is the literal `0x3f59999a`, read out of the listing at 0x1f94.
  */
 TempoAnalysis analyzeBeatGrid(const float* samples, size_t frames, double sampleRate,
                                float minBpm, float maxBpm, float fixedBpm, int windowSize,
