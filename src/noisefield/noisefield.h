@@ -4,16 +4,23 @@
 // NoiseField.plugin (bundle id com.williamsmedia.aftereffects.NoiseField), not from
 // source: the original C++ was destroyed on 2026-10-13 with no remote and no backup.
 //
-// INCOMPLETE — the noise core is here and the effect's own layers are not.
+// NAMESPACE-COMPLETE: every `noisefield::` symbol in the bundle is transcribed, so this
+// header is a complete description of the namespace.
 //
-// RECOVERED HERE: `clampf`, `clampi`, `fbmAmplitudeSum`, `kGrad3`, `PermTable::build`,
-// `noise3`, `fbm3`.
+// RECOVERED HERE, and how far:
+//   * `clampf`, `clampi`, `fbmAmplitudeSum`  — INSTRUCTION-IDENTICAL to the bundle.
+//   * `kGrad3`                                 — verified against the bundle's own bytes.
+//   * `PermTable::build`, `noise3`, `fbm3`     — same instruction COUNT as the bundle,
+//                                                 different register schedule; verified
+//                                                 against independently written oracles.
+//   * `fieldAt`, `curlField`, `apply<T>`       — BEHAVIOURAL recoveries: the semantics
+//                                                 are pinned by the listing and by a
+//                                                 bit-for-bit differential against the
+//                                                 shipped bundle, but the instruction
+//                                                 streams are not identical.
 //
-// NOT RECOVERED:
-//   fieldAt(const PermTable&, float, float, const Params&) (226)
-//   curlField(...)                     (163)
-//   apply<unsigned char>               (408) — the per-pixel loops
-//   apply<unsigned short>              (412)
+// No After Effects host has ever loaded a rebuilt bundle. Nothing here is a claim of
+// host acceptance.
 //
 // `kGrad3` IS THE NOISE'S DEFINITION, which is why it is recovered before the code
 // that consumes it: `noise3` hashing into a different gradient set would be a
@@ -35,6 +42,53 @@ float clampf(float value, float lo, float hi);
 // [exact] Three-way clamp, ints. Same structure, `csel` rather than `fcsel`, and the
 // low bound tested last for the same reason.
 int clampi(int value, int lo, int hi);
+
+// ---------------------------------------------------------------------------
+// The parameter block.
+//
+// [exact] Read out of `fieldAt`'s and `apply`'s instructions. The offsets are not
+// guesses: each field is loaded at a fixed displacement and used in a way that names
+// it. `+0x00` is compared against 2 and 3 to select a mode; `+0x04` is divided into
+// the sample coordinate and floored at 0.001f; `+0x0c` is passed as the third noise
+// coordinate; `+0x10` is compared against 1 to clamp an octave count; `+0x14` and
+// `+0x18` are loaded as a PAIR (`ldp s3, s12, [x1, #0x14]`) and used as the frequency
+// multiplier and the amplitude gain respectively; `+0x1c` seeds the permutation;
+// `+0x20` and `+0x24` are loaded as a PAIR (`ldp w8, w26, [x21, #0x20]`) and select
+// the displacement and edge behaviours.
+struct Params {
+  int mode;              // +0x00 — 0/1 curl, 2 advect, 3 gradient
+  float scale;           // +0x04 — sample coordinate divisor, floored at 0.001f
+  float amount;          // +0x08 — displacement scale; ZERO means "copy, do not displace"
+  float evolution;       // +0x0c — the third noise coordinate
+  int octaves;           // +0x10 — octave count, clamped to at least one
+  float freqMult;        // +0x14 — frequency multiplier between octaves
+  float gain;            // +0x18 — amplitude gain between octaves
+  unsigned int seed;     // +0x1c — permutation seed
+  int dispMode;          // +0x20 — 2 suppresses the Y displacement, 3 the X one
+  int edgeMode;          // +0x24 — 0/1 clamp, 2 wrap, 3 "outside is transparent"
+};
+
+// ---------------------------------------------------------------------------
+// A view of a raster.
+//
+// [exact] `data` at +0x00, `width` at +0x08, `height` at +0x0c, `stride` at +0x10.
+//
+// The stride is a 64-bit quantity and it is counted in ELEMENTS of T, not bytes:
+// `madd x8, x9, x22, x8` multiplies it by the row index in 64-bit arithmetic, and the
+// 16-bit instantiation scales it by two before adding it to the byte pointer.
+template <class T>
+struct View {
+  T* data;
+  int width;
+  int height;
+  long long stride;
+};
+
+// [exact] A two-component float, returned in s0/s1.
+struct Vec2 {
+  float x;
+  float y;
+};
 
 // ---------------------------------------------------------------------------
 // Fractal Brownian motion.
@@ -110,26 +164,127 @@ static_assert(sizeof(PermTable) == 512, "the permutation is stored twice");
  * trilinear interpolation in x, then y, then z.
  *
  * The last instruction scales the result by **0.9f** (0x3f666666). That is the
- * effect's own tuning and not part of the textbook algorithm — easy to lose, and the
- * self-check pins it against a value taken from the vanilla algorithm.
+ * effect's own tuning and not part of the textbook algorithm — easy to lose, and
+ * the self-check pins it against a value taken from the vanilla algorithm.
  */
 float noise3(const PermTable& table, float x, float y, float z);
 
 /**
  * [exact] Fractal Brownian motion: `octaves` samples of `noise3`, each at a frequency
- * multiplied by `lacunarity` and weighted by an amplitude multiplied by `gain`, then
+ * multiplied by `freqMult` and weighted by an amplitude multiplied by `ampGain`, then
  * divided by the amplitude sum.
  *
  * The octave count is clamped to at least one, exactly as `fbmAmplitudeSum` clamps it,
  * and the normalisation is that function's arithmetic — the compiler inlined it, so
- * this transcription calls it, which is bit-identical. Note the argument split: the
- * SIXTH parameter (the first float after the count) is the frequency multiplier and
- * the SEVENTH is the amplitude gain, which is the opposite of what the names might
- * suggest if read in the other order. Both are recovered from the two `fmul`s at the
- * bottom of the loop.
+ * this transcription calls it, which is bit-identical.
+ *
+ * THE ARGUMENT ORDER, which is the thing most easily got wrong: the SIXTH parameter
+ * (the first float after the count) is the FREQUENCY multiplier and the SEVENTH is
+ * the AMPLITUDE gain. That is settled by the two `fmul`s at the bottom of the loop —
+ * `fmul s15, s9, s15` scales the frequency by the sixth argument and `fmul s14, s8,
+ * s14` scales the amplitude by the seventh — and by the normalisation, which is built
+ * from the SEVENTH. `fieldAt` and `curlField` corroborate it independently: they
+ * inline the same loop and multiply the frequency by `Params::freqMult` (+0x14) and
+ * the amplitude by `Params::gain` (+0x18).
  */
-float fbm3(const PermTable& table, float x, float y, float z, int octaves, float gain,
-           float lacunarity);
+float fbm3(const PermTable& table, float x, float y, float z, int octaves, float freqMult,
+           float ampGain);
+
+// ---------------------------------------------------------------------------
+// The field.
+// ---------------------------------------------------------------------------
+
+/**
+ * [behavioural] The displacement field at a point, in PIXELS of displacement.
+ *
+ * Read off `noisefield::fieldAt` (226 instructions, arm64 0x0efc..0x1280 in
+ * `/tmp/ae/noisefield.asm`):
+ *
+ *   scale = fmax(params.scale, 0.001f)      // 0x3a83126f, never divides by zero
+ *   px = x / scale;  py = y / scale
+ *   z  = params.evolution
+ *
+ *   mode 3 (gradient): four fBm samples at +/-0.01f around the point, each NORMALISED
+ *     on its own, and the two differences divided by 0.02f:
+ *       a = fbm(px+0.01, py, z); b = fbm(px-0.01, py, z)
+ *       c = fbm(px, py+0.01, z); d = fbm(px, py-0.01, z)
+ *       return { (a - b) / 0.02f, (c - d) / 0.02f }
+ *     BOTH components divide by +0.02f (0x3ca3d70a) — the CURL, which divides its Y
+ *     component by -0.02f, does not.
+ *
+ *   mode 2 (advect): FOUR steps along the curl field, not five:
+ *       repeat 4: c = curlField(table, ax, ay, z, params)
+ *                 ax = c.x * 0.35f + ax;  ay = c.y * 0.35f + ay
+ *       return { ax - px, ay - py }
+ *     The step is 0.35f (0x3eb33333) and there are exactly four calls to `curlField`
+ *     in the listing (0xf6c, 0xf98, 0xfb8, 0xfd8).
+ *
+ *   modes 0 and 1: `curlField(table, px, py, z, params)` directly.
+ */
+Vec2 fieldAt(const PermTable& table, float x, float y, const Params& params);
+
+// ---------------------------------------------------------------------------
+// The renderer.
+// ---------------------------------------------------------------------------
+
+/**
+ * [behavioural] Displaces `src` into `dst`, one pixel at a time.
+ *
+ * Read off `noisefield::apply<unsigned char>` (408 instructions, arm64 0x06e8..0x0d48)
+ * and `noisefield::apply<unsigned short>` (412 instructions, arm64 0x1284..0x18f4) in
+ * `/tmp/ae/noisefield.asm`; the two differ only in the width of the pixel.
+ *
+ *   * A pixel is FOUR channels (the load and store offsets run 0..3 for 8-bit and
+ *     0,2,4,6 for 16-bit), and the channel values are read UNSIGNED (`ldrb`/`ldrh`
+ *     followed by `ucvtf`).
+ *
+ *   * `src.width < 1 || src.height < 1` returns without touching `dst`.
+ *
+ *   * `params.amount == 0.0f` takes a COPY path: per row, a `memmove` of
+ *     `width * 4 * sizeof(T)` bytes from `src.data + y*src.stride` to
+ *     `dst.data + y*dst.stride`. The fourth argument (`time`) is DEAD — the
+ *     instruction stream overwrites `s0` with `params.amount` before it is read.
+ *
+ *   * Otherwise the permutation is built from `params.seed` and every pixel is
+ *     displaced:
+ *         (fx, fy) = fieldAt(table, (float)x, (float)y, params)
+ *         dx = fx * params.amount;   dy = fy * params.amount
+ *         if (params.dispMode == 2) dy = 0;      // suppress the Y displacement
+ *         if (params.dispMode == 3) dx = 0;      // suppress the X displacement
+ *         sx = (float)x + dx;   sy = (float)y + dy
+ *     and `sx`/`sy` are forced to ZERO when the corresponding extent is below 2 —
+ *     a special case the listing makes explicit (`movi.2d v10, #0` for a width of 1).
+ *
+ *   * The edge behaviour, selected by `params.edgeMode`:
+ *         0, 1  clamp to [0, extent-1]
+ *         2     wrap:  f = fmodf(v, extent); if (f < 0) f += extent; then clamp to
+ *               [0, extent-1] — so the wrap is followed by the SAME upper clamp
+ *         3     no clamp: a sample outside [0, extent-1] is "outside" and the pixel
+ *               is written as four zero bytes (8 for 16-bit) instead
+ *     The X and Y tests are symmetric: both reject a coordinate that is below zero
+ *     as well as one above the top.
+ *
+ *   * The sample is taken bilinearly between the four neighbours
+ *     `i0 = clampi(floor(sx), 0, width-1)`, `i1 = i0+1` (wrapped to 0 in edge mode 2,
+ *     otherwise clamped to width-1) and likewise for `j0`/`j1`, with
+ *         top = fma(fxx, p01 - p00, p00)
+ *         bot = fma(fxx, p11 - p10, p10)
+ *         out = fma(fyy, bot - top, top)
+ *
+ *   * The result is converted with `fcvtas` — round to nearest, ties away from zero,
+ *     saturating to a 64-bit integer — and the LOW byte (or halfword) is stored. So
+ *     the conversion WRAPS rather than clamps: 300 becomes 44 in 8-bit and 70000
+ *     becomes 4464 in 16-bit.
+ */
+template <class T>
+void apply(const View<const T>& src, View<T>& dst, const Params& params, float time);
+
+// The two instantiations the bundle ships. Both are named explicitly, because the
+// mangled names are the only thing that ties them to the bundle's symbols.
+extern template void apply<unsigned char>(const View<const unsigned char>&,
+                                           View<unsigned char>&, const Params&, float);
+extern template void apply<unsigned short>(const View<const unsigned short>&,
+                                            View<unsigned short>&, const Params&, float);
 
 // ---------------------------------------------------------------------------
 // The gradient set.
