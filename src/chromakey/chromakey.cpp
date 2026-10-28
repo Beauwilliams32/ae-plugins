@@ -2,13 +2,14 @@
 //
 // Each function carries the instructions that establish its behaviour, because
 // that is the whole recovery: where a claim about the original cannot be traced to
-// an instruction, it does not belong here. The scalar and statistics layer is
-// transcribed; `analyzeFrame<T>`, `renderView<T>` and the host integration are not,
-// and are absent rather than stubbed.
+// an instruction, it does not belong here. The scalar layer, the statistics layer
+// and `renderView<T>` are transcribed; `analyzeFrame<T>` and the host integration
+// are not, and are absent rather than stubbed.
 
 #include "chromakey.h"
 
 #include <cmath>
+#include <cstdint>
 
 namespace chromakey {
 
@@ -306,5 +307,265 @@ float gradientMagnitude(const float* field, int width, int height, long rowStrid
   const float gy = (below - above) / dy;
   return std::sqrt(gx * gx + gy * gy);
 }
+
+// ---------------------------------------------------------------------------
+// renderView<T>
+//
+// Transcribed from the shipped bundle's own instruction stream. The listing read
+// was /tmp/ae/chromakeyassist.asm (arm64, demangled):
+//
+//   __ZN9chromakey10renderViewIhEEvRKNS_4ViewIKT_EERNS1_IS2_EEfRKNS_6ParamsENS_8ViewModeEfPKfSE_
+//     body 0x25bc .. 0x2b24   (347 instructions)
+//   __ZN9chromakey10renderViewItEEvRKNS_4ViewIKT_EERNS1_IS2_EEfRKNS_6ParamsENS_8ViewModeEfPKfSE_
+//     body 0x2be4 .. 0x3158   (350 instructions)
+//
+// The two bodies are the same algorithm with a different pixel stride, so ONE
+// template covers both. The differences that are not the stride:
+//
+//   * the 16-bit instantiation scales `rowBytes` by two itself (0x2cac:
+//     `lsl x17, x17, #1`), so `rowBytes` is in ELEMENTS of T in both;
+//   * the 16-bit pixel is four 16-bit components, A at +0 and R, G, B at +2, +4,
+//     +6, and the 8-bit pixel is four bytes, A at +0 and R, G, B at +1, +2, +3.
+//
+// The arithmetic below is ordered to reproduce the binary bit for bit. Where the
+// listing uses a fused multiply-add the source uses std::fma, because a separate
+// multiply and add would round twice and differ in the last bit.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// The shipped ramp table: .rodata at 0x5b18, sixteen-byte stride, {pos, r, g, b}.
+// The bytes were read out of the installed bundle:
+//
+//   stop0  00000000 3dcccccd 3e4ccccd 3f666666
+//   stop1  3eb33333 3dcccccd 3f4ccccd 3e99999a
+//   stop2  3f333333 3f733333 3f666666 3dcccccd
+//   stop3  3f800000 3f733333 3dcccccd 3dcccccd
+//
+// and are reproduced here as the decimal literals that produce exactly them.
+struct RampStop {
+  float pos;
+  float r;
+  float g;
+  float b;
+};
+
+constexpr RampStop kRampStops[4] = {
+  {0.0f, 0.1f, 0.2f, 0.9f},
+  {0.35f, 0.1f, 0.8f, 0.3f},
+  {0.7f, 0.95f, 0.9f, 0.1f},
+  {1.0f, 0.95f, 0.1f, 0.1f},
+};
+
+// The ramp interpolation, transcribed from the two identical blocks the listing
+// carries — 0x2a0c..0x2a70 on the gradient path and 0x2a34..0x2a70 on the mode-1
+// path:
+//
+//   k     = (t <= 0.35) ? 0 : (t <= 0.70) ? 1 : 2      ; 0x2960..0x2984
+//   delta = stop[k+1].pos - stop[k].pos                 ; 0x2a18
+//   if (delta > 1e-6) delta = delta else delta = 1.0     ; 0x2a28..0x2a48
+//   frac  = (t - stop[k].pos) / delta                   ; 0x2a4c..0x2a50
+//   c     = stop[k].c + (stop[k+1].c - stop[k].c) * frac  ; 0x2a54..0x2a70 (fmadd)
+void rampLookup(float t, float* r, float* g, float* b) {
+  const int k = (t <= 0.35f) ? 0 : ((t <= 0.7f) ? 1 : 2);
+  const RampStop& s0 = kRampStops[k];
+  const RampStop& s1 = kRampStops[k + 1];
+  float delta = s1.pos - s0.pos;
+  if (!(delta > 1e-6f)) delta = 1.0f;
+  const float frac = (t - s0.pos) / delta;
+  *r = std::fma(s1.r - s0.r, frac, s0.r);
+  *g = std::fma(s1.g - s0.g, frac, s0.g);
+  *b = std::fma(s1.b - s0.b, frac, s0.b);
+}
+
+}  // namespace
+
+template <typename T>
+void renderView(const View<const T>& src, View<T>& dst, float scale,
+                const Params& params, ViewMode mode, float mix,
+                const float* alpha, const float* spill) {
+  // 0x25bc..0x25c8 : H = min(dst.height, src.height); 0x2620 : H < 1 -> return.
+  const int H = dst.height < src.height ? dst.height : src.height;
+  if (H < 1) return;
+
+  // 0x2644..0x2650 : W = min(dst.width, src.width).
+  const int W = dst.width < src.width ? dst.width : src.width;
+
+  // 0x25cc..0x2604 : the sensitivity threshold, inlined from
+  // `sensitivityToThreshold`, which the differ reports instruction-identical.
+  const float threshold = sensitivityToThreshold(params.sensitivity);
+
+  // 0x2608..0x261c : blend = clampf(mix, 0, 1). The `movi.2d v1, #0` at 0x2618
+  // zeroes S1 — the LOW half of V1 — and NOT S2, so it does not clobber the
+  // threshold in S2; it only materialises the 0.0 that the low clamp selects.
+  const float blend = clampf(mix, 0.0f, 1.0f);
+
+  // 0x2654..0x265c : verbatim = (mode == 5) || (alpha == nullptr).
+  const bool verbatim = (mode == ModeVerbatim) || (alpha == nullptr);
+
+  const float halfThreshold = threshold * 0.5f;   // 0x266c
+  const float twoThreshold = threshold + threshold;  // 0x2678
+
+  for (int y = 0; y < H; ++y) {
+    // 0x26f4 : a source width of zero or less skips the row entirely.
+    if (src.width <= 0) continue;
+    if (W <= 0) continue;   // the shipped binary loops forever here; see the notes.
+
+    const T* srow = src.data + static_cast<long>(y) * src.rowBytes;
+    T* drow = dst.data + static_cast<long>(y) * dst.rowBytes;
+    // The alpha and spill buffers are one row of W floats per row: the shipped
+    // code strides them by W*4 bytes (0x2670, 0x26cc) with no padding.
+    const float* arow = alpha + static_cast<long>(y) * W;
+    const float* wrow = spill + static_cast<long>(y) * W;
+
+    for (int x = 0; x < W; ++x) {
+      const T* sp = srow + x * 4;
+      T* dp = drow + x * 4;
+
+      // 0x2790..0x2794 : the alpha channel is copied verbatim, always, before
+      // anything else happens to the pixel.
+      dp[0] = sp[0];
+
+      // 0x2798 -> 0x2744..0x2764 : verbatim copies R, G and B straight through
+      // and skips the whole tail.
+      if (verbatim) {
+        dp[1] = sp[1];
+        dp[2] = sp[2];
+        dp[3] = sp[3];
+        continue;
+      }
+
+      const float a = arow[x];
+      float cr = 0.0f;   // the computed R
+      float cg = 0.0f;   // the computed G
+      float cb = 0.0f;   // the computed B
+
+      // The dispatch, 0x279c: mode 0 and every out-of-range mode take the
+      // default, 1 is the ramp, 2 the despill, 3 the gradient, 4 the matte, and
+      // 5 was already taken by the verbatim flag.
+      switch (mode) {
+        case ModeRamp: {   // 0x2890
+          if (a <= threshold) {
+            // 0x2988..0x29a0 : t = clampf(alpha / threshold, 0, 1).
+            const float t = clampf(a / threshold, 0.0f, 1.0f);
+            rampLookup(t, &cr, &cg, &cb);
+          } else {
+            // 0x289c..0x28cc : the fallback is the source colour, scaled, times 0.35.
+            cr = (static_cast<float>(sp[1]) / scale) * 0.35f;
+            cg = (static_cast<float>(sp[2]) / scale) * 0.35f;
+            cb = (static_cast<float>(sp[3]) / scale) * 0.35f;
+          }
+          break;
+        }
+
+        case ModeDespill: {   // 0x27b4
+          if (spill == nullptr) {
+            cr = (static_cast<float>(sp[1]) / scale) * 0.35f;
+            cg = (static_cast<float>(sp[2]) / scale) * 0.35f;
+            cb = (static_cast<float>(sp[3]) / scale) * 0.35f;
+          } else {
+            const float sv = wrow[x];
+            // 0x26b0..0x26b4 build 0x02 (0x3ca3d70a) and 0x27bc..0x27c4 compare
+            // it against the spill value: `b.le` means a spill of 0.02 or less
+            // takes the fallback.
+            if (sv <= 0.02f) {
+              cr = (static_cast<float>(sp[1]) / scale) * 0.35f;
+              cg = (static_cast<float>(sp[2]) / scale) * 0.35f;
+              cb = (static_cast<float>(sp[3]) / scale) * 0.35f;
+            } else {
+              // 0x27e0 : R = 0.3 + spill * 0.7, clamped.
+              cr = clampf(std::fma(sv, 0.7f, 0.3f), 0.0f, 1.0f);
+              // 0x27f8..0x2804 : G = (G / scale) * 0.25, NOT clamped.
+              cg = (static_cast<float>(sp[2]) / scale) * 0.25f;
+              // 0x2814 : B = 0.3 + spill * 0.6, clamped.
+              cb = clampf(std::fma(sv, 0.6f, 0.3f), 0.0f, 1.0f);
+            }
+          }
+          break;
+        }
+
+        case ModeGradient: {   // 0x28d4
+          // 0x28d8..0x28e0 : |alpha - threshold| >= threshold * 0.5 takes the
+          // fallback, so the gradient is only used where the matte is close to
+          // the threshold.
+          if (std::fabs(a - threshold) >= halfThreshold) {
+            cr = (static_cast<float>(sp[1]) / scale) * 0.35f;
+            cg = (static_cast<float>(sp[2]) / scale) * 0.35f;
+            cb = (static_cast<float>(sp[3]) / scale) * 0.35f;
+          } else {
+            const int xm1 = x > 1 ? x - 1 : 0;
+            const int xp1 = (W - 1 < x + 1) ? W - 1 : x + 1;
+            const int ym1 = y > 1 ? y - 1 : 0;
+            const int yp1 = (H - 1 < y + 1) ? H - 1 : y + 1;
+            const float dx = static_cast<float>(xp1 - xm1 > 1 ? xp1 - xm1 : 1);
+            const float dy = static_cast<float>(yp1 - ym1 > 1 ? yp1 - ym1 : 1);
+            // The gradient is a CROSS, exactly as `gradientMagnitude` is: the
+            // horizontal difference is on the centre ROW and the vertical one
+            // on the centre COLUMN.
+            const float* ac = alpha + static_cast<long>(y) * W;
+            const float* am = alpha + static_cast<long>(ym1) * W;
+            const float* ap = alpha + static_cast<long>(yp1) * W;
+            const float gx = (ac[xp1] - ac[xm1]) / dx;
+            const float gy = (ap[x] - am[x]) / dy;
+            const float mag = std::sqrt(std::fma(gx, gx, gy * gy));
+            // 0x2938..0x294c : q = mag / (2 * threshold), then
+            // t = 1 - min(q, 1) — with the shipped's exact test order, in which
+            // the low clamp compares the ORIGINAL q.
+            const float q = mag / twoThreshold;
+            const float t =
+                clampf((q < 0.0f) ? 1.0f : (1.0f - (q > 1.0f ? 1.0f : q)), 0.0f, 1.0f);
+            rampLookup(t, &cr, &cg, &cb);
+          }
+          break;
+        }
+
+        case ModeMatte: {   // 0x283c
+          // 0x2840..0x2854 : v = clampf((alpha / threshold) * 0.5, 0, 1),
+          // and the pixel becomes a flat grey (0x2858..0x2860).
+          const float v = clampf((a / threshold) * 0.5f, 0.0f, 1.0f);
+          cr = v;
+          cg = v;
+          cb = v;
+          break;
+        }
+
+        default: {   // 0x2864 : mode 0, and every mode out of range.
+          cr = static_cast<float>(sp[1]) / scale;
+          cg = static_cast<float>(sp[2]) / scale;
+          cb = static_cast<float>(sp[3]) / scale;
+          break;
+        }
+      }
+
+      // 0x2a74..0x2b08 : the tail.
+      //
+      //   out = (computed - src / scale) * blend + src / scale
+      //   out = clampf(out, 0, 1)
+      //   out = out * scale + 0.5
+      //   dst  = (T)(int)out          ; fcvtzs truncates toward zero
+      const float sr = static_cast<float>(sp[1]) / scale;
+      const float sg = static_cast<float>(sp[2]) / scale;
+      const float sb = static_cast<float>(sp[3]) / scale;
+      cr = clampf(std::fma(cr - sr, blend, sr), 0.0f, 1.0f);
+      cg = clampf(std::fma(cg - sg, blend, sg), 0.0f, 1.0f);
+      cb = clampf(std::fma(cb - sb, blend, sb), 0.0f, 1.0f);
+      dp[1] = static_cast<T>(static_cast<uint32_t>(
+          static_cast<int32_t>(std::fma(cr, scale, 0.5f))));
+      dp[2] = static_cast<T>(static_cast<uint32_t>(
+          static_cast<int32_t>(std::fma(cg, scale, 0.5f))));
+      dp[3] = static_cast<T>(static_cast<uint32_t>(
+          static_cast<int32_t>(std::fma(cb, scale, 0.5f))));
+    }
+  }
+}
+
+template void renderView<unsigned char>(const View<const unsigned char>&,
+                                        View<unsigned char>&, float,
+                                        const Params&, ViewMode, float,
+                                        const float*, const float*);
+template void renderView<unsigned short>(const View<const unsigned short>&,
+                                         View<unsigned short>&, float,
+                                         const Params&, ViewMode, float,
+                                         const float*, const float*);
 
 }  // namespace chromakey

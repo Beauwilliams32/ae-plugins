@@ -5,28 +5,28 @@
 // not from source: the original C++ was destroyed on 2026-10-13 with no remote and
 // no backup.
 //
-// INCOMPLETE — the scalar and statistics layer is here, and the four per-pixel
-// functions are not. `tools/codegen-diff.mjs chromakey` names what is missing,
-// and test/chromakey.test.mjs asserts that the recovered set and the outstanding set
-// it reports agree with what this file says.
+// INCOMPLETE — the scalar layer, the statistics layer and `renderView<T>` are
+// here; `analyzeFrame<T>` is not. `tools/codegen-diff.mjs chromakey` names what is
+// missing, and test/chromakey.test.mjs asserts that the recovered set and the
+// outstanding set it reports agree with what this file says.
 //
-// RECOVERED HERE (11 functions):
+// RECOVERED HERE (13 functions):
 //   clampf, rgbToYCbCr, sensitivityToThreshold, chromaDistance, hueAngle,
 //   angularDiff, percentile, percentileUnsorted, gradientMagnitude
 //   spillScore, uniformityScore
+//   renderView<unsigned char>, renderView<unsigned short>
 //
 // NOT RECOVERED:
-//   analyzeFrame<unsigned char>  (752)  — the per-frame statistics pass
-//   analyzeFrame<unsigned short> (770)  — the same, 16-bit
-//   renderView<unsigned char>    (347)  — the key output
-//   renderView<unsigned short>   (350)  — the same, 16-bit
+//   analyzeFrame<unsigned char> (752), analyzeFrame<unsigned short> (770)
 //   StoreReadout(PF_InData*, const Stats&) (70) — host integration, and it must
 //     stay out of `src/`: it takes a `PF_InData*`, which is an Adobe SDK type, and
 //     this directory holds transcriptions of the shipped DSP only.
 //
-// SIGNATURE FIDELITY: all eleven are [exact] — taken verbatim from symbol mangling.
-// `RGB` and `YCbCr` are [inferred] layouts, each established from the offsets the
-// functions themselves use, and pinned by static_assert.
+// SIGNATURE FIDELITY: all thirteen are [exact] — taken verbatim from symbol
+// mangling. `RGB` and `YCbCr` are [inferred] layouts, each established from the
+// offsets the functions themselves use, and pinned by static_assert. `View`,
+// `Params`, `Stats` and `ViewMode` are [inferred] layouts and [invented] names
+// where the bundle carries only the type name.
 
 #pragma once
 #include <cstddef>
@@ -199,5 +199,111 @@ float percentileUnsorted(std::vector<float> samples, float p);
 // whatever the original parameter was called. A null field, or a width or height
 // below 1, returns 0.
 float gradientMagnitude(const float* field, int width, int height, long rowStride, int x, int y);
+
+// ---------------------------------------------------------------------------
+// The two per-pixel template families.
+//
+// `analyzeFrame` and `renderView` are function templates in the shipped bundle, so
+// the symbol table holds one symbol per instantiation (`analyzeFrameIhE…` and
+// `analyzeFrameItE…`) and the differ counts them separately. The types below are
+// therefore [exact] in name and [inferred] in layout — the names come from the
+// mangling (`View`, `Params`, `Stats`, `ViewMode`) and the layouts from the offsets
+// the shipped code loads and stores at.
+// ---------------------------------------------------------------------------
+
+/** [inferred] A pixel buffer: a pointer, a width, a height, and a row stride.
+ *
+ *  `rowBytes` is in ELEMENTS of `T`, not bytes: the shipped code scales it by
+ *  `sizeof(T)` itself (arm64 listing of `renderView<unsigned short>` at 0x2cac:
+ *  `lsl x17, x17, #1`, i.e. `rowBytes * 2` bytes for the 16-bit instantiation),
+ *  and the 8-bit instantiation uses it unscaled. `gradientMagnitude` says the same
+ *  thing about its `rowStride`.
+ */
+template <typename T>
+struct View {
+  T* data;
+  int width;
+  int height;
+  long rowBytes;
+};
+
+/** [inferred] The key colour and the sensitivity slider. */
+struct Params {
+  float keyR;
+  float keyG;
+  float keyB;
+  float sensitivity;
+};
+
+/** [inferred] The per-frame statistics `analyzeFrame` returns. */
+struct Stats {
+  float uniformity;
+  float meanScore;
+  float p5;
+  float p95;
+  float keyedFraction;
+};
+
+/** [inferred] The view mode `renderView` dispatches on.
+ *
+ *  The enumerator NAMES are unrecoverable — the shipped bundle passes this type
+ *  by value and the mangling records only `ViewMode` — so the names below are
+ *  inventions chosen to describe what each value does. The VALUES are exact: they
+ *  are the six integers the shipped dispatch compares against, read from the
+ *  arm64 listing of `renderView<unsigned char>` at 0x2654, 0x279c, 0x27a4, 0x27ac,
+ *  0x282c and 0x2834.
+ *
+ *  `ModeDefault` is also what an out-of-range mode falls back to, and it is what
+ *  mode 0 does.
+ */
+enum ViewMode {
+  ModeDefault = 0,   // pass the source colour through, scaled
+  ModeRamp = 1,      // opacity ramp driven by the alpha buffer
+  ModeDespill = 2,   // despill driven by the spill buffer
+  ModeGradient = 3,  // edge-aware ramp, driven by the alpha buffer's gradient
+  ModeMatte = 4,     // flat grey matte driven by the alpha buffer
+  ModeVerbatim = 5,  // copy the source through untouched
+};
+
+// [exact] The per-frame statistics pass.
+//
+// Reads the frame, works out which pixels are inside the key's chroma radius,
+// and returns the aggregate statistics. `outDistances` and `outScores` receive
+// one float per pixel when they are non-null.
+//
+// NOT RECOVERED — the signature above is [exact] (taken from the symbol mangling
+// `_ZN9chromakey12analyzeFrameIhEENS_5StatsERKNS_4ViewIKT_EEfRKNS_6ParamsEPfSB_`),
+// but there is no definition of it in `chromakey.cpp` yet: the shipped body is 752
+// instructions for the 8-bit instantiation and 770 for the 16-bit one, and it has
+// not been transcribed. The declaration is kept so the call shape is pinned and so
+// the differ can see that the symbol is still absent; `tools/codegen-diff.mjs
+// chromakey` reports both instantiations as "not implemented" and
+// test/chromakey.test.mjs asserts that they are still outstanding.
+template <typename T>
+Stats analyzeFrame(const View<const T>& src, float scale, const Params& params,
+                    float* outDistances, float* outScores);
+
+// [exact] The key output.
+//
+// Renders `src` into `dst` according to `mode`. `alpha` and `spill` are optional
+// per-pixel buffers of `W * H` floats each (one row of `W` floats per row);
+// `alpha` is the key matte and `spill` is the despill weight.
+//
+// [behavioural] — transcribed from the shipped instruction stream (arm64 listing
+// `/tmp/ae/chromakeyassist.asm`: `renderView<unsigned char>` body 0x25bc-0x2b24,
+// 347 instructions; `renderView<unsigned short>` body 0x2be4-0x3158, 350), but
+// NOT instruction-identical: the differ reports shipped=347 mine=368 for the 8-bit
+// instantiation and shipped=350 mine=363 for the 16-bit one.
+//
+// The NUMBERS are exact. `test/chromakey.test.mjs` dlopens the installed
+// ChromaKeyAssist bundle, calls the shipped `renderView` at its own exported
+// offsets, and compares the whole destination buffer byte-for-byte against this
+// implementation over randomised and edge-cased frames. The harness is
+// mutation-sensitive: changing one constant in this source (the mode-2 spill
+// threshold, 0.02f -> 0.03f) makes it report 35 and 14 mismatches respectively.
+template <typename T>
+void renderView(const View<const T>& src, View<T>& dst, float scale,
+                const Params& params, ViewMode mode, float mix,
+                const float* alpha, const float* spill);
 
 }  // namespace chromakey

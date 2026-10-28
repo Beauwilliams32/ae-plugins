@@ -7,10 +7,11 @@ was destroyed on 2026-10-13; the binary is the only copy and is unstripped.
 
 ## State
 
-Eleven of the fifteen authored functions are recovered, 502 instructions in total.
-Seven of the eleven are **instruction-identical** to the shipped binary. Four are
-recovered with the right semantics but a different instruction schedule. Four are
-not recovered at all, and `StoreReadout` is deliberately absent from `src/`.
+Thirteen of the fifteen authored functions are recovered, 1199 instructions in
+total. Seven of the thirteen are **instruction-identical** to the shipped binary.
+Six are recovered with the right semantics but a different instruction schedule.
+Two are not recovered at all, and `StoreReadout` is deliberately absent from
+`src/`.
 
 | Function | Instrs | State |
 |---|---|---|
@@ -25,8 +26,8 @@ not recovered at all, and `StoreReadout` is deliberately absent from `src/`.
 | `percentile` | 31 | Recovered — 28 here; the same arithmetic, scheduled differently |
 | `analyzeFrame<unsigned char>` | 752 | **Identified only** |
 | `analyzeFrame<unsigned short>` | 770 | **Identified only** |
-| `renderView<unsigned char>` | 347 | **Identified only** |
-| `renderView<unsigned short>` | 350 | **Identified only** |
+| `renderView<unsigned char>` | 347 | Recovered — **behavioural**; 368 here, verified bit-for-bit against the shipped bundle |
+| `renderView<unsigned short>` | 350 | Recovered — **behavioural**; 363 here, verified bit-for-bit against the shipped bundle |
 | `spillScore` | 82 | Recovered — 80 here; clang elides a lower clamp it can prove (see below) |
 | `uniformityScore` | 203 | Recovered — 203 here; 3 of 203 positions differ (see below) |
 | `StoreReadout` | 70 | **Identified only, and must stay out of `src/`** — it takes a `PF_InData*` |
@@ -58,6 +59,114 @@ chased once:
 
 `gradientMagnitude` used to be in this list and is not any more: it was wrong, and
 is now instruction-identical. See the section below.
+
+`renderView<T>` is behavioural rather than instruction-identical: the arithmetic
+and the schedule both came from the listing, but the compiler here allocates
+registers differently and emits 12 (8-bit) / 13 (16-bit) more instructions than
+the bundle does. The OUTPUT is exact — see "How `renderView` was verified" below.
+
+## How `renderView` was verified
+
+`renderView` is not exported from the bundle by name in a way `dlsym` can use
+directly, but the bundle is unstripped and the function's own address is known from
+the listing, so the verification harness finds the bundle's load base with
+`_dyld_get_image_name` and calls the function at `base + 0x25bc` (8-bit) and
+`base + 0x2be4` (16-bit) directly.
+
+**Measured:** 40 240 vectors — 20 000 randomised (random widths, heights, row
+strides, mismatched source/destination widths, padded strides, 1x1 frames, scales
+of 1 / 255 / 65535 / random, sensitivities -20..150, mixes -2..2, modes -1..6,
+null and non-null `alpha` and `spill`) plus ~240 structured edge cases — compared
+**byte-for-byte over the entire destination buffer**, including the row padding
+that the kernel does not write. Result: `vectors=40240 mism8=0 mism16=0`.
+
+Two things had to be got right for that number to mean anything:
+
+- **Both destination buffers must be pre-filled with the same pattern.** The
+  shipped kernel writes only the pixels, not the row padding, so if the two
+  buffers start out different the untouched padding bytes differ and the
+  comparison reports false mismatches. The harness fills both with the same
+  bytes first.
+- **The harness must be able to fail.** Changing one constant in the recovered
+  source — the mode-2 spill threshold from `0.02f` to `0.03f` — makes the same
+  harness report `mism8=35 mism16=14`. Reverting the constant returns it to
+  `mism8=0 mism16=0`. The zero is therefore a measurement, not a stub.
+
+This is a *measurement of the shipped binary*, not a host test: no After Effects
+host has ever loaded a rebuilt bundle, and nothing here claims otherwise.
+
+### What `renderView` actually does
+
+Read from the arm64 listing (`/tmp/ae/chromakeyassist.asm`):
+
+- The frame is rendered over `H = min(dst.height, src.height)` rows and
+  `W = min(dst.width, src.width)` columns (0x25bc..0x25c8, 0x2644..0x2650).
+- The sensitivity threshold is the inlined `sensitivityToThreshold`
+  (0x25cc..0x2604) and the blend is `clampf(mix, 0, 1)` (0x2608..0x261c).
+- **Verbatim is `(mode == 5) || (alpha == nullptr)`** (0x2654..0x265c). A null
+  `alpha` buffer means "no matte", and the frame is copied through untouched —
+  it does not fall back to the default mode.
+- The alpha channel is always copied verbatim first (0x2790..0x2794), whatever
+  the mode.
+- The dispatch (0x279c) is: 0 or out of range -> default, 1 -> ramp, 2 -> despill,
+  3 -> gradient, 4 -> matte, 5 -> verbatim.
+- **The fallback colour is `(src / scale) * 0.35`** (0x289c, 0x29bc) — it is used
+  by the ramp, despill and gradient paths whenever their test fails.
+- Mode 1 (ramp): if `alpha <= threshold` then `t = clampf(alpha / threshold, 0, 1)`
+  and the ramp is looked up at `t`; otherwise the fallback.
+- Mode 2 (despill): if `spill == nullptr` -> fallback. If `spill <= 0.02` ->
+  fallback. Otherwise `R = clampf(0.3 + spill * 0.7, 0, 1)`,
+  `G = (G / scale) * 0.25` (**not clamped**), `B = clampf(0.3 + spill * 0.6, 0, 1)`.
+- Mode 3 (gradient): if `|alpha - threshold| >= threshold * 0.5` -> fallback.
+  Otherwise the alpha buffer's gradient magnitude is taken and
+  `t = 1 - min(mag / (2 * threshold), 1)`, and the ramp is looked up at `t`.
+  The gradient is the same **cross** kernel `gradientMagnitude` uses: the
+  horizontal difference on row `y`, the vertical difference on column `x`.
+- Mode 4 (matte): `v = clampf((alpha / threshold) * 0.5, 0, 1)`, written to all
+  three colour channels.
+- The tail (0x2a74..0x2b08) is
+  `out = fma(computed - src/scale, blend, src/scale)`, then `clampf(out, 0, 1)`,
+  then `out = fma(out, scale, 0.5)`, then stored as `(T)(int)out` — the
+  conversion truncates toward zero and the low 8 or 16 bits are kept.
+- The ramp table is `.rodata` at 0x5b18, four stops on a sixteen-byte stride
+  `{pos, r, g, b}`:
+  `stop0 00000000 3dcccccd 3e4ccccd 3f666666` /
+  `stop1 3eb33333 3dcccccd 3f4ccccd 3e99999a` /
+  `stop2 3f333333 3f733333 3f666666 3dcccccd` /
+  `stop3 3f800000 3f733333 3dcccccd 3dcccccd`.
+  The segment is `(t <= 0.35) ? 0 : (t <= 0.70) ? 1 : 2`, and the interpolation
+  is `c = fma(c1 - c0, frac, c0)` with `frac = (t - pos0) / (pos1 - pos0)`.
+- `rowBytes` is in ELEMENTS of `T` (the 16-bit instantiation doubles it itself at
+  0x2cac), and the pixel layout is `[A, R, G, B]` for both widths.
+- The alpha and spill buffers are `W` floats per row with no padding.
+
+### The spill threshold is 0.02, not 0.25
+
+An earlier probe of this function reported the mode-2 spill threshold as `0.25`.
+That was wrong, and it came from reading the wrong register: `fmov s19, #0.25`
+at 0x26b8 is the **mode-2 green multiplier**, a different quantity.
+
+The threshold itself is 0.02 (`0x3CA3D70A`), materialised at:
+
+- 8-bit: `mov w19, #0xd70a` / `movk w19, #0x3ca3` at **0x26b0-0x26b4**, compared
+  and branched at `fmov s21, w19` / `fcmp s23, s21` / `b.le 0x289c` at
+  **0x27bc-0x27c4** — so the fallback is taken when `spill <= 0.02`.
+- 16-bit: the same constant in `w20` at **0x2ce8-0x2cec**, compared and
+  branched at **0x2dec-0x2df4**.
+
+The `<=` matters: `spill == 0.02` exactly takes the fallback. The oracle probe
+confirms it — `spill = 0.02` and `spill = 0.0` give the same output `(89, 0, 0)`,
+while `spill = 0.1` gives `(94, 0, 92)` and `spill = 0.9` gives `(237, 0, 214)`.
+
+### Two hazards in the shipped code
+
+- **The shipped loop does not terminate when `dst.width <= 0`.** `W` is zero and
+  the loop is a do-while, so it never exits. The recovered source skips the frame
+  instead. This is the one place where the recovered code deliberately differs in
+  CONTROL FLOW from the bundle, and it is a difference that can only turn a hang
+  into a no-op.
+- **A row is skipped when `src.width <= 0`** (0x26f4), which is not the same
+  condition as `dst.width <= 0`.
 
 ## `gradientMagnitude` was wrong, and the error had spread
 
