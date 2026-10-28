@@ -31,6 +31,15 @@ namespace. It also fails if `RECOVERY-STATUS.md` no longer matches a fresh measu
 | `specs/*.json`, `build/` | `npm run recover` | `test/specs.test.mjs`, `test/build.test.mjs` |
 | `brand/*` | supplied artwork, copied byte-for-byte | `test/brand.test.mjs` pins size and SHA-256 |
 
+## Where the domain knowledge lives
+
+This file states what is true of **this repo**. The After Effects domain knowledge that
+is not repo-specific - the PiPL contract and what each flag obliges, the build
+pipeline's traps, how to recover a function from a shipped binary, and the
+host-acceptance discipline - is in the shared `adobe-after-effects-plugin-development`
+skill, and the cross-app picture (Photoshop, Illustrator, Premiere, Audition, Lightroom)
+is in `adobe-creative-cloud-apps`. Both are linked into every agent root.
+
 ## Rules that exist because something went wrong
 
 - **Never delete an installed bundle and never touch `.install-backups`.** On 2026-10-13 an
