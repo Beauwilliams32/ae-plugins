@@ -7,11 +7,11 @@ was destroyed on 2026-10-13; the binary is the only copy and is unstripped.
 
 ## State
 
-Thirteen of the fifteen authored functions are recovered, 1199 instructions in
-total. Seven of the thirteen are **instruction-identical** to the shipped binary.
-Six are recovered with the right semantics but a different instruction schedule.
-Two are not recovered at all, and `StoreReadout` is deliberately absent from
-`src/`.
+All fifteen of the authored functions are recovered, 2721 instructions in total.
+Seven of the fifteen are **instruction-identical** to the shipped binary. The
+other eight are recovered with the right semantics but a different instruction
+schedule. Nothing is outstanding; `StoreReadout` is deliberately absent from
+`src/`, and it is not a `chromakey::` symbol the differ tracks.
 
 | Function | Instrs | State |
 |---|---|---|
@@ -24,8 +24,8 @@ Two are not recovered at all, and `StoreReadout` is deliberately absent from
 | `percentileUnsorted` | 53 | Recovered — 52 here; the same instructions with one register allocated differently |
 | `gradientMagnitude` | 47 | Recovered — **instruction-identical** (corrected 2026-10-28; see below) |
 | `percentile` | 31 | Recovered — 28 here; the same arithmetic, scheduled differently |
-| `analyzeFrame<unsigned char>` | 752 | **Identified only** |
-| `analyzeFrame<unsigned short>` | 770 | **Identified only** |
+| `analyzeFrame<unsigned char>` | 752 | Recovered — **behavioural**; 703 here, verified bit-for-bit against the shipped bundle |
+| `analyzeFrame<unsigned short>` | 770 | Recovered — **behavioural**; 708 here, verified bit-for-bit against the shipped bundle |
 | `renderView<unsigned char>` | 347 | Recovered — **behavioural**; 368 here, verified bit-for-bit against the shipped bundle |
 | `renderView<unsigned short>` | 350 | Recovered — **behavioural**; 363 here, verified bit-for-bit against the shipped bundle |
 | `spillScore` | 82 | Recovered — 80 here; clang elides a lower clamp it can prove (see below) |
@@ -35,7 +35,7 @@ Two are not recovered at all, and `StoreReadout` is deliberately absent from
 `test/chromakey.test.mjs` asserts that table against `tools/codegen-diff.mjs`, and
 that every function in the last column of "Recovered" is named here.
 
-## Why the four DIFFERs are not transcription errors
+## Why the eight DIFFERs are not transcription errors
 
 Each is the same arithmetic with a different instruction schedule, and each was
 chased once:
@@ -64,6 +64,11 @@ is now instruction-identical. See the section below.
 and the schedule both came from the listing, but the compiler here allocates
 registers differently and emits 12 (8-bit) / 13 (16-bit) more instructions than
 the bundle does. The OUTPUT is exact — see "How `renderView` was verified" below.
+
+`analyzeFrame<T>` is behavioural for the same reason and one more: it is a long
+function (752 and 770 instructions in the bundle), and the compiler here emits 49
+(8-bit) and 62 (16-bit) fewer. The OUTPUT is exact — see "How `analyzeFrame` was
+verified" below.
 
 ## How `renderView` was verified
 
@@ -167,6 +172,157 @@ while `spill = 0.1` gives `(94, 0, 92)` and `spill = 0.9` gives `(237, 0, 214)`.
   into a no-op.
 - **A row is skipped when `src.width <= 0`** (0x26f4), which is not the same
   condition as `dst.width <= 0`.
+
+## How `analyzeFrame` was verified
+
+`analyzeFrame<T>` is the last function to be recovered, and it is the one with the
+largest body in the namespace: 752 instructions for the 8-bit instantiation
+(`__ZN9chromakey12analyzeFrameIhEENS_5StatsERKNS_4ViewIKT_EEfRKNS_6ParamsEPfSB_`,
+body 0x7d8-0x1398, the hot path returning at 0x12f8 and the cold exception
+tail after it) and 770 for the 16-bit one (its `It` sibling, body
+0x19b4-0x25bc), read from the arm64 listing `/tmp/ae/chromakeyassist.asm`.
+
+The verification is the same dlopen differential as `renderView`: the installed
+bundle is loaded, its load base is found through `_dyld_get_image_name`, and the
+shipped function's own machine code is called **in place** at `base + 0x7d8`
+(8-bit) and `base + 0x19b4` (16-bit). No `MAP_JIT` page is involved — the
+shipped code runs where the loader put it.
+
+Its `Stats` comes back through a hidden pointer in `x8` rather than in registers:
+five floats is not a homogeneous aggregate of at most four members, so AAPCS64
+returns it indirectly. The harness's `ShippedStats` therefore carries a
+non-trivial destructor on purpose, so that the harness's own call uses the same
+indirect-return convention and the result pointer really lands in `x8`, while the
+other arguments keep `x0` (the View), `x1` (the Params), `v0` (the scale) and
+`x2`/`x3` (the two output buffers). The shipped body zeroes twenty bytes through
+that pointer and then stores uniformity at +0x0, the mean spill at +0x4, p5 and
+p95 as one eight-byte store at +0x8, and the keyed fraction at +0x10.
+
+**Measured:** 8100 vectors per width — 8000 randomised (widths and heights 1..9,
+padded strides, five pixel patterns including all-grey and all-key-colour,
+scales of 1 / 255 / random, sensitivities -20..150, random key colours, a null
+output buffer in one case in four, and the key normalised and un-normalised) plus
+100 structured edge cases (1x1, single row, single column, zero-size, every-pixel-
+key-colour, grey-under-coloured-key, coloured-under-grey-key, both-grey, and the
+sensitivity and scale extremes) — compared **byte-for-byte over both output
+buffers and over the returned `Stats`**:
+
+```
+an_vectors=8100 an_mism8=0 an_statmism8=0
+an_vectors16=8100 an_mism16=0 an_statmism16=0
+```
+
+The 16-bit cases are not a copy of the 8-bit ones: the key colour and the scale
+are carried over by 257, so the 16-bit key is 257 times the 8-bit one and the
+16-bit scale is 257 times the 8-bit one. A normalised key is then identical in
+both widths and a raw key is the same multiple of the pixels in both, so the two
+widths measure the same colour space.
+
+**The harness can fail.** Two independent mutations of the recovered source, each
+applied to a copy in a temporary directory, both make the same harness report
+mismatches:
+
+| Mutation | 8-bit | 16-bit |
+|---|---|---|
+| the 5th-percentile fraction `0.05f` -> `0.06f` | 1110 mismatches | 1107 mismatches |
+| the achromatic shortcut `||` -> `&&` | 962 mismatches | 1036 mismatches |
+
+Reverting either constant returns the harness to zero. The zeros are therefore
+measurements, not stubs.
+
+This is a *measurement of the shipped binary*, not a host test: no After Effects
+host has ever loaded a rebuilt bundle, and nothing here claims otherwise.
+
+### What `analyzeFrame` actually does
+
+Read from the arm64 listing, in the order the listing runs it:
+
+- The returned `Stats` is zeroed first (0x808/0x80c for the 8-bit body,
+  0x19e4/0x19e8 for the 16-bit one), and a width or height below 1 returns it as
+  it stands **without touching either output buffer** (0x810..0x828 -> the epilogue
+  at 0x12cc, `ret` at 0x12f8).
+- The threshold is `sensitivityToThreshold` (0x840..0x874), and the pixel count is
+  `height * width`, multiplied in 32 bits and widened (0x87c; `umull x25, w9, w19`
+  at 0x1a58 in the 16-bit body).
+- **The KEY colour is NOT divided by the scale** (0x8ac..0x900), while **every
+  PIXEL channel is** (0x988/0x98c/0x998). In the 16-bit body the same three
+  divisions are at 0x1b68/0x1b6c/0x1b78, each `fdiv` against the scale in `s8`.
+  The asymmetry is easy to miss and it is not a mistake in the transcription: it
+  is what the shipped code does, and normalising the key is the caller's job.
+- The pixel is four components, `[A, R, G, B]`, for both widths. In the 16-bit
+  body the loads are `ldur h6, [x13, #-0x2]` (R, at byte +2), `ldr h7, [x13]`
+  (G, at byte +4) and `ldr h16, [x13, #0x2]` (B, at byte +6), each followed by
+  `ucvtf` — so the 16-bit pixel is eight bytes wide and the channels are
+  unsigned.
+- `rowBytes` is in ELEMENTS of `T` for both widths: the 16-bit body scales it
+  itself at 0x1b40 (`lsl x11, x11, #1`), having loaded it at 0x1b38.
+- Pass one computes each pixel's chroma distance and whether it is inside the
+  threshold (0x91c..0xa0c), and accumulates the mean luma of the KEYED pixels
+  only, in DOUBLE (0x9d8..0x9e8); the mean is that sum over the keyed count, or
+  0.5 when nothing is keyed (0xa10..0xa28).
+- Pass two scores every pixel that is NOT keyed (0xb38..0xd94). A keyed pixel
+  scores zero and its distance joins the keyed set, but it is **not** counted in
+  the score sum and **not** counted in the non-keyed count (0xba8 skips
+  0xb54/0xb58/0xb5c).
+- The keyed fraction is the keyed count over the pixel count (0xd98) and the mean
+  spill is the mean score over the pixels that are NOT keyed (0xdac..0xdc4).
+- The uniformity is `uniformityScore` over the **KEYED** distances only
+  (0xdc8..0x110c), and is 0 when nothing is keyed.
+- p5 and p95 are percentiles over **ALL** the distances, over two sorted copies
+  of the whole array (0x1110..0x1238). The interpolation is a **fused**
+  multiply-add (0x11a4), which is why the shipped `analyzeFrame` cannot reuse the
+  exported `percentile` — that one divides `p` by 100 and interpolates with a
+  separate multiply and add, and the two differ in the last bit. The recovered
+  source therefore has its own local `analyzePercentile`.
+- Both percentiles are then divided by sqrt(2), multiplied by 100 and clamped to
+  [0, 100] (0x123c..0x1270).
+- The two optional output buffers are copied out at the end (0x1274..0x129c),
+  each guarded by a null check.
+
+### Two transcription errors the differential caught
+
+Both were found by the differential rather than by reading, and both are worth
+recording because each produced a plausible-looking source:
+
+1. **The hue arguments were the wrong way round.** The shipped key hue is
+   `atan2f(cr, cb)` — 0xa80 `mov.16b v0, v10` puts `cr` in the first argument
+   register and 0xa84 `mov.16b v1, s9` puts `cb` in the second, then 0xa88
+   `bl _atan2f` — and the pixel hue is the same (0xc1c/0xc20/0xc34). The repo's
+   `hueAngle(a, b)` is `atan2f(b, a)`, so the correct call is
+   `hueAngle(cb, cr)`, and the first transcription had it as `hueAngle(cr, cb)`.
+   The exported `spillScore` uses `atan2f(cr, cb)` as well (0x14d8 `mov.16b v0,
+   s11` for `key.cr`, 0x14dc `mov.16b v1, s9` for `key.cb`), which is the
+   cross-check. Swapping the arguments made the mean spill differ on 4509 of the
+   8100 8-bit vectors.
+2. **The achromatic shortcut is an OR, not an AND.** The shipped sequence is
+
+   ```
+   0xc08  movi.2d v0, #0          ; the score the shortcut produces
+   0xc0c  fcmp s14, s6             ; s14 = the pixel's chroma magnitude, s6 = 1e-6
+   0xc10  ldr s1, [sp, #0x60]      ; s1 = the key's chroma magnitude
+   0xc14  fccmp s1, s6, #0x8, pl   ; the key's magnitude is compared only on
+                                   ; the path where the pixel's was NOT smaller
+   0xc18  b.mi 0xb4c              ; ... and the branch is taken when it is
+   ```
+
+   The immediate `0x8` in the `fccmp` is NZCV with **N in bit 3**, so it forces
+   N=1, Z=0, C=0, V=0 — "less than" — on the else path. The shortcut therefore
+   fires when the pixel's magnitude was below 1e-6 whatever the key's magnitude
+   is, and when it was not, when the KEY's magnitude is below 1e-6. That is an
+   **OR**, and the exported `spillScore` uses the same OR (its two early returns
+   at 0x1490 and 0x14ac), so the two shipped functions agree rather than
+   disagree. Reading the `fccmp` as a plain compare gives an AND, and an AND
+   sends a grey pixel under a coloured key down the scored path, where the
+   shipped code returns a score of exactly 0.
+
+   This was checked three independent ways: the `nzcv` immediate was confirmed by
+   assembling and running the four-instruction sequence (the branch is taken for
+   pixel<1e-6/key>=1e-6, pixel<1e-6/key<1e-6 and pixel>=1e-6/key<1e-6, and not
+   for pixel>=1e-6/key>=1e-6 — three of four, so an OR); the x86 slice of the
+   same bundle agrees (`ucomiss %xmm3,%xmm7` / `ja` at 0xd5d and `ucomiss
+   -0xcc(%rbp),%xmm7` / `ja` at 0xd69, both jumping to the same place); and the
+   oracle shows the shipped score is 0 for a grey pixel under a coloured key,
+   where the AND gave 9.1e-10.
 
 ## `gradientMagnitude` was wrong, and the error had spread
 

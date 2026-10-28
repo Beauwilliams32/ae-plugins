@@ -360,6 +360,296 @@ int main() {
     if (mismatches != 0) ++failures; else ++passes;
   }
 
+  // ---------------------------------------------------------------------------
+  // analyzeFrame<T>: the statistics pass.
+  //
+  // Read from the shipped instruction stream: the arm64 listing of
+  // `analyzeFrame<unsigned char>` (body 0x7d8 .. 0x1398, 752 instructions; the hot
+  // path returns at 0x12f8) and of `analyzeFrame<unsigned short>` (body
+  // 0x19b4 .. 0x25bc, 770). The numbers below were MEASURED against the shipped
+  // bundle's own machine code
+  // by test/chromakey.test.mjs; this file pins them so that a regression in the
+  // recovered source fails here, with the reasoning, rather than only in the
+  // differential.
+  //
+  // The shape the listing establishes:
+  //
+  //   0x808/0x80c  the returned Stats is zeroed FIRST
+  //   0x810..0x828 a width or height below 1 returns it untouched, and neither
+  //                output buffer is written
+  //   0x840       the threshold, from sensitivityToThreshold
+  //   0x8ac..0x900 the KEY colour, NOT divided by the scale
+  //   0x988/0x98c/0x998 every PIXEL channel IS divided by the scale
+  //   0xc08..0xc18 the achromatic shortcut, an OR
+  //   0xd98       the keyed fraction
+  //   0xdac       the mean spill, over the pixels that are NOT keyed
+  //   0xdc8       the uniformity, over the KEYED distances only
+  //   0x1110..0x1238 the 5th and 95th percentiles, over ALL the distances
+  //   0x123c      both percentiles, divided by sqrt(2) and multiplied by 100
+  // ---------------------------------------------------------------------------
+  std::printf("chromakey::analyzeFrame\n");
+  {
+    const chromakey::Params greenKey{0.0f, 1.0f, 0.0f, 50.0f};
+
+    // ---- the empty frame ----
+    // The Stats is zeroed before anything else, and a frame with no pixels is
+    // answered with that zeroed Stats. Neither output buffer is touched: the
+    // body returns through the epilogue at 0x12cc (ret at 0x12f8), before the two
+    // copies out at 0x1274/0x1288.
+    {
+      const chromakey::View<const unsigned char> empty{nullptr, 0, 0, 0};
+      float d = 11.0f, s = 13.0f;
+      const chromakey::Stats st =
+          chromakey::analyzeFrame<unsigned char>(empty, 255.0f, greenKey, &d, &s);
+      check(st.uniformity == 0.0f && st.meanSpill == 0.0f && st.p5 == 0.0f &&
+                st.p95 == 0.0f && st.keyedFraction == 0.0f,
+            "an empty frame answers with the zeroed Stats");
+      check(d == 11.0f && s == 13.0f, "an empty frame leaves both output buffers untouched");
+    }
+    // A frame with a width but no height is empty in the same way (0x810..0x828
+    // tests the width AND the height).
+    {
+      std::vector<unsigned char> px(16, 0);
+      const chromakey::View<const unsigned char> noHeight{px.data(), 4, 0, 16};
+      float d = 11.0f, s = 13.0f;
+      const chromakey::Stats st =
+          chromakey::analyzeFrame<unsigned char>(noHeight, 255.0f, greenKey, &d, &s);
+      check(st.keyedFraction == 0.0f && st.p95 == 0.0f, "a zero-height frame answers with zeros");
+      check(d == 11.0f && s == 13.0f, "and still does not touch either output buffer");
+    }
+
+    // ---- the four-pixel frame the oracle was probed on ----
+    //
+    // key = green (0, 1, 0) — in the units the caller passes, which the shipped
+    // code does NOT divide by the scale — and scale = 255, so a pixel of
+    // (0, 255, 0) lands on the key exactly.
+    //
+    // The pixels are, in order: green, dim green, red and blue. With
+    // sensitivity 50 the threshold is 0.24, so ONLY the green pixel is keyed:
+    // the dim green sits at a distance of 0.265897, which is outside it.
+    //
+    //   distance  0, 0.265897, 0.932954, 0.897119
+    //   score     0, 0.156693, 0,        0
+    //   keyedFraction 0.25   meanSpill 0.0522311
+    //   p5 2.82026   p95 65.5897   uniformity 100
+    std::vector<unsigned char> frame(16, 0);
+    const unsigned char colours[4][3] = {{0, 255, 0}, {0, 128, 0}, {255, 0, 0}, {0, 0, 255}};
+    for (int i = 0; i < 4; ++i) {
+      frame[i * 4 + 0] = 255;               // the alpha component
+      frame[i * 4 + 1] = colours[i][0];
+      frame[i * 4 + 2] = colours[i][1];
+      frame[i * 4 + 3] = colours[i][2];
+    }
+    const chromakey::View<const unsigned char> src{frame.data(), 4, 1, 16};
+    float dist[4], score[4];
+    const chromakey::Stats st =
+        chromakey::analyzeFrame<unsigned char>(src, 255.0f, greenKey, dist, score);
+
+    checkNear(st.keyedFraction, 0.25f, 0.0f,
+              "the keyed fraction is the keyed count over the pixel count");
+    checkNear(st.meanSpill, 0.0522311f, 1e-6f,
+              "the mean spill is the mean score over the NON-keyed pixels");
+    check(std::fabs(st.meanSpill - 0.156693f / 4.0f) > 1e-6f,
+          "and NOT over every pixel — the mean over all four would be a quarter less");
+    checkNear(st.p5, 2.8202601f, 1e-4f, "the 5th percentile is the measured 2.82026");
+    checkNear(st.p95, 65.5897141f, 1e-4f, "the 95th percentile is the measured 65.58971");
+    checkNear(st.uniformity, 100.0f, 1e-4f,
+              "the uniformity is computed over the KEYED distances only — one sample, so 100");
+
+    // The percentiles are the RAW percentiles of the distances, divided by
+    // sqrt(2) and multiplied by 100 (0x123c..0x1270). The raw 5th percentile
+    // here is 0.15 of the way from 0 to 0.265897, and the raw 95th is 0.85 of
+    // the way from 0.897119 to 0.932954.
+    const float rawP5 = 0.0f + (0.265897f - 0.0f) * 0.15f;
+    const float rawP95 = 0.897119f + (0.932954f - 0.897119f) * 0.85f;
+    checkNear(st.p5, rawP5 / 1.4142135f * 100.0f, 1e-3f,
+              "the 5th percentile is the raw percentile over 100/sqrt(2)");
+    checkNear(st.p95, rawP95 / 1.4142135f * 100.0f, 1e-3f,
+              "and so is the 95th");
+
+    // The output buffers carry the per-pixel chroma distance and the per-pixel
+    // score, in row order.
+    checkNear(dist[0], 0.0f, 1e-6f, "the distance of the green pixel is 0");
+    checkNear(dist[1], 0.265897f, 1e-5f, "the dim green sits at 0.265897");
+    checkNear(dist[2], 0.932954f, 1e-5f, "red sits at 0.932954");
+    checkNear(dist[3], 0.897119f, 1e-5f, "and blue at 0.897119");
+    check(score[0] == 0.0f, "a KEYED pixel scores 0");
+    checkNear(score[1], 0.156693f, 1e-5f,
+              "the dim green — the one non-keyed pixel with chroma — scores 0.156693");
+
+    // And those distances are exactly the chroma distance of the pixel against
+    // the key, computed through the exported helpers.
+    {
+      const chromakey::YCbCr key = chromakey::rgbToYCbCr({0.0f, 1.0f, 0.0f});
+      bool allMatch = true;
+      for (int i = 0; i < 4; ++i) {
+        const chromakey::RGB rgb{static_cast<float>(frame[i * 4 + 1]) / 255.0f,
+                                 static_cast<float>(frame[i * 4 + 2]) / 255.0f,
+                                 static_cast<float>(frame[i * 4 + 3]) / 255.0f};
+        const float want = chromakey::chromaDistance(chromakey::rgbToYCbCr(rgb), key);
+        if (std::fabs(want - dist[i]) > 1e-6f) allMatch = false;
+      }
+      check(allMatch, "every distance is the chroma distance of the pixel against the key");
+    }
+
+    // ---- the key is NOT divided by the scale, and the pixels are ----
+    //
+    // This is the asymmetry that is easiest to read the wrong way round, so it
+    // is pinned with a pair of frames that differ ONLY in the units of the key.
+    {
+      std::vector<unsigned char> one(4, 0);
+      one[0] = 255; one[1] = 0; one[2] = 255; one[3] = 0;
+      const chromakey::View<const unsigned char> v{one.data(), 1, 1, 4};
+      float d = 0.0f, s = 0.0f;
+      // The key in RAW units (0, 255, 0) is not divided by the scale, so it sits
+      // far away from the pixel (0, 255, 0) / 255 = (0, 1, 0).
+      const chromakey::Stats raw = chromakey::analyzeFrame<unsigned char>(
+          v, 255.0f, {0.0f, 255.0f, 0.0f, 50.0f}, &d, &s);
+      check(raw.keyedFraction == 0.0f,
+            "a key given in RAW units is not divided by the scale, so it keys nothing");
+      check(d > 100.0f, "and the distance to it is enormous (135.607)");
+      // The same key, normalised, keys the pixel exactly.
+      const chromakey::Stats norm =
+          chromakey::analyzeFrame<unsigned char>(v, 255.0f, greenKey, &d, &s);
+      check(norm.keyedFraction == 1.0f, "the SAME key, normalised, keys the pixel");
+      checkNear(d, 0.0f, 1e-6f, "at distance 0");
+    }
+
+    // ---- the pixel layout is [A, R, G, B] and the alpha is never read ----
+    {
+      std::vector<unsigned char> two(8, 0);
+      two[0] = 0;   two[1] = 0;   two[2] = 255; two[3] = 0;    // green, alpha 0
+      two[4] = 255; two[5] = 0;   two[6] = 255; two[7] = 0;    // green, alpha 255
+      const chromakey::View<const unsigned char> v{two.data(), 2, 1, 8};
+      float d[2], s[2];
+      chromakey::analyzeFrame<unsigned char>(v, 255.0f, greenKey, d, s);
+      checkNear(d[0], 0.0f, 1e-6f,
+                "the pixel layout is [A, R, G, B]: R is p[1], G is p[2], B is p[3]");
+      checkNear(d[1], 0.0f, 1e-6f, "and the ALPHA component is never read");
+    }
+
+    // ---- the achromatic shortcut is an OR ----
+    //
+    // 0xc08..0xc18. The fccmp at 0xc14 forces NZCV to 0x8 (N=1, so "less than")
+    // on the path where the pixel's magnitude was already below 1e-6, so the
+    // branch is taken for an achromatic pixel whatever the key is; and on the
+    // other path it is taken when the KEY's magnitude is below 1e-6. So the
+    // shortcut fires when EITHER is achromatic. The exported `spillScore` uses
+    // the same OR, and the two shipped functions agree.
+    {
+      // An achromatic PIXEL under a coloured key.
+      std::vector<unsigned char> grey(8, 0);
+      grey[0] = 255; grey[1] = 128; grey[2] = 128; grey[3] = 128;
+      grey[4] = 255; grey[5] = 128; grey[6] = 128; grey[7] = 128;
+      const chromakey::View<const unsigned char> vg{grey.data(), 2, 1, 8};
+      float d[2], s[2];
+      chromakey::analyzeFrame<unsigned char>(vg, 255.0f, greenKey, d, s);
+      check(s[0] == 0.0f && s[1] == 0.0f,
+            "an achromatic PIXEL under a coloured key scores 0 (the OR)");
+
+      // A coloured PIXEL under an achromatic KEY. This is the case that
+      // separates the OR from an AND: under an AND the shortcut would not
+      // fire and the pixel would score on its hue.
+      std::vector<unsigned char> coloured(8, 0);
+      coloured[0] = 255; coloured[1] = 255; coloured[2] = 0; coloured[3] = 0;
+      coloured[4] = 255; coloured[5] = 0; coloured[6] = 0; coloured[7] = 255;
+      const chromakey::View<const unsigned char> vc{coloured.data(), 2, 1, 8};
+      chromakey::analyzeFrame<unsigned char>(vc, 255.0f, {0.5f, 0.5f, 0.5f, 50.0f}, d, s);
+      check(s[0] == 0.0f && s[1] == 0.0f,
+            "a coloured PIXEL under an achromatic KEY also scores 0 — so it is an OR, not an AND");
+    }
+
+    // ---- the percentiles are clamped to [0, 100] ----
+    {
+      // With scale 1 the pixel values are not divided down, so the distances
+      // are enormous and the scaled percentiles would pass 100.
+      std::vector<unsigned char> four(16, 0);
+      for (int i = 0; i < 4; ++i) {
+        four[i * 4 + 0] = 255; four[i * 4 + 1] = 255;
+        four[i * 4 + 2] = 0;    four[i * 4 + 3] = 0;
+      }
+      const chromakey::View<const unsigned char> v{four.data(), 4, 1, 16};
+      float d[4], s[4];
+      const chromakey::Stats big =
+          chromakey::analyzeFrame<unsigned char>(v, 1.0f, greenKey, d, s);
+      check(big.p5 == 100.0f, "the 5th percentile is clamped to 100, not left above it");
+      check(big.p95 == 100.0f, "and so is the 95th");
+    }
+
+    // ---- the uniformity is over the KEYED distances only ----
+    {
+      // Two keyed pixels at different distances, and one far-away pixel that is
+      // NOT keyed. The uniformity must not see the third one.
+      std::vector<unsigned char> three(12, 0);
+      three[0] = 255; three[1] = 0;   three[2] = 255; three[3] = 0;    // green, distance 0
+      three[4] = 255; three[5] = 0;   three[6] = 128; three[7] = 0;    // dim,   distance 0.265897
+      three[8] = 255; three[9] = 255; three[10] = 0;  three[11] = 0;   // red,   distance 0.932954
+      const chromakey::View<const unsigned char> v{three.data(), 3, 1, 12};
+      float d[3], s[3];
+      // Sensitivity 100 gives the maximum threshold, 0.45, so the dim green is
+      // keyed too and the red is not.
+      const chromakey::Stats keyed = chromakey::analyzeFrame<unsigned char>(
+          v, 255.0f, {0.0f, 1.0f, 0.0f, 100.0f}, d, s);
+      checkNear(keyed.keyedFraction, 2.0f / 3.0f, 1e-6f, "two of the three pixels are keyed");
+      // The two keyed distances are 0 and 0.265897: mean 0.1329485, sd the
+      // same, so 1 - 2*sd = 0.734103.
+      checkNear(keyed.uniformity, (1.0f - 2.0f * 0.1329485f) * 100.0f, 1e-2f,
+                "the uniformity is the spread of the KEYED distances alone");
+    }
+
+    // ---- the row stride is in ELEMENTS of T ----
+    {
+      // A 16-bit frame, 2 wide and 2 tall, with a row stride of 12 ELEMENTS —
+      // a padded stride. Row 1 starts at element 12. If the stride were read as
+      // BYTES, row 1 would start at byte 12, which is element 6, and the frame
+      // would read as something else entirely.
+      std::vector<unsigned short> wide(24, 0);
+      for (int i = 0; i < 2; ++i) {          // row 0: two red pixels
+        wide[i * 4 + 0] = 65535; wide[i * 4 + 1] = 65535;
+        wide[i * 4 + 2] = 0;     wide[i * 4 + 3] = 0;
+      }
+      for (int i = 0; i < 2; ++i) {          // row 1: two green pixels
+        wide[12 + i * 4 + 0] = 65535; wide[12 + i * 4 + 1] = 0;
+        wide[12 + i * 4 + 2] = 65535; wide[12 + i * 4 + 3] = 0;
+      }
+      const chromakey::View<const unsigned short> v{wide.data(), 2, 2, 12};
+      float d[4], s[4];
+      chromakey::analyzeFrame<unsigned short>(v, 65535.0f, greenKey, d, s);
+      checkNear(d[0], 0.932954f, 1e-4f, "row 0 is the red row");
+      checkNear(d[1], 0.932954f, 1e-4f, "both of row 0");
+      checkNear(d[2], 0.0f, 1e-4f,
+                "row 1 is the green row — the stride is in ELEMENTS of T, not bytes");
+      checkNear(d[3], 0.0f, 1e-4f, "and both of row 1");
+    }
+
+    // ---- the score model, written from the disassembly ----
+    //
+    // The per-pixel score of a pixel that is NOT keyed is
+    //   chroma * hueWeight * yWeight
+    // with chroma = clamp(2 * pixelChromaMagnitude, 0, 1), hueWeight =
+    // clamp(1 - hueDifference / (pi/2), 0, 1) and yWeight =
+    // min(|pixelLuma - meanKeyedLuma|, 1) — the mean luma being taken over the
+    // KEYED pixels only (0xa10..0xa28, or 0.5 when nothing is keyed).
+    {
+      const chromakey::YCbCr key = chromakey::rgbToYCbCr({0.0f, 1.0f, 0.0f});
+      // Only the green pixel is keyed, so the reference luma is the green
+      // pixel's luma, 0.587.
+      const float referenceY = key.y;
+      const chromakey::YCbCr dim = chromakey::rgbToYCbCr({0.0f, 128.0f / 255.0f, 0.0f});
+      const float pMag = std::sqrt(dim.cb * dim.cb + dim.cr * dim.cr);
+      const float hue = chromakey::angularDiff(chromakey::hueAngle(dim.cb, dim.cr),
+                                                chromakey::hueAngle(key.cb, key.cr));
+      const float hueWeight = chromakey::clampf(1.0f - hue / 1.5707964f, 0.0f, 1.0f);
+      const float yWeight = std::fmin(std::fabs(dim.y - referenceY), 1.0f);
+      const float chroma = chromakey::clampf(2.0f * pMag, 0.0f, 1.0f);
+      const float model = chromakey::clampf(chroma * hueWeight * yWeight, 0.0f, 1.0f);
+      checkNear(model, 0.156693f, 1e-5f, "the score model reproduces the measured 0.156693");
+      checkNear(score[1], model, 1e-6f, "and the recovered function returns it");
+      checkNear(referenceY, 0.587f, 1e-6f,
+                "the reference luma is the mean luma of the KEYED pixels — here the green one alone");
+    }
+  }
+
   if (failures == 0) std::printf("ALL RECOVERED CHROMAKEY MATHS VERIFIED (%d checks)\n", passes);
   else std::printf("%d FAILURES out of %d checks\n", failures, passes + failures);
   return failures == 0 ? 0 : 1;
