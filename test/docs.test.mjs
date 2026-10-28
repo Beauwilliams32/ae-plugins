@@ -97,6 +97,15 @@ test("every source path the documentation links to exists", () => {
   const EXTERNAL = new Set(["AE_Effect.h", "AE_EffectCB.h", "AE_Config.h", "AEConfig.h",
                             "AE_General.r", "AE_EffectVers.h"]);
 
+  // This repo's OWN generated artefacts: named in prose, written by `npm run demo`,
+  // and deliberately gitignored. A fresh clone does not have them until the demo
+  // harness has been run, so demanding they resolve makes `npm test` fail on a clean
+  // checkout - which means the gate nobody can run without an uncommitted build
+  // artefact, and a gate that is quietly not a gate. Listing them keeps the check
+  // meaningful (the name must be one this repo actually generates) instead of
+  // demanding a file that is not supposed to be committed.
+  const GENERATED = new Set(["results.json"]);
+
   const allFiles = new Set();
   const walk = (dir, rel) => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
@@ -116,6 +125,7 @@ test("every source path the documentation links to exists", () => {
       if (p.includes("*")) continue;                    // globs are illustrative
       if (/^(https?:|\/)/.test(p)) continue;            // absolute or external
       if (EXTERNAL.has(p)) continue;                    // SDK files, not vendored
+      if (GENERATED.has(p)) continue;                  // gitignored build output
       if (allFiles.has(p)) continue;                    // resolves by whichever rule fits
       missing.push(`${doc}: \`${p}\``);
     }
