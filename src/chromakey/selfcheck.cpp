@@ -2,9 +2,9 @@
 //
 // Every assertion is anchored to something the disassembly establishes, and the ones
 // that matter are built so that the plausible alternative implementation would FAIL
-// them: the top-left gradient kernel, the ignored luma in chromaDistance, the
-// argument order of hueAngle, the > pi wrap in angularDiff, and the element-count
-// row stride.
+// them: the cross gradient kernel (horizontal difference on row y, vertical on
+// column x), the ignored luma in chromaDistance, the argument order of hueAngle, the
+// > pi wrap in angularDiff, and the element-count row stride.
 
 #include "chromakey.h"
 
@@ -180,19 +180,53 @@ int main() {
 
   std::printf("chromakey::gradientMagnitude\n");
   {
-    // 3 wide, 3 tall, stride 3. Only the top row has a step in it.
-    const float grid[9] = {0.0f, 0.0f, 10.0f,
-                           0.0f, 0.0f, 0.0f,
-                           0.0f, 0.0f, 0.0f};
-    check(chromakey::gradientMagnitude(nullptr, 3, 3, 3, 1, 1) == 0.0f, "a null field returns 0");
-    check(chromakey::gradientMagnitude(grid, 0, 3, 3, 1, 1) == 0.0f, "width < 1 returns 0");
-    check(chromakey::gradientMagnitude(grid, 3, 0, 3, 1, 1) == 0.0f, "height < 1 returns 0");
+    // 3 wide, 3 tall, stride 3. The kernel is a CROSS: the horizontal difference is
+    // taken on the CENTRE row y and the vertical difference on the CENTRE column x.
+    //
+    // The arm64 listing says so (ChromaKeyAssist listing 0x2b28-0x2bdc): the two
+    // horizontal loads read from the row base `field + stride*y*4` and the two
+    // vertical loads read column x of rows ym1 and yp1.
+    //
+    // These grids are chosen so the two readings DISAGREE. The four grids below
+    // differ only in WHICH row carries the horizontal step and WHICH column carries
+    // the vertical one, so a kernel that took the horizontal difference on row ym1
+    // would score the first grid 0 and the second 5, and a kernel that took the
+    // vertical difference on a neighbouring column would score the third 0 and the
+    // fourth 5.
 
-    // THE KERNEL IS ANCHORED TOP-LEFT: the horizontal difference is taken on the row
-    // ABOVE (row 0 here), which reads 10 - 0 = 10, so gx = 5. A centred kernel would
-    // take the difference on row 1, read 0 - 0, and return 0.
-    checkNear(chromakey::gradientMagnitude(grid, 3, 3, 3, 1, 1), 5.0f, 1e-6f,
-              "the horizontal difference reads the row ABOVE (gx = 5, not 0)");
+    // A horizontal step of 10 in the CENTRE row: gx = (10 - 0) / 2 = 5.
+    const float stepInCentreRow[9] = {0.0f, 0.0f, 0.0f,
+                                       0.0f, 0.0f, 10.0f,
+                                       0.0f, 0.0f, 0.0f};
+    // The same step, but in the row ABOVE the centre. The shipped kernel does not
+    // read that row horizontally at all, so it reads 0.
+    const float stepInRowAbove[9] = {0.0f, 0.0f, 10.0f,
+                                      0.0f, 0.0f, 0.0f,
+                                      0.0f, 0.0f, 0.0f};
+    // A vertical step of 10 between row ym1 and row yp1, in the CENTRE column:
+    // gy = (15 - 5) / 2 = 5. The step has to straddle the CENTRE row, because the
+    // vertical pair is read from rows ym1 and yp1 — a value sitting in row y only
+    // would be read by the horizontal pair and not by the vertical one.
+    const float stepInCentreColumn[9] = {0.0f, 5.0f, 0.0f,
+                                          0.0f, 0.0f, 0.0f,
+                                          0.0f, 15.0f, 0.0f};
+    // The same vertical step, but in the column to the RIGHT of x: not read.
+    const float stepInNextColumn[9] = {0.0f, 0.0f, 5.0f,
+                                       0.0f, 0.0f, 0.0f,
+                                       0.0f, 0.0f, 15.0f};
+
+    check(chromakey::gradientMagnitude(nullptr, 3, 3, 3, 1, 1) == 0.0f, "a null field returns 0");
+    check(chromakey::gradientMagnitude(stepInCentreRow, 0, 3, 3, 1, 1) == 0.0f, "width < 1 returns 0");
+    check(chromakey::gradientMagnitude(stepInCentreRow, 3, 0, 3, 1, 1) == 0.0f, "height < 1 returns 0");
+
+    checkNear(chromakey::gradientMagnitude(stepInCentreRow, 3, 3, 3, 1, 1), 5.0f, 1e-6f,
+              "the horizontal difference reads the CENTRE ROW y (gx = 5)");
+    checkNear(chromakey::gradientMagnitude(stepInRowAbove, 3, 3, 3, 1, 1), 0.0f, 1e-6f,
+              "a step in the row ABOVE is not read horizontally (0, not 5)");
+    checkNear(chromakey::gradientMagnitude(stepInCentreColumn, 3, 3, 3, 1, 1), 5.0f, 1e-6f,
+              "the vertical difference reads the CENTRE COLUMN x (gy = 5)");
+    checkNear(chromakey::gradientMagnitude(stepInNextColumn, 3, 3, 3, 1, 1), 0.0f, 1e-6f,
+              "a vertical step in the NEXT column is not read (0, not 5)");
 
     // A uniform field has no gradient anywhere.
     const float flat[9] = {4.0f, 4.0f, 4.0f, 4.0f, 4.0f, 4.0f, 4.0f, 4.0f, 4.0f};

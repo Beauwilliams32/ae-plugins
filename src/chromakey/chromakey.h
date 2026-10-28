@@ -5,14 +5,15 @@
 // not from source: the original C++ was destroyed on 2026-10-13 with no remote and
 // no backup.
 //
-// INCOMPLETE — the scalar and statistics layer is here, and the four per-pixel or
-// host functions are not. `tools/codegen-diff.mjs chromakey` names what is missing,
+// INCOMPLETE — the scalar and statistics layer is here, and the four per-pixel
+// functions are not. `tools/codegen-diff.mjs chromakey` names what is missing,
 // and test/chromakey.test.mjs asserts that the recovered set and the outstanding set
 // it reports agree with what this file says.
 //
-// RECOVERED HERE (9 functions, 217 instructions):
+// RECOVERED HERE (11 functions):
 //   clampf, rgbToYCbCr, sensitivityToThreshold, chromaDistance, hueAngle,
 //   angularDiff, percentile, percentileUnsorted, gradientMagnitude
+//   spillScore, uniformityScore
 //
 // NOT RECOVERED:
 //   analyzeFrame<unsigned char>  (752)  — the per-frame statistics pass
@@ -23,7 +24,7 @@
 //     stay out of `src/`: it takes a `PF_InData*`, which is an Adobe SDK type, and
 //     this directory holds transcriptions of the shipped DSP only.
 //
-// SIGNATURE FIDELITY: all nine are [exact] — taken verbatim from symbol mangling.
+// SIGNATURE FIDELITY: all eleven are [exact] — taken verbatim from symbol mangling.
 // `RGB` and `YCbCr` are [inferred] layouts, each established from the offsets the
 // functions themselves use, and pinned by static_assert.
 
@@ -172,16 +173,27 @@ float percentileUnsorted(std::vector<float> samples, float p);
 
 // [exact] Gradient magnitude of a scalar field at (x, y):
 //
-//   gx = (field(ym1, xp1) - field(ym1, xm1)) / max(xp1 - xm1, 1)
+//   gx = (field(y, xp1) - field(y, xm1)) / max(xp1 - xm1, 1)
 //   gy = (field(yp1, x)   - field(ym1, x))   / max(yp1 - ym1, 1)
 //   return sqrt(gx*gx + gy*gy)
 //
 // where xm1/xp1 and ym1/yp1 are the coordinates clamped to [0, width-1] and
-// [0, height-1]. Note the asymmetry, which is the shipped behaviour and not a
-// transcription slip: the horizontal difference is taken on the row ABOVE (ym1)
-// while the vertical difference is taken on the centre COLUMN, so the kernel is
-// anchored at the top-left rather than centred. Both denominators are floored at
-// 1, which is what stops a degenerate neighbourhood from dividing by zero.
+// [0, height-1]. The kernel is a CROSS: the horizontal difference is taken on
+// the CENTRE row y and the vertical difference on the CENTRE column x. The
+// arm64 listing says so directly — the two horizontal loads read from the row
+// base `field + stride*y*4` (listing 0x2b68-0x2b78) and the two vertical loads
+// from the row bases `field + stride*ym1*4` and `field + stride*yp1*4` at
+// column x (listing 0x2b7c-0x2b98).
+//
+// This was WRONG in an earlier revision of this file, which had the horizontal
+// difference on row ym1 and called the kernel "anchored top-left". That was a
+// transcription error, not a shipped quirk, and it had propagated into
+// RECOVERY-NOTES.md and into the self-check; all three are corrected.
+//
+// Both denominators are floored at 1, which is what stops a degenerate
+// neighbourhood from dividing by zero. The floor is visible in the listing as
+// `csinc w9, w9, wzr, gt` (listing 0x2ba4) — CSINC adds 1 in its else arm, so
+// the false branch yields 1 and not 0.
 //
 // `rowStride` is in ELEMENTS, not bytes: the code scales it by 4 to reach a row,
 // whatever the original parameter was called. A null field, or a width or height
