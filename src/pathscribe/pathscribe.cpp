@@ -12,6 +12,21 @@
 
 namespace pathscribe {
 
+namespace {
+
+// The bundle clamps a sample to [-1, 1] with two SEPARATE tests on the ORIGINAL
+// value - `if (x > 1) y = 1; if (x < -1) y = -1;` - not a clamp of a clamp, so a
+// value above 1 is not re-tested against -1 afterwards. Written this way because
+// that is what the instructions do.
+inline float clampSigned(float x) {
+  float y = x;
+  if (x > 1.0f) y = 1.0f;
+  if (x < -1.0f) y = -1.0f;
+  return y;
+}
+
+}  // namespace
+
 
 // ---------------------------------------------------------------------------
 float clampf(float value, float lo, float hi) {
@@ -394,6 +409,52 @@ std::vector<float> smoothedLevelsAtFrame(const std::vector<std::vector<float>>& 
     }
   }
   return out;
+}
+
+
+// ---------------------------------------------------------------------------
+void rasterizeRibbon(const std::vector<float>& levels, const VizConfig& cfg,
+                     std::vector<float>& outBars, std::vector<float>& outRibbon) {
+  const int columns = cfg.columns;
+  const int rows = cfg.rows;
+  outBars.assign(static_cast<size_t>(std::abs(columns * rows)), 0.0f);
+  outRibbon.assign(outBars.size(), 0.0f);
+  if (columns < 1 || rows < 1) return;
+  if (levels.empty()) return;
+
+  const float origin = ((cfg.baseline < 0.0f) ? 1.0f : (1.0f - std::min(cfg.baseline, 1.0f))) *
+                        static_cast<float>(rows);
+  const float scale = std::min(cfg.amplitude, 4.0f) * static_cast<float>(rows) * 0.5f;
+  const float half = std::max(cfg.thickness, 0.5f) * 0.5f;
+  const float span = half + 0.5f;
+
+  const int n = static_cast<int>(levels.size());
+  const int lastRow = rows - 1;
+  for (int i = 0; i < columns; ++i) {
+    const float a = levels[static_cast<size_t>(std::abs(std::min(n - 1, i)))];
+    const float ya = origin + (-clampSigned(a)) * scale;
+    const float yb = origin + (-clampSigned(levels[static_cast<size_t>(std::abs(std::min(n - 1, i + 1)))])) * scale;
+    const float yc = origin + (-clampSigned(levels[static_cast<size_t>(std::abs(std::min(n - 1, i - 1)))])) * scale;
+    const float dy = (yb - yc) * 0.5f;
+    const float len = std::sqrt(dy * dy + 1.0f);
+    const float reach = half * len + 1.0f;
+    const int rowLo = std::abs(static_cast<int>(ya - reach));
+    const int rowHi = std::min(lastRow, static_cast<int>(std::lrintf(ya + reach)));
+    if (rowLo > rowHi) continue;
+
+    const size_t base = static_cast<size_t>(columns) * static_cast<size_t>(rowLo);
+    for (int j = rowLo; j <= rowHi; ++j) {
+      const size_t index = base + static_cast<size_t>(columns) * static_cast<size_t>(j - rowLo) +
+                           static_cast<size_t>(i);
+      float v = span - std::fabs(static_cast<float>(j) + 0.5f - ya) / len;
+      if (v > 1.0f) v = 1.0f;
+      if (v < 0.0f) v = cfg.amplitude;
+      if (v <= 0.0f) continue;
+      if (v > outBars[index]) outBars[index] = v;
+      const float magnitude = std::fabs(a);
+      if (magnitude > outRibbon[index]) outRibbon[index] = magnitude;
+    }
+  }
 }
 
 }  // namespace pathscribe

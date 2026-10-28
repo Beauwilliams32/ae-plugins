@@ -311,6 +311,78 @@ int main() {
     checkNear(shortBand[1], first[1], 0.0, "and leaves the elements it does not reach alone");
   }
 
+  // --- rasterizeRibbon (recovered 2026-10-28): the ribbon profile and its thickness.
+  std::printf("pathscribe::rasterizeRibbon\n");
+  {
+    pathscribe::VizConfig cfg;
+    cfg.columns = 4;
+    cfg.rows = 6;
+    cfg.baseline = 0.0f;
+    cfg.amplitude = 1.0f;
+    cfg.thickness = 1.0f;
+    const std::vector<float> levels = {0.5f, -0.5f, 0.25f, -0.25f};
+
+    std::vector<float> bars, ribbon;
+    pathscribe::rasterizeRibbon(levels, cfg, bars, ribbon);
+    check(bars.size() == 24, "the profile is columns * rows long");
+    check(ribbon.size() == 24, "and so is the ribbon");
+
+    // The profile lands where the level maps to, and the ribbon carries the level's
+    // magnitude. These are the pixels that are written; every other pixel stays 0.
+    checkNear(bars[14], 1.0f, 0.0, "a peak at column 2 is drawn at full height");
+    checkNear(ribbon[14], 0.25f, 0.0, "and carries that column's magnitude");
+    checkNear(bars[16], 1.0f, 0.0, "column 0's peak is drawn too");
+    checkNear(ribbon[16], 0.5f, 0.0, "with its own magnitude");
+    checkNear(bars[18], 0.2977531f, 1e-6, "and a sloped column falls off by distance");
+    checkNear(ribbon[18], 0.25f, 0.0, "while the ribbon still carries the magnitude");
+    checkNear(bars[21], 1.0f, 0.0, "the next column's peak is drawn");
+    checkNear(ribbon[21], 0.5f, 0.0, "with its own magnitude");
+    checkNear(bars[22], 0.7659177f, 1e-6, "and a sloped column falls off by distance");
+
+    bool untouched = true;
+    for (size_t i = 0; i < bars.size(); ++i) {
+      if (bars[i] == 0.0f && ribbon[i] == 0.0f) continue;
+      if (i == 14 || i == 16 || i == 18 || i == 21 || i == 22) continue;
+      untouched = false;
+    }
+    check(untouched, "and no other pixel is written");
+
+    // A negative amplitude flips the mapping AND becomes the profile's lower bound,
+    // so the drawn band never goes below it.
+    pathscribe::VizConfig neg = cfg;
+    neg.columns = 2;
+    neg.rows = 4;
+    neg.baseline = 0.5f;
+    neg.amplitude = -1.0f;
+    neg.thickness = 2.0f;
+    std::vector<float> nbars, nribbon;
+    pathscribe::rasterizeRibbon(std::vector<float>{0.0f, 1.0f}, neg, nbars, nribbon);
+    check(nbars.size() == 8, "the profile is sized from the config");
+    checkNear(nbars[2], 1.0f, 0.0, "a negative amplitude still draws a band");
+    checkNear(nbars[5], 0.4393398f, 1e-6, "with the same distance falloff");
+    checkNear(nribbon[5], 1.0f, 0.0, "and the magnitude of the loud column");
+    checkNear(nribbon[7], 1.0f, 0.0, "wherever the loud column landed");
+
+    // The outputs are SIZED before the early exits, so a degenerate config still
+    // returns zero-filled arrays of the right length.
+    pathscribe::VizConfig none = cfg;
+    none.columns = 0;
+    none.rows = 6;
+    std::vector<float> zbars, zribbon;
+    pathscribe::rasterizeRibbon(levels, none, zbars, zribbon);
+    check(zbars.empty(), "no columns gives an empty profile");
+    check(zribbon.empty(), "and an empty ribbon");
+
+    pathscribe::VizConfig empty = cfg;
+    std::vector<float> ebars, eribbon;
+    pathscribe::rasterizeRibbon({}, empty, ebars, eribbon);
+    check(ebars.size() == 24, "no levels still sizes the profile");
+    bool allZero = true;
+    for (float v : ebars) if (v != 0.0f) allZero = false;
+    for (float v : eribbon) if (v != 0.0f) allZero = false;
+    check(allZero, "and leaves it zero filled");
+  }
+
   if (failures == 0) std::printf("ALL RECOVERED PATHSCRIBE MATHS VERIFIED (%d checks)\n", passes);
   else std::printf("%d FAILURES out of %d checks\n", failures, passes + failures);
   return failures == 0 ? 0 : 1;

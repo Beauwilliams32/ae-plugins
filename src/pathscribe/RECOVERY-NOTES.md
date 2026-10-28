@@ -7,7 +7,7 @@ unstripped.
 
 ## State
 
-Sixteen of the eighteen symbols are recovered. Eight of them are
+Seventeen of the eighteen symbols are recovered. Eight of them are
 **instruction-identical** to this bundle.
 
 | Function | Instrs | State |
@@ -28,8 +28,8 @@ Sixteen of the eighteen symbols are recovered. Eight of them are
 | `barLevels` | 112 | Recovered — 120 here (own) |
 | `waveformColumns` | 80 | Recovered — 83 here (own) |
 | `smoothedLevelsAtFrame` | 179 | Recovered — 177 here (own) |
+| `rasterizeRibbon` | 147 | Recovered — 151 here (own) |
 | `rasterizeBars` | 173 | Identified only |
-| `rasterizeRibbon` | 147 | Identified only |
 
 ## Ten of the eighteen symbols are SpectraKeys', and that is the finding
 
@@ -147,7 +147,78 @@ materialised: the bundle builds it scalar-then-halfword (`fcmp`/`cset`, `dup.4h`
 `ushll`/`shl`/`cmlt`) and this build builds it two-wide (`fcmge.2s`, `dup.2s`,
 `sshll`). The behaviour is pinned by the self-check instead.
 
+### `rasterizeRibbon` — the drawing layer, and a struct no symbol describes
+
+PathScribe's drawing layer takes a `pathscribe::VizConfig` by const reference. **No
+symbol in the bundle mentions that type** - it is never in a mangled name - so this is the
+first thing in this namespace whose layout cannot simply be read off the symbol table. It
+is recovered from the two rasterisers' loads, and its MEANING from the effect's own
+parameter names in `specs/PathScribe.json`:
+
+| Offset | Type | Reads | Meaning |
+|---|---|---|---|
+| 0x00 | int | neither | not read by either rasteriser |
+| 0x04 | int | both | column count |
+| 0x08 | int | both | row count |
+| 0x0c | float | both | baseline position, as a fraction of the height |
+| 0x10 | float | both | amplitude - the vertical scale AND the profile's lower bound |
+| 0x14 | float | ribbon | thickness in pixels |
+| 0x18 | float | bars only | read by `rasterizeBars` alone |
+
+The layout is measured. The names are inference, and the header says so.
+
+What the ribbon draws, per column `i` of `levels`:
+
+```
+origin = (baseline < 0 ? 1 : 1 - min(baseline, 1)) * rows
+scale  = min(amplitude, 4) * rows * 0.5
+half   = max(thickness, 0.5) * 0.5
+ya = origin - clamp(levels[|min(n-1, i)|],   -1, 1) * scale
+yb = origin - clamp(levels[|min(n-1, i+1)|], -1, 1) * scale
+yc = origin - clamp(levels[|min(n-1, i-1)|], -1, 1) * scale
+len   = sqrt(((yb - yc) * 0.5)^2 + 1)
+reach = half * len + 1
+rowLo = |trunc(ya - reach)|;  rowHi = rint(ya + reach), clamped to rows-1
+for row j in rowLo .. rowHi:
+    v = (half + 0.5) - |j + 0.5 - ya| / len          ; the profile falls off with distance
+    v = v > 1 ? 1 : (v < 0 ? amplitude : v)
+    if (v <= 0) skip
+    outBars[columns * j + i]   = max(outBars[...],   v)
+    outRibbon[columns * j + i] = max(outRibbon[...], |level|)
+```
+
+Three things a rewrite gets wrong, and all three are in the instructions:
+
+- **The "previous" sample index is `|min(n-1, i-1)|`, not a clamp.** At `i = 0` that is
+  `|-1| = 1`, so the first column's slope is taken from `levels[1]` and not from
+  `levels[0]`. With a single level it reads `levels[1]` on a one-element vector: an
+  out-of-bounds read in the shipped binary, preserved here rather than tidied away.
+- **`rowLo` is the ABSOLUTE value of a truncated coordinate.** A column whose band would
+  start above row 0 has its band start at row `|row|` instead, which puts it at the
+  BOTTOM of the strip.
+- **`amplitude` does double duty**: it is the vertical scale AND the profile's lower
+  bound, so a negative amplitude flips the mapping and holds the drawn band at the
+  amplitude rather than at zero.
+
+The bundle clamps a sample with two SEPARATE tests on the ORIGINAL value - `if (x > 1)
+y = 1; if (x < -1) y = -1;` - not a clamp of a clamp, so a value above 1 is not
+re-tested against -1 afterwards.
+
+**Measurement.** 151 instructions here against the bundle's 147, and DIFFER rather than
+MATCH. The two streams are the same function; what differs is the compiler's choice of
+idiom in two places: the bundle takes the absolute value of an int with `bic` where this
+build uses `cmp`/`cneg`, and it rounds to nearest with `fcvtps` where this build uses
+`frintx`/`fcvtzs`. Both are the same value. The fleet was built with a different
+compiler than the one on this machine, which is the same reason `analyse` and
+`hannWindow` differ.
+
+The behaviour is pinned by the self-check: 21 new assertions, with literal anchors for
+the pixels that are drawn (1.0, 0.2977531, 0.7659177, 0.4393398) and for the magnitudes
+the ribbon carries.
+
+
 ## What is next
 
-The two rasterisers: `rasterizeBars` (173) and `rasterizeRibbon` (147), which turn
-levels into the bar and ribbon geometry this effect is named for.
+`rasterizeBars` (173) is the last one: the same `VizConfig`, the same grid, the
+other profile. Its `cfg[0x18]` field - the one the ribbon does not read - is the only
+part of `VizConfig` this recovery does not yet explain.

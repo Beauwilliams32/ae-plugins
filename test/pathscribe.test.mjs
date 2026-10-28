@@ -38,8 +38,8 @@ const SHARED = [["clampf", "clampf"], ["isPowerOfTwo", "isPowerOfTwo"],
 /** PathScribe's own; waveformColumns joined on 2026-10-27 (row AE-05). */
 /** smoothedLevelsAtFrame joined on 2026-10-28 (row AE-06). */
 const OWN = ["spanCoverage", "binEdgeHz", "smoothStep", "waveformColumns", "barLevels",
-             "smoothedLevelsAtFrame"];
-const OUTSTANDING = ["rasterizeBars", "rasterizeRibbon"];
+             "smoothedLevelsAtFrame", "rasterizeRibbon"];
+const OUTSTANDING = ["rasterizeBars"];
 
 function bundlesInstalled() {
   return existsSync(BUNDLE);
@@ -167,6 +167,6 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
     "smoothStep should compile to the bundle's instruction count");
 
   const summary = out.trim().split("\n").pop();
-  assert.match(summary, /8 identical, 8 differing, 2 not implemented/,
+  assert.match(summary, /8 identical, 9 differing, 1 not implemented/,
     `the differ's tally moved: ${summary}`);
 });

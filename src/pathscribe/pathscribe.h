@@ -15,8 +15,8 @@
 //   recovered: clampf, isPowerOfTwo, linearToDb, dbToLinear, hannWindow,
 //              hannCoherentGain, fftRadix2, downmixToMono, analyse,
 //              Spectrogram::~Spectrogram, spanCoverage, binEdgeHz, smoothStep,
-//              barLevels, waveformColumns, smoothedLevelsAtFrame
-//   outstanding: rasterizeBars (173), rasterizeRibbon (147)
+//              barLevels, waveformColumns, smoothedLevelsAtFrame, rasterizeRibbon
+//   outstanding: rasterizeBars (173)
 //
 // The recovered types are SpectraKeys' too, since the identical `analyse` and
 // `~Spectrogram` can only compile to the same instructions from the same layout.
@@ -189,5 +189,61 @@ std::vector<float> barLevels(const std::vector<float>& values, double duration, 
  */
 std::vector<float> smoothedLevelsAtFrame(const std::vector<std::vector<float>>& bands,
                                           int frameIndex, float a, float b, float c);
+
+/**
+ * [inferred] The drawing configuration the two rasterisers take.
+ *
+ * No symbol in the bundle describes this struct - it is passed by const reference and
+ * never appears in a mangled name - so its LAYOUT is read off the two rasterisers'
+ * loads and its MEANING is read off the effect's own parameter names
+ * (`specs/PathScribe.json`: "Bar Count", "Baseline Position (%)", "Amplitude (%)",
+ * "Thickness (px)"). The offsets are measured; the names are inference.
+ *
+ *   offset 0x00  int    not read by either rasteriser
+ *   offset 0x04  int    column count  (read by both)
+ *   offset 0x08  int    row count     (read by both)
+ *   offset 0x0c  float  baseline position, as a fraction of the height (ribbon)
+ *   offset 0x10  float  amplitude: the vertical scale AND the profile's lower bound
+ *   offset 0x14  float  thickness in pixels (ribbon)
+ *   offset 0x18  float  read by rasterizeBars only
+ */
+struct VizConfig {
+  int mode = 0;             // 0x00
+  int columns = 0;          // 0x04
+  int rows = 0;             // 0x08
+  float baseline = 0.0f;    // 0x0c
+  float amplitude = 0.0f;   // 0x10
+  float thickness = 0.0f;   // 0x14
+  float barScale = 0.0f;    // 0x18
+};
+
+/**
+ * [exact] The ribbon rasteriser: draws the levels as a filled band whose thickness is
+ * `cfg.thickness` pixels and whose profile falls off with the distance from the level.
+ * 147 instructions, read in full (row AE-07, 2026-10-28).
+ *
+ *   outBars.assign(|columns * rows|, 0);  outRibbon.assign(same, 0)
+ *   if (columns < 1 || rows < 1 || levels.empty()) return
+ *   origin = (baseline < 0 ? 1 : 1 - min(baseline, 1)) * rows
+ *   scale  = min(amplitude, 4) * rows * 0.5
+ *   half   = max(thickness, 0.5) * 0.5
+ *   for column i in 0 .. columns-1:
+ *       a  = levels[|min(n-1, i)|]
+ *       ya = origin - clamp(a, -1, 1) * scale
+ *       yb = origin - clamp(levels[|min(n-1, i+1)|], -1, 1) * scale
+ *       yc = origin - clamp(levels[|min(n-1, i-1)|], -1, 1) * scale
+ *       len   = sqrt(((yb - yc) * 0.5)^2 + 1)
+ *       reach = half * len + 1
+ *       rowLo = |trunc(ya - reach)|;  rowHi = rint(ya + reach) clamped to rows-1
+ *       if (rowLo > rowHi) skip the column
+ *       for row j in rowLo .. rowHi:
+ *           v = (half + 0.5) - |j + 0.5 - ya| / len
+ *           v = v > 1 ? 1 : (v < 0 ? amplitude : v)
+ *           if (v <= 0) continue
+ *           outBars[columns * j + i]   = max(outBars[...], v)
+ *           outRibbon[columns * j + i] = max(outRibbon[...], |a|)
+ */
+void rasterizeRibbon(const std::vector<float>& levels, const VizConfig& cfg,
+                     std::vector<float>& outBars, std::vector<float>& outRibbon);
 
 }  // namespace pathscribe
