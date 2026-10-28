@@ -293,9 +293,12 @@ Vec2 fieldAt(const PermTable& table, float x, float y, const Params& params);
  *         out = fma(fyy, bot - top, top)
  *
  *   * The result is converted with `fcvtas` — round to nearest, ties away from zero,
- *     saturating to a 64-bit integer — and the LOW byte (or halfword) is stored. So
- *     the conversion WRAPS rather than clamps: 300 becomes 44 in 8-bit and 70000
- *     becomes 4464 in 16-bit.
+ *     saturating to a 64-bit integer — and the LOW byte (or halfword) is stored, so
+ *     the STORE wraps rather than clamps: the instruction sequence would turn 300
+ *     into 44 in 8-bit and 70000 into 4464 in 16-bit. That wrap is NOT reachable
+ *     through `apply` itself, because the sample is a convex combination of the
+ *     source values and so never leaves the source's range; it is a property of
+ *     the conversion, not an observable behaviour of the renderer.
  */
 template <class T>
 void apply(const View<const T>& src, View<T>& dst, const Params& params, float time);
