@@ -318,7 +318,8 @@ float gradientMagnitude(const float* field, int width, int height, long rowStrid
 // was /tmp/ae/chromakeyassist.asm (arm64, demangled):
 //
 //   __ZN9chromakey12analyzeFrameIhEENS_5StatsERKNS_4ViewIKT_EEfRKNS_6ParamsEPfSB_
-//     body 0x7d8 .. 0x12f8   (752 instructions)
+//     body 0x7d8 .. 0x1398   (752 instructions; the hot path returns at
+//     0x12f8, the cold exception-handling tail follows it)
 //   __ZN9chromakey12analyzeFrameItEENS_5StatsERKNS_4ViewIKT_EEfRKNS_6ParamsEPfSB_
 //     body 0x19b4 .. 0x25bc   (770 instructions)
 //

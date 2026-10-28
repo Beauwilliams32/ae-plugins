@@ -184,7 +184,7 @@ test("the functions that do not match are documented as such", () => {
 //   __ZN9chromakey10renderViewItEEvRKNS_4ViewIKT_EERNS1_IS2_EEfRKNS_6ParamsENS_8ViewModeEfPKfSE_
 //     body 0x2be4 .. 0x3158   (350 instructions)
 ////   __ZN9chromakey12analyzeFrameIhEENS_5StatsERKNS_4ViewIKT_EEfRKNS_6ParamsEPfSB_
-//     body 0x7d8 .. 0x12f8   (752 instructions)
+//     body 0x7d8 .. 0x1398   (752 instructions; hot path returns at 0x12f8)
 //
 // The load base comes from `_dyld_get_image_header` over the loaded image list,
 // matched on the image path. The recovered source is compiled into the same

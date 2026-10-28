@@ -364,9 +364,10 @@ int main() {
   // analyzeFrame<T>: the statistics pass.
   //
   // Read from the shipped instruction stream: the arm64 listing of
-  // `analyzeFrame<unsigned char>` (body 0x7d8 .. 0x12f8, 752 instructions) and
-  // of `analyzeFrame<unsigned short>` (body 0x19b4 .. 0x25bc, 770). The
-  // numbers below were MEASURED against the shipped bundle's own machine code
+  // `analyzeFrame<unsigned char>` (body 0x7d8 .. 0x1398, 752 instructions; the hot
+  // path returns at 0x12f8) and of `analyzeFrame<unsigned short>` (body
+  // 0x19b4 .. 0x25bc, 770). The numbers below were MEASURED against the shipped
+  // bundle's own machine code
   // by test/chromakey.test.mjs; this file pins them so that a regression in the
   // recovered source fails here, with the reasoning, rather than only in the
   // differential.
@@ -393,7 +394,8 @@ int main() {
     // ---- the empty frame ----
     // The Stats is zeroed before anything else, and a frame with no pixels is
     // answered with that zeroed Stats. Neither output buffer is touched: the
-    // body returns at 0x12cc, before the two copies out at 0x1274/0x1288.
+    // body returns through the epilogue at 0x12cc (ret at 0x12f8), before the two
+    // copies out at 0x1274/0x1288.
     {
       const chromakey::View<const unsigned char> empty{nullptr, 0, 0, 0};
       float d = 11.0f, s = 13.0f;

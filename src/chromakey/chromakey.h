@@ -321,8 +321,9 @@ enum ViewMode {
 // and its `It` sibling.
 //
 // [behavioural] — transcribed from the shipped instruction stream (arm64 listing
-// `/tmp/ae/chromakeyassist.asm`: `analyzeFrame<unsigned char>` body 0x7d8-0x12f8,
-// 752 instructions; `analyzeFrame<unsigned short>` body 0x19b4-0x25bc, 770), but
+// `/tmp/ae/chromakeyassist.asm`: `analyzeFrame<unsigned char>` body 0x7d8-0x1398
+// (752 instructions; the hot path returns at 0x12f8 and the cold exception tail
+// follows it); `analyzeFrame<unsigned short>` body 0x19b4-0x25bc, 770), but
 // NOT instruction-identical: the differ reports shipped=752 mine=703 for the 8-bit
 // instantiation and shipped=770 mine=708 for the 16-bit one.
 //
@@ -330,7 +331,7 @@ enum ViewMode {
 //
 //   * the returned Stats is zeroed first (0x808/0x80c);
 //   * a width or height below 1 returns it as it stands, and neither output
-//     buffer is touched (0x810..0x828 -> ret 0x12cc);
+//     buffer is touched (0x810..0x828 -> epilogue at 0x12cc, ret at 0x12f8);
 //   * the threshold comes from `sensitivityToThreshold` (0x840..0x874);
 //   * the KEY colour is converted to luma and chroma WITHOUT being divided by
 //     the scale (0x8ac..0x900), while every PIXEL channel is divided by the
