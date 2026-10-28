@@ -196,6 +196,20 @@ effect is written against:
 The mode dispatch:
 
 - **modes 0 and 1** take the CURL path directly: `curlField(table, px, py, z, params)`.
+  The dispatch is two compares and two branches, and the GRADIENT is tested
+  **first**:
+
+  ```
+  0xf48  cmp  w8, #0x3      ; Params::mode
+  0xf4c  b.eq 0xff0        ; -> the gradient mode
+  0xf50  cmp  w8, #0x2
+  0xf54  b.ne 0x124c       ; -> the curl
+  ```
+
+  so `mode == 3` is the gradient, `mode == 2` is the advection, and **everything
+  else — 0 and 1 alike — falls through to the same curl**. There is no separate
+  mode-1 branch anywhere in the listing, which is why modes 0 and 1 are the same
+  function and the self-check asserts they agree.
 - **mode 2** is the ADVECTION mode: it runs the curl field and advects the sample
   point **FOUR times** with a step of **0.35f** (0x3eb33333), accumulating the
   displacement and then subtracting the starting point. The listing contains exactly
@@ -207,15 +221,113 @@ The mode dispatch:
   (0x3c20 in `__TEXT,__const` holds `{+0.02f, -0.02f}`), because a curl is a
   perpendicular derivative and a gradient is not.
 
+  The four gradient samples, each an fBm block inlined exactly as in `curlField`
+  and each calling `noise3` once per octave:
+
+  | Sample | Point | Where the offset is built | Where `noise3` is called |
+  |---|---|---|---|
+  | a | `(px + 0.01f, py, z)` | `0x1000  fadd s8, s9, s0` | `0x1038` |
+  | b | `(px - 0.01f, py, z)` | `0x1088  fadd s0, s1, s0` | `0x10bc` |
+  | c | `(px, py + 0.01f, z)` | `0x1110  fadd s0, s14, s0` | `0x1140` |
+  | d | `(px, py - 0.01f, z)` | `0x1184  fadd s0, s2, s0` (saved at `0x1188`) | `0x11b4` |
+
+  The divisor is built **once** and used for both components:
+
+  ```
+  0x1224  mov  w8, #0xd70a
+  0x1228  movk w8, #0x3ca3, lsl #16   ; 0x3ca3d70a = +0.02f
+  0x122c  fmov s5, w8
+  0x1230  fdiv s0, s0, s5              ; the X difference / +0.02f
+  0x1244  fdiv s1, s1, s5              ; the Y difference / +0.02f — the SAME s5
+  ```
+
+  `s5` is not reloaded between the two divisions, which is the instruction-level
+  proof that the gradient has no -0.02f in it. The curl's own divisor is a
+  *pair* loaded from `__TEXT,__const`, which is where the asymmetry comes from.
+
 `curlField` (163 instructions) is the CURL of the field: four samples, each
 normalised by its own denominator, `out.x = (s1 - s2) / +0.02f` and
-`out.y = (s3 - s4) / -0.02f`.
+`out.y = (s3 - s4) / -0.02f`. It is arm64 **0x1d00..0x1f88** in
+`/tmp/ae/noisefield.asm`, and every step of it is readable off the listing:
+
+```
+0x1d24  mov.16b v8, v2      ; z
+0x1d28  mov.16b v9, v1      ; y
+0x1d2c  mov.16b v10, v0     ; x
+0x1d34  mov  w8, #0xd70a
+0x1d38  movk w8, #0x3c23, lsl #16   ; 0x3c23d70a = +0.01f, the epsilon
+0x1d40  fadd s13, s1, s0    ; y + eps
+0x1d44  ldr  w8, [x1, #0x10]        ; Params::octaves
+0x1d48  ldp  s12, s11, [x1, #0x14]  ; Params::freqMult, Params::gain
+0x1d4c  cmp  w8, #0x1
+0x1d50  csinc w20, w8, wzr, gt      ; count = octaves > 1 ? octaves : 1
+```
+
+The four samples, in the order the listing takes them. Each is an fBm block
+inlined: `fmul` the three coordinates by the frequency, `bl noise3`, then
+`fmadd s1, s0, s14, s1` to accumulate — a **fused** multiply-add — then
+`fmul s15, s12, s15` (frequency *= freqMult) and `fmul s14, s11, s14`
+(amplitude *= gain). The amplitude sum `1 + gain + gain² + ...` is then rebuilt
+inline in a second loop and the pair is divided.
+
+| Sample | Point | Where the coordinate is built | Where `noise3` is called |
+|---|---|---|---|
+| s1 | `(x, y + eps, z)` | `0x1d40` (`fadd s13, s1, s0`) | `0x1d78` |
+| s2 | `(x, y - eps, z)` | `0x1dc4` (`fadd s13, s9, s0`, eps = 0xbc23d70a = -0.01f) | `0x1dec` |
+| s3 | `(x + eps, y, z)` | `0x1e38` (`fadd s13, s10, s0`) | `0x1e60` |
+| s4 | `(x - eps, y, z)` | `0x1eac` (`fadd s10, s10, s0`, eps = -0.01f) | `0x1ed4` |
+
+The epsilon is added to the coordinate **before** the frequency multiplies it,
+which is why it is `±0.01f` in *world* units rather than in noise units.
+
+Each sample is divided by **its own** denominator, and the guard is the same one
+`fbmAmplitudeSum` uses — `(den > 1e-6f) ? den : 1.0f`, with 1e-6f built as
+0x358637bd at `0x1f14`/`0x1f18` and applied as the vectorised
+`fcmgt.2s` / `bsl.8b` pair at `0x1f24`..`0x1f30`:
+
+```
+0x1f08  ldp  q4, q3, [sp, #0x10]    ; the denominators
+0x1f24  fcmgt.2s v0, v3, v1         ; (den > 1e-6f)
+0x1f30  bsl.8b  v0, v3, v2          ; v2 = 1.0, so: den or 1.0
+0x1f34  ldr  q3, [sp, #0x60]        ; the sums
+0x1f40  fdiv.2s v0, v3, v0          ; {s1/den1, s3/den3}
+0x1f50  fdiv.2s v1, v2, v1          ; {s2/den2, s4/den4}
+0x1f54  fsub.2s v0, v0, v1          ; the two differences
+0x1f5c  ldr  d1, [x8, #0xc20]       ; __TEXT,__const 0x3c20 = {+0.02f, -0.02f}
+0x1f60  fdiv.2s v0, v0, v1          ; divided by that PAIR
+```
+
+So the X component divides by **+0.02f** and the Y component by **-0.02f**. That
+asymmetry IS the curl: the Y derivative is taken with the opposite sign, which
+is what turns a gradient into a perpendicular one. `fieldAt`'s gradient mode does
+not have it — it divides both components by +0.02f (0x3ca3d70a) — and the
+self-check asserts the two readings differ at a point where they can.
 
 ## `apply<T>` — the renderer, and the transparency trap
 
 `apply<unsigned char>` (408 instructions, arm64 0x06e8..0x0d48) and
 `apply<unsigned short>` (412, 0x1284..0x18f4) displace one pixel at a time; the two
 differ only in the width of the pixel.
+
+### The prologue
+
+```
+0x728  ldr  w8, [x0, #0x8]     ; src.width
+0x72c  cmp  w8, #0x1
+0x730  b.lt 0xcfc               ; -> return, the destination is NOT touched
+0x738  ldr  w9, [x0, #0xc]     ; src.height
+0x73c  cmp  w9, #0x1
+0x740  b.lt 0xcfc               ; -> return
+0x74c  ldr  s0, [x2, #0x8]     ; Params::amount  -- overwrites s0
+0x750  fcmp s0, #0.0
+0x754  b.eq 0xbe4               ; -> the copy path
+```
+
+The `ldr s0, [x2, #8]` at **0x74c** is why the fourth argument (`time`) is dead:
+`time` arrives in `s0`, and the very first thing the function does with that
+register is overwrite it with `params.amount`. Nothing ever reads the argument
+again. The copy path itself is the `memmove` expansion at **0xbe4..0xcf8**, whose
+byte count is `lsl x10, x8, #2` at **0xbe8** — the width times four elements.
 
 The parts that are easy to get wrong:
 
@@ -227,21 +339,120 @@ The parts that are easy to get wrong:
 - **`width < 2` skips the X block entirely** and forces `sx = 0` with
   `inside = true`; `height < 2` skips the Y block and forces `sy = 0` with no Y test
   at all.
-- **Edge mode 3 is "outside is transparent"**, and the X and Y tests are NOT
-  symmetric: the X test is `inside = sx <= xTop && sx >= 0`, while the Y test REJECTS
-  `sy < 0 || sy > yTop`. An earlier transcription of this file claimed the Y test was
-  symmetric with the X one — it is not, and the difference was worth **46,768
-  mismatching vectors out of 463,800** in the first differential run. The fix is
-  commit `6c8484a`; the sequence that settles it is the `fccmp … , pl / b.gt` pair
-  in the listing.
+- **Edge mode 3 is "outside is transparent"**, and the X and Y tests are the SAME
+  rule, written with different instructions. Both accept a coordinate of exactly
+  `extent-1` and both reject a negative one; the listing simply writes the X test
+  and the Y test differently:
+
+  ```
+  X:  0x9b4  fcmp    s10, s14          ; s10 = sx, s14 = xTop
+      0x9b8  fccmp   s10, s12, #0x8, le ; if sx <= xTop compare sx with 0.0,
+                                           ; otherwise force NZCV = 0x8
+      0x9bc  cset    w28, pl            ; inside = (sx <= xTop) && (sx >= 0)
+  Y:  0xa28  fcmp    s9, #0.0
+      0xa2c  fccmp   s9, s13, #0x0, pl  ; if sy >= 0 compare sy with yTop,
+                                          ; otherwise force NZCV = 0x0
+      0xa30  b.gt    0x908              ; sy > yTop, or sy < 0 (N == V == 0), is outside
+  ```
+
+  `pl` is N == 0, which holds for zero as well as for a positive value, so the X
+  test accepts `sx == 0`; the Y test's fallback `#0x0` leaves Z clear and N clear,
+  so `b.gt` (Z == 0 && N == V) fires for a negative `sy`. Both land on the same
+  condition: **inside iff `0 <= v <= extent-1`**.
+
+  An earlier transcription of this file had the Y test as a **NO-OP** — it never
+  rejected anything — and that was worth **46,768 mismatching vectors out of
+  463,800** in the first differential run. The fix is commit `6c8484a`. (An
+  intermediate revision of THIS file described the two tests as asymmetric; they
+  are not, and the self-check now asserts the rule directly, against both axes.)
 - **Edge mode 2 wraps**: `fmodf(v, extent)`, then `if (f < 0) f += extent`, then the
   SAME upper clamp as modes 0 and 1. Edges 0 and 1 clamp to `[0, extent-1]`.
 - The sample is bilinear between four neighbours; `i1`/`j1` wrap to 0 in edge mode 2
   and are clamped otherwise.
 - The conversion is `fcvtas` — round to nearest, ties away from zero — and then the
-  LOW byte (or halfword) is stored, so it WRAPS rather than clamps: 300 becomes 44 in
-  8-bit, 70000 becomes 4464 in 16-bit.
+  LOW byte (or halfword) is stored (`fcvtas x12, s2` / `strb w12, [x24]` at
+  0xb18/0xb1c for 8-bit, `fcvtas` / `strh` at 0x16c4/0x16c8 for 16-bit), so the
+  STORE WRAPS rather than clamps: the instruction sequence would turn 300 into 44
+  in 8-bit and 70000 into 4464 in 16-bit. That wrap is **not reachable through
+  `apply`**, because the sample is a convex combination of the source values and
+  so never leaves the source's range; it is a property of the conversion, not an
+  observable behaviour of the renderer, and no self-check claims to observe it.
 - The stride is counted in **ELEMENTS** of `T`, not bytes.
+
+### The per-pixel loop
+
+The inner counter is the COLUMN and the outer one is the ROW, and the listing is
+explicit about it:
+
+```
+0x920  ucvtf  s10, w23         ; the column, as a float
+0x928  mov.16b v0, s10         ; v0 = x
+0x92c  mov.16b v1, s8          ; v1 = y
+0x934  bl     fieldAt
+0x938  ldr    s2, [x21, #0x8]  ; Params::amount
+0x93c  fmul   s0, s0, s2       ; dx
+0x940  fmul   s1, s1, s2       ; dy
+0x944  ldp    w8, w26, [x21, #0x20]   ; Params::dispMode, Params::edgeMode
+0x948  cmp    w8, #0x2
+0x950  fcsel  s13, v9, s1, eq  ; dispMode 2 -> dy = 0
+0x954  cmp    w8, #0x3
+0x958  fcsel  s0, v9, s0, eq   ; dispMode 3 -> dx = 0
+0x95c  cmp    w25, #0x2        ; the width
+0x960  b.ge   0x970
+0x964  mov    w28, #0x1        ; inside = true
+0x968  movi.2d v10, #0        ; sx = 0
+0x96c  b      0x9d8            ; -> the Y block only
+0x970  fadd   s10, s0, s10     ; sx = dx + x
+```
+
+So `fieldAt` is asked for **(column, row)**, not (row, column), and the
+displacement modes are exactly two `fcsel`s: mode 2 zeroes the Y displacement and
+mode 3 zeroes the X one. The self-check renders a non-symmetric image and asserts
+that the transposed reading does NOT reproduce it.
+
+Edge mode 2, the wrap, is `fmodf` and two selects:
+
+```
+0xa0c  bl     _fmodf
+0xa10  fadd   s1, s0, s11      ; f + extent
+0xa14  fcmp   s0, #0.0
+0xa18  fcsel  s0, s1, s0, mi   ; if (f < 0) f += extent
+0xa1c  fcmp   s0, s13          ; the top edge
+0xa20  fcsel  s9, s13, s0, gt  ; then the SAME upper clamp as modes 0 and 1
+```
+
+The neighbour indices and the bilinear sample:
+
+```
+0xa4c  fcvtms w8, s10          ; i0 = (int)floor(sx)
+0xa58  csel  w10, w8, w9, lt   ; clamped against width-1
+0xa60  csel  w8, wzr, w10, lt  ; and against 0
+0xa64  fcvtms w10, s9          ; j0 = (int)floor(sy)
+0xa7c  add   w12, w8, #0x1     ; i0 + 1
+0xa84  cmp   w26, #0x2
+0xa88  csel  w9, wzr, w9, eq   ; edge mode 2 -> the neighbour wraps to 0
+0xa90  cmp   w12, w25
+0xa94  csinc w9, w9, w8, ge    ; otherwise i1 = i0+1 or width-1
+0xaa0  scvtf s0, w8            ; fxx = sx - i0
+0xaa4  scvtf s2, w10           ; fyy = sy - j0
+...
+0xae0  ldr   b2, [x10]         ; p00
+0xaf4  fmadd s2, s1, s3, s2    ; top = fma(fxx, p10 - p00, p00)
+0xb0c  fmadd s3, s1, s4, s3    ; bot = fma(fxx, p11 - p01, p01)
+0xb10  fsub  s3, s3, s2
+0xb14  fmadd s2, s0, s3, s2    ; out = fma(fyy, bot - top, top)
+0xb18  fcvtas x12, s2
+0xb1c  sturb w12, [x24, #-0x1]
+```
+
+The row pointer is built as `data + stride * row` with `madd x11, x14, x10, x13`
+at **0xabc** — `x14` is the stride — which is why the stride counts ELEMENTS of
+`T`, not bytes.
+
+The transparent pixel is written as a single zero store of the pixel's width:
+`stur wzr, [x24, #-0x1]` at **0x908** for 8-bit (four zero bytes) and
+`str xzr, [x25]` at **0x14ac** for 16-bit (eight zero bytes). The 16-bit
+conversion is `fcvtas x12, s2` / `strh w12, [x25]` at **0x16c4**/**0x16c8**.
 
 ## What is not proven
 
