@@ -1,8 +1,9 @@
 // Self-check for the recovered noisefield:: namespace.
 //
-// The three functions here are small enough to state completely, so every assertion
-// is an anchored one, and the gradient table is checked entry by entry against the
-// canonical set rather than merely counted.
+// Every assertion here is ANCHORED: it names the constant, the instruction or the
+// rule from the arm64 listing that it pins, and where the listing admits two
+// readings it asserts BOTH — that the recovered reading holds and that the
+// plausible alternative does not, so a silent flip cannot pass.
 
 #include "noisefield.h"
 
@@ -11,6 +12,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -105,6 +107,161 @@ double noise3(double x, double y, double z) {
   const double x01 = lerp(grad(perm[AA + 1], fx, fy, z1), grad(perm[BA + 1], x1, fy, z1), u);
   const double x11 = lerp(grad(perm[AB + 1], fx, y1, z1), grad(perm[BB + 1], x1, y1, z1), u);
   return lerp(lerp(x00, x10, v), lerp(x01, x11, v), w);
+}
+
+}  // namespace oracle
+
+
+// ---------------------------------------------------------------------------
+// The field, written out again from the listing.
+//
+// These are not a second implementation of the recovered code — they are the
+// LISTING's rules, re-stated, so that a change to the implementation has to be
+// made twice and the constants (0.02f, -0.02f, 0.35f, 0.001f, four steps) are
+// pinned rather than implied.
+//
+// `noise3` itself is not re-derived here: it is already pinned against the
+// textbook oracle above, so these helpers use the recovered one and add only
+// the structure the listing describes around it.
+// ---------------------------------------------------------------------------
+
+namespace oracle {
+
+using noisefield::Params;
+using noisefield::PermTable;
+using noisefield::Vec2;
+
+/** One fractal Brownian sample, normalised by its OWN amplitude sum.
+ *
+ *  curlField inlines this block four times and fieldAt's gradient mode four
+ *  more; the shape is the same one fbm3 spells out as an exported function.
+ */
+float fbmSample(const PermTable& table, float x, float y, float z,
+                int octaves, float freqMult, float gain) {
+  const int count = octaves > 1 ? octaves : 1;
+  float sum = 0.0f, amplitude = 1.0f, frequency = 1.0f;
+  for (int i = 0; i < count; ++i) {
+    sum += noisefield::noise3(table, x * frequency, y * frequency, z * frequency) * amplitude;
+    frequency *= freqMult;
+    amplitude *= gain;
+  }
+  float denom = 0.0f, term = 1.0f;
+  for (int i = 0; i < count; ++i) { denom += term; term *= gain; }
+  if (!(denom > 1e-6f)) denom = 1.0f;
+  return sum / denom;
+}
+
+/** The curl's four samples, and the two readings of the Y divisor.
+ *
+ * The listing divides the X difference by +0.02f and the Y difference by
+ * -0.02f — `ldr d1, [x8, #0xc20]` loads the PAIR {+0.02f, -0.02f} and
+ * `fdiv.2s v0, v0, v1` divides by it.  `yWrong` is the reading the curl must
+ * NOT use: a curl is a perpendicular derivative, and the sign is what makes
+ * it one.
+ */
+struct Curl {
+  float x;
+  float y;
+  float yWrong;
+};
+
+Curl curl(const PermTable& table, float x, float y, float z, const Params& p) {
+  const float e = 0.01f;
+  const float s1 = fbmSample(table, x, y + e, z, p.octaves, p.freqMult, p.gain);
+  const float s2 = fbmSample(table, x, y - e, z, p.octaves, p.freqMult, p.gain);
+  const float s3 = fbmSample(table, x + e, y, z, p.octaves, p.freqMult, p.gain);
+  const float s4 = fbmSample(table, x - e, y, z, p.octaves, p.freqMult, p.gain);
+  Curl c;
+  c.x = (s1 - s2) / 0.02f;
+  c.y = (s3 - s4) / -0.02f;
+  c.yWrong = (s3 - s4) / 0.02f;
+  return c;
+}
+
+/** The advection: `steps` iterations of the curl with a step of 0.35f. */
+Vec2 advect(const PermTable& table, float px, float py, float z, const Params& p, int steps) {
+  float ax = px, ay = py;
+  for (int i = 0; i < steps; ++i) {
+    const Curl c = curl(table, ax, ay, z, p);
+    ax = std::fma(c.x, 0.35f, ax);
+    ay = std::fma(c.y, 0.35f, ay);
+  }
+  Vec2 out;
+  out.x = ax - px;
+  out.y = ay - py;
+  return out;
+}
+
+/** The gradient mode: four samples, BOTH components divided by +0.02f. */
+Vec2 gradient(const PermTable& table, float px, float py, float z, const Params& p) {
+  const float e = 0.01f;
+  const float a = fbmSample(table, px + e, py, z, p.octaves, p.freqMult, p.gain);
+  const float b = fbmSample(table, px - e, py, z, p.octaves, p.freqMult, p.gain);
+  const float c = fbmSample(table, px, py + e, z, p.octaves, p.freqMult, p.gain);
+  const float d = fbmSample(table, px, py - e, z, p.octaves, p.freqMult, p.gain);
+  Vec2 out;
+  out.x = (a - b) / 0.02f;
+  out.y = (c - d) / 0.02f;
+  return out;
+}
+
+/** One channel-0 pixel of `apply`, written out from the listing's description.
+ *
+ * Only the clamp and wrap edge modes are here — the transparent mode writes
+ * zeroes rather than a sample, and is checked separately.
+ */
+template <class T>
+float oraclePixel(const noisefield::View<const T>& src, const Params& p,
+                  const noisefield::Vec2& f, int x, int y) {
+  const int w = src.width, h = src.height;
+  const float xTop = static_cast<float>(w) - 1.0f;
+  const float yTop = static_cast<float>(h) - 1.0f;
+
+  float dx = f.x * p.amount, dy = f.y * p.amount;
+  if (p.dispMode == 2) dy = 0.0f;
+  if (p.dispMode == 3) dx = 0.0f;
+
+  float sx = 0.0f, sy = 0.0f;
+  if (w >= 2) {
+    sx = dx + static_cast<float>(x);
+    if (p.edgeMode == 2) {
+      float v = std::fmodf(sx, static_cast<float>(w));
+      if (v < 0.0f) v += static_cast<float>(w);
+      sx = (v > xTop) ? xTop : v;
+    } else {
+      const float c = (sx > xTop) ? xTop : sx;
+      sx = (sx < 0.0f) ? 0.0f : c;
+    }
+  }
+  if (h >= 2) {
+    sy = dy + static_cast<float>(y);
+    if (p.edgeMode == 2) {
+      float v = std::fmodf(sy, static_cast<float>(h));
+      if (v < 0.0f) v += static_cast<float>(h);
+      sy = (v > yTop) ? yTop : v;
+    } else {
+      const float c = (sy > yTop) ? yTop : sy;
+      sy = (sy < 0.0f) ? 0.0f : c;
+    }
+  }
+
+  const float floorX = std::floor(sx), floorY = std::floor(sy);
+  const int i0 = (floorX > 0.0f) ? ((floorX >= xTop) ? w - 1 : static_cast<int>(floorX)) : 0;
+  const int j0 = (floorY > 0.0f) ? ((floorY >= yTop) ? h - 1 : static_cast<int>(floorY)) : 0;
+  const int i1 = (i0 + 1 >= w) ? ((p.edgeMode == 2) ? 0 : w - 1) : i0 + 1;
+  const int j1 = (j0 + 1 >= h) ? ((p.edgeMode == 2) ? 0 : h - 1) : j0 + 1;
+  const float fxx = sx - static_cast<float>(i0);
+  const float fyy = sy - static_cast<float>(j0);
+
+  const T* row0 = src.data + static_cast<long long>(j0) * src.stride;
+  const T* row1 = src.data + static_cast<long long>(j1) * src.stride;
+  const float p00 = static_cast<float>(row0[i0 * 4]);
+  const float p10 = static_cast<float>(row0[i1 * 4]);
+  const float p01 = static_cast<float>(row1[i0 * 4]);
+  const float p11 = static_cast<float>(row1[i1 * 4]);
+  const float top = std::fma(fxx, p10 - p00, p00);
+  const float bot = std::fma(fxx, p11 - p01, p01);
+  return std::fma(fyy, bot - top, top);
 }
 
 }  // namespace oracle
