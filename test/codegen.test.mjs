@@ -50,6 +50,14 @@ const ROOT = path.join(import.meta.dirname, "..");
 //   glitch     4 -> 4   unchanged, and now with a second overload listed separately
 //                       where one entry had been hiding two functions
 //
+// `glitch` was additionally gated on ZERO differences, because it used to be the only
+// namespace whose every function was instruction-identical. That is no longer true:
+// the two `apply<T>` instantiations were recovered behaviourally in 606419c, so the
+// namespace now reports 4 identical, 2 differing, 0 absent. The gate was narrowed to
+// what it can honestly protect — the four scalar helpers must stay instruction-
+// identical — rather than deleted, and the namespace's completeness is now asserted
+// as well (no absent symbol).
+//
 // The floors are therefore higher than the previous run measured without any
 // transcription changing. Each rise is accounted for above; a rise with no explanation
 // is the thing to distrust, so they are written down rather than silently bumped.
@@ -116,16 +124,27 @@ function runDiff(ns) {  // The tool exits non-zero when it finds differences, wh
   };
 }
 
-test("glitch is instruction-for-instruction identical to the shipped bundle", (t) => {
+test("the glitch scalar layer is instruction-identical and the namespace is complete", (t) => {
   if (!bundlesInstalled()) {
     t.skip("plugin bundles are not installed on this machine");
     return;
   }
   const r = runDiff("glitch");
-  assert.equal(r.differing, 0,
-    `glitch should match the shipped binary exactly:\n${r.raw}`);
+
+  // The SCALAR layer is still instruction-for-instruction identical, and that is what
+  // this gate protects. The two `apply<T>` instantiations are a different kind of
+  // claim: they were recovered BEHAVIOURALLY — the shipped SEMANTICS transcribed,
+  // not the shipped instruction stream — so the differ reports them as DIFFER by
+  // design. This test used to assert `differing === 0`, which asserted that the
+  // namespace had NO unrecovered engine left. That stopped being true when the
+  // engine was recovered, and the honest assertion is the one below: four
+  // identical scalars, two differing engine bodies, and nothing absent.
   assert.equal(r.identical, IDENTICAL_FLOOR.glitch,
-    `expected ${IDENTICAL_FLOOR.glitch} identical glitch functions`);
+    `expected ${IDENTICAL_FLOOR.glitch} identical glitch functions\n${r.raw}`);
+  assert.equal(r.differing, 2,
+    `glitch should have exactly two behavioural (differing) engine bodies\n${r.raw}`);
+  assert.equal(r.absent, 0,
+    `glitch should have no absent symbol left\n${r.raw}`);
 
   // The point of the check is that it is exact, so assert on a specific function
   // rather than only on the tally: hashKey is 34 instructions over 16 constants.

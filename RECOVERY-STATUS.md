@@ -17,11 +17,11 @@ a function can be recovered and still differ from the binary in its instruction 
 | Effects in the fleet | 16 |
 | With a recovered source namespace | 16 |
 | Without one | 0 |
-| Named symbols recovered | 156 of 166 |
+| Named symbols recovered | 158 of 166 |
 | — instruction-identical to the shipped binary | 66 |
-| — recovered but differing in codegen | 90 |
-| Authored instructions recovered | 17433 of 23246 (75.0%) |
-| Lines of recovered source | 21918 |
+| — recovered but differing in codegen | 92 |
+| Authored instructions recovered | 19818 of 23246 (85.3%) |
+| Lines of recovered source | 23817 |
 
 ## Per effect
 
@@ -37,7 +37,7 @@ a class member is named after its class.
 | ChromaKeyAssist | `chromakey::` | 11/15 | 7 | 4 | 4 | 502/2721 | 18.4% |
 | ColorPulse | `colorpulse::` | 10/10 | 5 | 5 | 0 | 1032/1032 | 100.0% |
 | EchoTrails | `echo::` | 6/6 | 1 | 5 | 0 | 481/481 | 100.0% |
-| GlitchKit | `glitch::` | 4/6 | 4 | 0 | 2 | 51/2436 | 2.1% |
+| GlitchKit | `glitch::` | 6/6 | 4 | 2 | 0 | 2436/2436 | 100.0% |
 | LUTBlend | `lutblend::` | 8/8 | 3 | 5 | 0 | 2548/2548 | 100.0% |
 | MaskFlow | `maskflow::` | 9/9 | 3 | 6 | 0 | 972/972 | 100.0% |
 | MotionCurveX | `motioncurvex::` | 11/11 | 2 | 9 | 0 | 2363/2363 | 100.0% |

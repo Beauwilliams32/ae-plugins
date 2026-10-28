@@ -129,7 +129,7 @@ symbol list, and marked as such in its own row:
 | Module | Contents | State |
 |---|---|---|
 | `typeriser::` | The whole SRT karaoke engine: `parseSrt`, `parseTimingLine`, `parseTimestamp`, `trim`, `splitWords`, `wrapWords`, `wordStyle`, `ease`, `karaokeWordAt`, `wordProgress`, `cueIndexAt`, plus `Cue`, `WordStyle` and `Anim` | **complete — all 12 authored functions** |
-| `glitch::` | `clampf`, `clampi`, `hashKey`, `patternFrame` | **complete for the scalar layer, and INSTRUCTION-IDENTICAL** (4/4). The render engine `glitch::apply<T>` is unrecovered, but its `View<T>`/`Params` layouts, its mode field and its one-based five-way dispatch ARE recovered — see `test/glitch.test.mjs`, which re-derives the offsets from the bundle |
+| `glitch::` | `clampf`, `clampi`, `hashKey`, `patternFrame`, plus the two `apply<T>` engine instantiations | **6 of 6** — 4 INSTRUCTION-IDENTICAL (`clampf`, `clampi`, `hashKey`, `patternFrame`; `hashKey` is 34 of 34 instructions) and 2 BEHAVIOURAL (`apply<unsigned char>` and `apply<unsigned short>`, landed 2026-10-28). The two `apply<T>` bodies are NOT claimed to be instruction-identical: they are transcriptions of the shipped SEMANTICS, pinned by a dlopen differential against the shipped bundle itself — 5950 vectors, 3266368 bytes compared, 0 mismatching vectors, with mutation sensitivity proven. `View<T>`/`Params` layouts, the mode field and the one-based five-way dispatch are recovered too — see `src/glitch/RECOVERY-NOTES.md` and `test/glitch.test.mjs`, which re-derives the offsets from the bundle |
 | `speedramp::` | `easeValue`, `easeIntegral`, `speedAt`, `mapTime`, `computeBlend`, plus `RampParams` and `FrameBlend` | **complete — all 5 functions, 261 instructions** |
 | `lutblend::` | `clampf`, `lerpf`, `luma709`, `CubeLUT::valid`, `sampleLUT`, `makeIdentity`, `applyLUTBlend`, `parseCube`, plus the `CubeLUT` layout | **8 of 8** — `parseCube` (1924 instructions, the largest function in the fleet) landed 2026-10-27 as a reconstruction from the recovered specification, verified by `selfcheck.cpp` against all twelve error messages and every validation rule |
 | `echo::` | `clampf`, `blendPixel`, `compositeOver`, `buildLadder`, `sampleBilinear`, `transformBilinear`, plus the corrected `ImageF` layout and `BlendMode` | **complete — all 6 functions**. Recovering `transformBilinear` also CORRECTED `ImageF`: `data` had been modelled as a raw `float*` on the strength of a read that a `std::vector`'s begin pointer produces identically. The host integration is unread |
@@ -243,23 +243,41 @@ actually shipped.
 `tools/codegen-diff.mjs` compiles a recovered namespace and compares each
 function's instruction stream against the shipped bundle's. For small routines the
 match is exact and unforgeable — `glitch::hashKey` reproduces all 34 instructions
-and all 16 constants, and the glitch namespace is 4/4 identical:
+and all 16 constants, and the four glitch scalars are instruction-identical:
 
 ```
 $ node tools/codegen-diff.mjs glitch
-  absent  glitch::apply(IhEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf) (not implemented — 1157 instrs)
+  DIFFER  glitch::apply(IhEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf)  shipped=1157 mine=1409
+            shipped: ldp w15, w16, [x0, #0x8]
+            mine   : ldp w9, w8, [x0, #0x8]
+            shipped: cmp w15, #0x1
+            mine   : cmp w9, #0x1
+            shipped: ccmp w16, #0x1, #0x8, ge
+            mine   : ccmp w8, #0x1, #0x8, ge
+            (different instruction counts)
   MATCH   glitch::clampf  5 instructions, identical
   MATCH   glitch::patternFrame  7 instructions, identical
   MATCH   glitch::hashKey  34 instructions, identical
-  absent  glitch::apply(ItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf) (not implemented — 1228 instrs)
+  DIFFER  glitch::apply(ItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEjf)  shipped=1228 mine=1477
+            shipped: stp x20, x19, [sp, #0x70]
+            mine   : stp x20, x19, [sp, #0x70]
+            shipped: stp x29, x30, [sp, #0x80]
+            mine   : stp x29, x30, [sp, #0x80]
+            shipped: stp x1, x0, [sp, #0x18]
+            mine   : ldp w8, w28, [x0, #0x8]
+            shipped: ldp w9, w28, [x0, #0x8]
+            mine   : cmp w8, #0x1
+            shipped: cmp w9, #0x1
+            mine   : ccmp w28, #0x1, #0x8, ge
+            (different instruction counts)
   MATCH   glitch::clampi  5 instructions, identical
 
-4 identical, 0 differing, 2 not implemented
+4 identical, 2 differing, 0 not implemented
 ```
 
 Two things about that output are worth reading rather than skimming. The comparison unit is
 the full MANGLED SYMBOL, not the function name, so `glitch::apply` appears twice — it has
-two instantiations, and both are reported as absent rather than one hiding the other. And
+two instantiations, and both are reported separately rather than one hiding the other. And
 the three differ defects listed below were each found by noticing that a function the
 bundle and this source clearly agreed on was being reported as differing.
 
@@ -298,8 +316,12 @@ overloads had ever been compared. The comparison unit is now the mangled symbol.
 The check is honest about its own reach. Larger functions differ in codegen
 legitimately (the originals inline `std::vector` growth and `luma709`; this source
 calls out where that is bit-identical, and register allocation differs). Those are
-verified by self-checks and oracles, **not** by this, and `test/codegen.test.mjs`
-gates `glitch` on zero differences while gating the rest on not regressing.
+verified by self-checks and oracles, **not** by this. `test/codegen.test.mjs` therefore
+gates the glitch SCALARS on zero differences — the four small routines must stay
+instruction-identical — while gating the two `glitch::apply<T>` engine bodies, and the rest
+of the fleet, on not regressing: those bodies are recovered behaviourally, so their
+instruction stream is a difference by construction, and their correctness is carried by the
+dlopen differential in `test/glitch.test.mjs` instead.
 
 ## The capability contract
 
