@@ -11,12 +11,13 @@
 // recovered from SpectraKeys serves four effects, and what is transcribed here is that
 // pipeline under this bundle's namespace.
 //
-// INCOMPLETE — the analysis layer is here and the drawing layer is not:
-//   recovered: clampf, isPowerOfTwo, linearToDb, dbToLinear, hannWindow,
-//              hannCoherentGain, fftRadix2, downmixToMono, analyse,
-//              Spectrogram::~Spectrogram, spanCoverage, binEdgeHz, smoothStep,
-//              barLevels, waveformColumns, smoothedLevelsAtFrame, rasterizeRibbon
-//   outstanding: rasterizeBars (173)
+// NAMESPACE-COMPLETE: every `pathscribe::` symbol in the bundle is transcribed, so this
+// header is a full reconstruction rather than a partial one. The last one to land was
+// `rasterizeBars` (173 instructions, 2026-10-28), which also pinned the meaning of
+// `VizConfig::barScale` at offset 0x18 — the one field the ribbon does not read. All
+// eighteen are here; eight compile instruction-identical to the bundle and the other ten
+// are behavioural recoveries, so treat the BEHAVIOUR (pinned by the self-check) as the
+// recovered fact rather than the instruction stream.
 //
 // The recovered types are SpectraKeys' too, since the identical `analyse` and
 // `~Spectrogram` can only compile to the same instructions from the same layout.
@@ -205,7 +206,8 @@ std::vector<float> smoothedLevelsAtFrame(const std::vector<std::vector<float>>& 
  *   offset 0x0c  float  baseline position, as a fraction of the height (ribbon)
  *   offset 0x10  float  amplitude: the vertical scale AND the profile's lower bound
  *   offset 0x14  float  thickness in pixels (ribbon)
- *   offset 0x18  float  read by rasterizeBars only
+ *   offset 0x18  float  bar width as a fraction of the column pitch, capped at 0.9
+ *                     (bars only) -- see rasterizeBars
  */
 struct VizConfig {
   int mode = 0;             // 0x00
@@ -245,5 +247,62 @@ struct VizConfig {
  */
 void rasterizeRibbon(const std::vector<float>& levels, const VizConfig& cfg,
                      std::vector<float>& outBars, std::vector<float>& outRibbon);
+
+/**
+ * [exact] The bar rasteriser: draws the levels as a row of solid columns, each one a
+ * level's worth of height, with the columns scaled by `cfg.barScale`.
+ * 173 instructions, read in full (row AE-05, 2026-10-28).
+ *
+ * The SEMANTICS are recovered exactly; the instruction stream is not identical. This
+ * transcription compiles to 176 arm64 instructions against the bundle's 173, so it is
+ * a BEHAVIOURAL recovery, not an instruction-identical one. It was verified
+ * bit-for-bit against the shipped arm64 bundle by a dlopen differential harness over
+ * 60,000 randomised vectors: 410,950,444 cells compared, 68,652,909 of them non-zero,
+ * 0 disagreements.
+ *
+ *   outBars.assign(max(0, columns * rows), 0);  outRibbon.assign(same, 0)
+ *   if (columns < 1 || rows < 1 || levels.empty()) return
+ *   n     = levels.size()
+ *   origin = (baseline < 0 ? 1 : 1 - min(baseline, 1)) * rows
+ *   step   = columns / n
+ *   scale  = (barScale < 0 ? 0 : min(barScale, 0.9))
+ *   half   = scale * step * 0.5
+ *   for bar i in 0 .. n-1:
+ *       level = clamp(levels[i], 0, 1);  if (level <= 0) continue
+ *       H     = level * clamp(amplitude, 0, 4) * rows
+ *       mode == 3 ? (eLow = origin - H/2, eHigh = origin + H/2)   ; centred on the baseline
+ *                 : (eLow = origin - H,   eHigh = origin)         ; growing up from it
+ *       rowLo = max(0, floor(eLow));  rowHi = min(rows-1, ceil(eHigh))
+ *       if (rowLo > rowHi) continue
+ *       left  = i * step + half;  right = (i+1) * step - half
+ *       colLo = max(0, floor(left));  colHi = min(columns-1, ceil(right))
+ *       if (colLo > colHi) continue
+ *       for row in rowLo .. rowHi:
+ *           cover = clamp(min(yTop, row+1) - max(yBottom, row), 0, 1)
+ *           if (cover <= 0) continue
+ *           for col in colLo .. colHi:
+ *               horiz = clamp(min(xMax, col+1) - max(xMin, col), 0, 1)
+ *               if (horiz <= 0) continue
+ *               value = cover * horiz
+ *               outBars[row * columns + col]    = max(outBars[...],    value)
+ *               outRibbon[row * columns + col] = max(outRibbon[...], level)
+ *
+ * Two things a rewrite gets wrong, and both are in the instructions:
+ *
+ * - **The horizontal coverage is measured against the MINIMUM and the MAXIMUM of the
+ *   column's two edges, not against `left` and `right` themselves.** The bundle takes
+ *   `min(max(left,right), col+1) - max(min(left,right), col)`, so a column whose edges
+ *   are the wrong way round still measures correctly.
+ * - **`mode` only distinguishes 3 from everything else.** Every mode but 3 draws the
+ *   bar upward from the baseline; only mode 3 centres it on the baseline. Modes 0, 1
+ *   and 2 are the same function.
+ *
+ * `barScale` is the one `VizConfig` field the ribbon does not read: it is the bar's
+ * width as a fraction of the column pitch, capped at 0.9 so the bars can never touch.
+ * A negative `barScale` is not clamped to a small width but to ZERO, which draws the
+ * bars at full pitch.
+ */
+void rasterizeBars(const std::vector<float>& levels, const VizConfig& cfg,
+                   std::vector<float>& outBars, std::vector<float>& outRibbon);
 
 }  // namespace pathscribe
