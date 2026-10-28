@@ -1,13 +1,16 @@
 // Gate for the recovered noisefield:: namespace.
 //
-// The three functions are checked by the self-check. The GRADIENT TABLE is checked
-// against the bundle's own bytes, because a table cannot be verified by inspection and
-// a wrong gradient set is a different effect with the same function names.
+// The three instruction-identical functions are checked by the self-check. The
+// GRADIENT TABLE is checked against the bundle's own bytes, because a table cannot be
+// verified by inspection and a wrong gradient set is a different effect with the same
+// function names. The four BEHAVIOURAL recoveries -- fieldAt, curlField and the two
+// apply<T> instantiations -- are checked against the SHIPPED BUNDLE itself, byte for
+// byte, by the differential harness in src/noisefield/differential.cpp.
 
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -17,29 +20,44 @@ const BUNDLE = "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media"
   + "/NoiseField.plugin/Contents/MacOS/NoiseField";
 
 /**
- * The functions transcribed here.
- *
- * `PermTable` is `PermTable::build` — the differ names it by its class, since the
- * mangled symbol carries no method name the differ prints.
- */
-const RECOVERED = ["clampf", "clampi", "fbmAmplitudeSum", "PermTable", "noise3", "fbm3"];
-
-/**
- * The rest, as `tools/codegen-diff.mjs` names them.
+ * Every `noisefield::` symbol the bundle ships, named the way
+ * `tools/codegen-diff.mjs` prints it.
  *
  * Two of these names are the differ's, not the source's: `noisefield::PermTable` is
- * `PermTable::build`, and `noisefield::_GLOBAL__N_1` is the anonymous-namespace
- * `curlField`. They are listed as the differ prints them so the assertion is against
- * the measurement rather than against a tidier list.
+ * `PermTable::build` (the mangled symbol carries no method name the differ prints),
+ * and `noisefield::_GLOBAL__N_1` is the anonymous-namespace `curlField`. They are
+ * listed as the differ prints them so the assertion is against the measurement
+ * rather than against a tidier list.
  */
-const OUTSTANDING = [
-  "fieldAt", "_GLOBAL__N_1",
+const RECOVERED = [
+  "clampf",
+  "clampi",
+  "fbmAmplitudeSum",
+  "PermTable",
+  "noise3",
+  "fbm3",
+  "fieldAt",
+  "_GLOBAL__N_1",
   "apply(IhEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEf)",
   "apply(ItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEf)",
 ];
 
+/**
+ * Nothing: the namespace is 10 of 10.
+ *
+ * The list is kept, empty rather than deleted, so that a future regression has
+ * somewhere to be written down -- and so the assertion below stays a two-way check
+ * between this file and the differ rather than a one-way "at least these".
+ */
+const OUTSTANDING = [];
+
 function bundlesInstalled() {
   return existsSync(BUNDLE);
+}
+
+function haveClang() {
+  try { execFileSync("clang++", ["--version"], { stdio: "ignore" }); return true; }
+  catch { return false; }
 }
 
 function runDiff(fragment) {
@@ -52,12 +70,61 @@ function runDiff(fragment) {
   }
 }
 
-test("recovered noisefield source compiles and its maths verifies", (t) => {
-  const have = (cmd) => {
-    try { execFileSync(cmd, ["--version"], { stdio: "ignore" }); return true; }
-    catch { return false; }
+/**
+ * Build the differential harness against a directory holding noisefield.h,
+ * noisefield.cpp and differential.cpp, and run it.
+ *
+ * `-fvisibility=hidden` matters: without it the recovered `noisefield::apply` could
+ * interpose the shipped one inside the loader-mapped bundle, and the comparison
+ * would be the recovered code compared with itself.
+ */
+function buildAndRunHarness(dir) {
+  const bin = path.join(dir, "differential");
+  execFileSync("clang++", [
+    "-std=c++17", "-O2", "-fvisibility=hidden",
+    "-I", dir,
+    "-o", bin,
+    path.join(dir, "differential.cpp"),
+    path.join(dir, "noisefield.cpp"),
+  ], { stdio: "pipe" });
+
+  let status = 0;
+  let stdout = "";
+  try {
+    stdout = execFileSync(bin, { encoding: "utf8", stdio: "pipe" });
+  } catch (e) {
+    status = e.status ?? 1;
+    stdout = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+  }
+  const field = (name) => {
+    const m = stdout.match(new RegExp(`^${name} (-?\\d+)$`, "m"));
+    return m ? Number(m[1]) : null;
   };
-  if (!have("clang++")) { t.skip("clang++ not available — compile check skipped"); return; }
+  return {
+    status,
+    stdout,
+    scalars: field("SCALAR_MISMATCHES"),
+    u8Vectors: field("APPLY_U8_VECTORS"),
+    u8Mismatches: field("APPLY_U8_MISMATCH_VECTORS"),
+    u8Bytes: field("APPLY_U8_DIFFERING_BYTES"),
+    u16Vectors: field("APPLY_U16_VECTORS"),
+    u16Mismatches: field("APPLY_U16_MISMATCH_VECTORS"),
+    u16Bytes: field("APPLY_U16_DIFFERING_BYTES"),
+    vectors: field("VECTORS"),
+    mismatchVectors: field("MISMATCH_VECTORS"),
+    differingBytes: field("DIFFERING_BYTES"),
+  };
+}
+
+/** Copy the harness sources into a scratch directory, so a copy can be perturbed. */
+function stageSources(dir) {
+  for (const f of ["noisefield.h", "noisefield.cpp", "differential.cpp"]) {
+    copyFileSync(path.join(SRC, f), path.join(dir, f));
+  }
+}
+
+test("recovered noisefield source compiles and its maths verifies", (t) => {
+  if (!haveClang()) { t.skip("clang++ not available — compile check skipped"); return; }
 
   const dir = mkdtempSync(path.join(tmpdir(), "noisefield-check-"));
   const bin = path.join(dir, "selfcheck");
@@ -73,7 +140,7 @@ test("recovered noisefield source compiles and its maths verifies", (t) => {
     assert.match(out, /ALL RECOVERED NOISEFIELD MATHS VERIFIED/, `self-check failed:\n${out}`);
     assert.doesNotMatch(out, /\bFAIL\b/, out);
     const passes = (out.match(/^  PASS/gm) ?? []).length;
-    assert.ok(passes >= 44, `expected >= 44 checks, saw ${passes}`);
+    assert.ok(passes >= 75, `expected >= 75 checks, saw ${passes}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -139,7 +206,8 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
   if (!bundlesInstalled()) { t.skip("NoiseField bundle is not installed"); return; }
 
   const out = runDiff();
-  const recovered = [...out.matchAll(/^\s{2}(?:MATCH|DIFFER)\s+noisefield::(\w+)/gm)].map((m) => m[1]).sort();
+  const recovered = [...out.matchAll(/^\s{2}(?:MATCH|DIFFER)\s+noisefield::(\S+)/gm)]
+    .map((m) => m[1]).sort();
   const absent = [...out.matchAll(/^\s+absent\s+noisefield::(\S+)/gm)].map((m) => m[1]);
 
   assert.deepEqual(recovered, [...RECOVERED].sort(),
@@ -158,18 +226,95 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
       `${fn} is no longer instruction-identical to the bundle`);
   }
 
-  // The other three are NOT identical and are not expected to be: `noise3` and `fbm3`
-  // compile to the right instruction COUNT (183 and 51) with a different register
-  // schedule, and `PermTable::build` differs in how clang expands the 256-byte copy.
-  // Their behaviour is verified against the textbook oracle in the self-check instead,
-  // which is the stronger test for this kind of code — so the counts are pinned here
-  // so that a schedule change is visible rather than silent.
+  // `noise3` and `fbm3` compile to the right instruction COUNT (183 and 51) with a
+  // different register schedule, and `PermTable::build` differs in how clang expands
+  // the 256-byte copy. Their behaviour is verified against the textbook oracle in the
+  // self-check instead, which is the stronger test for this kind of code — so the
+  // counts are pinned here so that a schedule change is visible rather than silent.
   assert.match(out, /DIFFER\s+noisefield::noise3\s+shipped=183 mine=183/,
     "noise3 should compile to the same instruction count as the bundle");
   assert.match(out, /DIFFER\s+noisefield::fbm3\s+shipped=51 mine=51/,
     "fbm3 should compile to the same instruction count as the bundle");
 
+  // The four behavioural recoveries: the SHIPPED instruction counts are pinned, because
+  // a change in them means the bundle under test is not the bundle this lane measured.
+  assert.match(out, /DIFFER\s+noisefield::fieldAt\s+shipped=226 mine=226/,
+    "fieldAt should compile to the same instruction count as the bundle");
+  assert.match(out, /DIFFER\s+noisefield::_GLOBAL__N_1\s+shipped=163 mine=163/,
+    "curlField should compile to the same instruction count as the bundle");
+  assert.match(out, /DIFFER\s+noisefield::apply\(IhEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEf\)\s+shipped=408/,
+    "the shipped apply<unsigned char> is 408 instructions");
+  assert.match(out, /DIFFER\s+noisefield::apply\(ItEEvRKNS_4ViewIKT_EERNS1_IS2_EERKNS_6ParamsEf\)\s+shipped=412/,
+    "the shipped apply<unsigned short> is 412 instructions");
+
   const summary = out.trim().split("\n").pop();
-  assert.match(summary, /3 identical, 3 differing, 4 not implemented/,
+  assert.match(summary, /3 identical, 7 differing, 0 not implemented/,
     `the differ's tally moved: ${summary}`);
+});
+
+test("the recovered renderer is bit-identical to the shipped bundle", (t) => {
+  if (!bundlesInstalled()) { t.skip("NoiseField bundle is not installed"); return; }
+  if (!haveClang()) { t.skip("clang++ not available — differential skipped"); return; }
+
+  const dir = mkdtempSync(path.join(tmpdir(), "noisefield-diff-"));
+  try {
+    stageSources(dir);
+    const r = buildAndRunHarness(dir);
+
+    assert.equal(r.status, 0,
+      `the differential harness reported differences:\n${r.stdout}`);
+    assert.equal(r.scalars, 0,
+      `the scalar helpers disagree with the shipped bundle:\n${r.stdout}`);
+    assert.equal(r.mismatchVectors, 0,
+      `${r.mismatchVectors} render vectors disagreed with the shipped bundle:\n${r.stdout}`);
+    assert.equal(r.differingBytes, 0,
+      `${r.differingBytes} destination bytes disagreed with the shipped bundle:\n${r.stdout}`);
+
+    // Both instantiations are measured separately, and both are measured at scale:
+    // a harness that quietly only exercised one of them would still report a clean
+    // total.
+    assert.ok(r.u8Vectors >= 20000, `only ${r.u8Vectors} apply<unsigned char> vectors`);
+    assert.ok(r.u16Vectors >= 20000, `only ${r.u16Vectors} apply<unsigned short> vectors`);
+    assert.equal(r.u8Mismatches, 0, `apply<unsigned char> mismatched:\n${r.stdout}`);
+    assert.equal(r.u16Mismatches, 0, `apply<unsigned short> mismatched:\n${r.stdout}`);
+    assert.equal(r.u8Bytes, 0, `apply<unsigned char> bytes differed:\n${r.stdout}`);
+    assert.equal(r.u16Bytes, 0, `apply<unsigned short> bytes differed:\n${r.stdout}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the differential harness can fail — a perturbed constant is caught", (t) => {
+  if (!bundlesInstalled()) { t.skip("NoiseField bundle is not installed"); return; }
+  if (!haveClang()) { t.skip("clang++ not available — mutation check skipped"); return; }
+
+  // The REAL source is never touched: the perturbation is applied to a COPY, and the
+  // copy is what gets compiled. The source is read before and after to prove it.
+  const before = readFileSync(path.join(SRC, "noisefield.cpp"), "utf8");
+
+  const dir = mkdtempSync(path.join(tmpdir(), "noisefield-mut-"));
+  try {
+    stageSources(dir);
+    const cppPath = path.join(dir, "noisefield.cpp");
+    const src = readFileSync(cppPath, "utf8");
+    // One constant in `curlField`: the divisor the X component of the curl is scaled
+    // by. Changing it by one part in ten thousand must change the rendered pixels.
+    const target = "  out.x = (s1 - s2) / 0.02f;";
+    assert.equal(src.split(target).length - 1, 1,
+      "the perturbation target must appear exactly once in the source");
+    writeFileSync(cppPath, src.replace(target, "  out.x = (s1 - s2) / 0.0201f;"));
+
+    const r = buildAndRunHarness(dir);
+
+    assert.notEqual(r.status, 0,
+      "the harness passed a build with a perturbed constant — it cannot detect errors");
+    assert.ok(r.mismatchVectors > 0,
+      `the perturbed build reported no mismatching vectors:\n${r.stdout}`);
+    assert.ok(r.differingBytes > 0,
+      `the perturbed build reported no differing bytes:\n${r.stdout}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(readFileSync(path.join(SRC, "noisefield.cpp"), "utf8"), before,
+      "the real source was modified by the mutation test");
+  }
 });
