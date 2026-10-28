@@ -17,11 +17,11 @@ a function can be recovered and still differ from the binary in its instruction 
 | Effects in the fleet | 16 |
 | With a recovered source namespace | 16 |
 | Without one | 0 |
-| Named symbols recovered | 146 of 166 |
-| — instruction-identical to the shipped binary | 62 |
-| — recovered but differing in codegen | 84 |
-| Authored instructions recovered | 14591 of 23246 (62.8%) |
-| Lines of recovered source | 18532 |
+| Named symbols recovered | 151 of 166 |
+| — instruction-identical to the shipped binary | 64 |
+| — recovered but differing in codegen | 87 |
+| Authored instructions recovered | 15894 of 23246 (68.4%) |
+| Lines of recovered source | 19829 |
 
 ## Per effect
 
@@ -32,7 +32,7 @@ a class member is named after its class.
 | Effect | Namespace | Symbols | Identical | Differing | Absent | Instructions | Recovered |
 |---|---|---|---|---|---|---|---|
 | AutoFlickerFix | `autoflickerfix::` | 10/10 | 7 | 3 | 0 | 719/719 | 100.0% |
-| BeatGridRuler | `beatgrid::` | 7/12 | 2 | 5 | 5 | 203/1506 | 13.5% |
+| BeatGridRuler | `beatgrid::` | 12/12 | 4 | 8 | 0 | 1506/1506 | 100.0% |
 | BeatSnap | `beatsnap::` | 11/11 | 4 | 7 | 0 | 1264/1264 | 100.0% |
 | ChromaKeyAssist | `chromakey::` | 11/15 | 6 | 5 | 4 | 502/2721 | 18.4% |
 | ColorPulse | `colorpulse::` | 10/10 | 5 | 5 | 0 | 1032/1032 | 100.0% |
