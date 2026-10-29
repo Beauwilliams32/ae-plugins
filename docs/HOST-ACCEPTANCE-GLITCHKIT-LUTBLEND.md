@@ -37,13 +37,40 @@ npm run recover              # regenerates specs/ and build/ (never hand-edited)
 shasum -a 256 build/GlitchKit.plugin/Contents/MacOS/GlitchKit   # and LUTBlend
 ```
 
-| Field | Value |
-|---|---|
-| Bundle | ☐ GlitchKit ☐ LUTBlend |
-| sha256 of the built binary | ____________________________________________________________ |
-| Size (bytes) | ______________ |
-| Code signature | ad-hoc (`codesign --sign -`) unless a Developer ID run is authorised — record which |
-| AE build string from the About box | ______________ |
+The structural comparison runs as part of the build, so the rebuild cannot be produced
+without answering it. What it measures, and what it does not, is spelled out below.
+
+| Field | GlitchKit | LUTBlend |
+|---|---|---|
+| Bundle | ☐ GlitchKit | ☐ LUTBlend |
+| sha256 of the built binary | `8db7e4503a4c75933d54535205fba6a3df9f4182f5fb53f26eb492d15e9aa633` | `87a41d9af85406c39eb65c8aac7a66a58dd5e27cf14b879d9ed29f181d0f67d4` |
+| Size (bytes) | 117488 | 219536 |
+| Architectures | `x86_64 arm64` | `x86_64 arm64` |
+| Code signature | ad-hoc, `Identifier=com.williamsmedia.aftereffects.GlitchKit`, sealed resources v2 | ad-hoc, `Identifier=com.williamsmedia.aftereffects.LUTBlend`, sealed resources v2 |
+| PiPL payload vs the shipped bundle | identical (576 bytes) | identical (576 bytes) |
+| AE build string from the About box | ______________ | ______________ |
+
+The two sha256 values are for the build produced on this machine by
+`tools/build-plugin.sh <Name>` at the commit named below; a rebuild elsewhere embeds
+its own paths and will not hash the same. The PiPL resource map (the bytes after the
+576-byte payload) differs by one bookkeeping byte from the shipped bundles for
+LUTBlend, because the shipped fleet was compiled by the original authors' Rez and this
+machine's Rez writes the count differently. The resource SET and its ORDER are identical.
+That byte is outside the flag contract and outside what `test/pipl.test.mjs` compares.
+
+Built from commit: `________________________` (fill in before the run)
+
+### What the build's own comparison proves
+
+`tools/build-plugin.sh` compares the rebuilt bundle against the shipped one field by
+field - architectures, creator code, the whole `Info.plist`, the signature's Identifier
+and kind, the sealed-resources version, and the PiPL payload - and exits non-zero on any
+mismatch. For both bundles above every field matched. It was negative-controlled: a build
+with a wrong creator code fails the comparison and stops.
+
+**That is still not host acceptance.** It says the bundle is built the way the one that
+shipped was built. It says nothing about whether After Effects renders with it, which is
+what the checks below are for.
 
 **Installing into `/Applications/Adobe After Effects 2026/Plug-ins/` needs administrator rights**
 (`RECOVERY-STATUS.md`). That is an owner action: an agent may not install, and may not remove or

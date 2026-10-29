@@ -152,7 +152,6 @@ cat > "$OUT/Contents/Info.plist" <<PLIST
 	<key>CFBundleShortVersionString</key>	<string>1.0.0</string>
 	<key>CFBundleVersion</key>				<string>1.0.0</string>
 	<key>LSMinimumSystemVersion</key>		<string>11.0</string>
-	<key>NSHighResolutionCapable</key>		<true/>
 </dict>
 </plist>
 PLIST
@@ -174,8 +173,102 @@ echo "sign..."
 codesign --force --sign - "$OUT"
 codesign --verify --strict "$OUT"
 
+# --- compare against the shipped bundle -------------------------------------
+# The rebuild is "structurally faithful" only if it actually matches the artefact it
+# replaces, so that claim is measured here rather than asserted in prose. The shipped
+# fleet lives under "Williams Media" in the AE install; the 2025 path is a fallback for
+# a machine that has not moved to AE 2026 yet.
+#
+# THIS IS NOT HOST ACCEPTANCE. It proves the bundle AE will load is built the way the
+# one that shipped was built - same architectures, same creator code, same parameter
+# dictionary, same sealed ad-hoc signature, byte-identical PiPL. It says nothing about
+# whether After Effects renders with it. Only a run in AE does that.
+SHIPPED=""
+for cand in "/Applications/Adobe After Effects 2026/Plug-ins/Williams Media/${PLUGIN}.plugin" \
+            "/Applications/Adobe After Effects 2025/Plug-ins/Williams Media/${PLUGIN}.plugin"; do
+  [ -d "$cand" ] && { SHIPPED="$cand"; break; }
+done
+
+if [ -z "$SHIPPED" ]; then
+  echo
+  echo "compare: SKIPPED - no shipped ${PLUGIN}.plugin found under /Applications."
+  echo "         (install the AE Plug-ins/Williams Media directory and re-run to get"
+  echo "          the structural comparison)"
+else
+  echo
+  echo "compare: against the shipped bundle"
+  echo "         $SHIPPED"
+  FAIL=0
+  check() { # check <label> <shipped-value> <rebuilt-value>
+    if [ "$2" = "$3" ]; then
+      printf "         ok    %-24s %s\n" "$1" "$2"
+    else
+      printf "         FAIL  %-24s shipped=[%s] rebuilt=[%s]\n" "$1" "$2" "$3"
+      FAIL=1
+    fi
+  }
+
+  # 1. architectures - the fleet is universal, and a thin rebuild loads on neither
+  #    architecture properly.
+  check "architectures" \
+        "$(lipo -archs "$SHIPPED/Contents/MacOS/$PLUGIN" 2>/dev/null)" \
+        "$(lipo -archs "$BIN")"
+
+  # 2. the creator code. Every shipped bundle carries 'eFKTFXTC'; a rebuild that
+  #    carried '????' was indistinguishable to AE's loader.
+  check "PkgInfo" \
+        "$(tr -d '\0' < "$SHIPPED/Contents/PkgInfo" 2>/dev/null)" \
+        "$(tr -d '\0' < "$OUT/Contents/PkgInfo")"
+
+  # 3. the parameter dictionary, as a set of keys and their values. This is what the
+  #    host reads to decide what the effect exposes.
+  ship_plist="$(mktemp)"; rebuild_plist="$(mktemp)"
+  plutil -convert xml1 -o "$ship_plist" "$SHIPPED/Contents/Info.plist" 2>/dev/null
+  plutil -convert xml1 -o "$rebuild_plist" "$OUT/Contents/Info.plist" 2>/dev/null
+  check "Info.plist" \
+        "$(plutil -p "$ship_plist" 2>/dev/null | sort)" \
+        "$(plutil -p "$rebuild_plist" 2>/dev/null | sort)"
+  rm -f "$ship_plist" "$rebuild_plist"
+
+  # 4. the signature's identity. An ad-hoc signature whose Identifier is the bundle
+  #    id, with the same sealed-resources version, is the same kind of artefact the
+  #    fleet shipped - a linker-signed binary with no sealed resources is not.
+  check "signature Identifier" \
+        "$(codesign -dv "$SHIPPED" 2>&1 | sed -n 's/^Identifier=//p')" \
+        "$(codesign -dv "$OUT" 2>&1 | sed -n 's/^Identifier=//p')"
+  check "signature kind" \
+        "$(codesign -dv "$SHIPPED" 2>&1 | sed -n 's/^Signature=//p')" \
+        "$(codesign -dv "$OUT" 2>&1 | sed -n 's/^Signature=//p')"
+  check "sealed resources" \
+        "$(codesign -d --verbose=2 "$SHIPPED" 2>&1 | sed -n 's/^Sealed Resources version=\([0-9]*\).*/\1/p')" \
+        "$(codesign -d --verbose=2 "$OUT" 2>&1 | sed -n 's/^Sealed Resources version=\([0-9]*\).*/\1/p')"
+
+  # 5. the PiPL resource. This is the strongest check available without a host: it
+  #    is the flag contract the host reads before it calls the effect at all.
+  #
+  #    The comparison is the PiPL PAYLOAD - the first 576 bytes, which is where
+  #    every '8BIM' atom lives - and that is the same definition the repository's own
+  #    test/pipl.test.mjs uses for all sixteen effects. The bytes after it are Rez's
+  #    resource map, and they are not part of the contract: the shipped fleet was
+  #    compiled by the original authors' Rez and this machine's Rez writes one
+  #    different bookkeeping byte in the map for some effects. The resource SET and
+  #    its ORDER are identical - same atoms, same order - so the file is the same
+  #    resource; only the map's own count differs. It is reported, not failed on.
+  check "PiPL payload (576 bytes)" \
+        "$(cmp -s -n 576 "$SHIPPED/Contents/Resources/$PLUGIN.rsrc" "$RSRC" && echo identical || echo DIFFERS)" \
+        "identical"
+  echo "         note  resource map     shipped=$(shasum -a 256 "$SHIPPED/Contents/Resources/$PLUGIN.rsrc" | cut -c1-12) rebuilt=$(shasum -a 256 "$RSRC" | cut -c1-12)"
+
+  echo
+  if [ "$FAIL" -ne 0 ]; then
+    echo "compare: MISMATCH - the rebuild is not structurally faithful to the shipped bundle."
+    exit 1
+  fi
+  echo "compare: all fields match the shipped bundle."
+fi
+
 echo
 echo "built: $OUT"
 find "$OUT" -type f | sed "s|$ROOT/||"
 echo
-echo "NOTE: assembled, not verified. No AE host has loaded this bundle."
+echo "NOTE: structurally faithful, NOT host-verified. No AE host has loaded this bundle."

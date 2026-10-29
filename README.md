@@ -189,6 +189,17 @@ rebuild carried the creator code `????` against a shipped `FXTC`, its binary was
 seals its `Info.plist` and `Resources`. All three now match, and a regression fails
 the build test.
 
+The comparison is part of the BUILD, not a separate report: `build-plugin.sh` exits
+non-zero when a field does not match, so a regression stops the build and fails
+`test/build.test.mjs` rather than being noted in a log. The rebuilt `Info.plist` now
+matches the shipped one key for key — the one extra key it used to carry,
+`NSHighResolutionCapable`, is in no shipped bundle and was removed to make the
+dictionaries identical. The PiPL comparison is the **payload**, the first 576 bytes,
+which is where every `8BIM` atom lives and is the flag contract the host reads; the
+resource map after it is Rez's own bookkeeping, is written differently by this
+machine's Rez than by the original authors', and is not part of the contract. Both
+bundles match on every field.
+
 **Their render engines are also executed**, not merely compiled. `GlitchRender.cpp` and
 `LutRender.cpp` are split out of the host integration so `test/glitchrender.test.mjs`
 and `test/lutrender.test.mjs` can drive them on synthetic frames — checking determinism,
