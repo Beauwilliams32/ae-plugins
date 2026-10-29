@@ -183,6 +183,21 @@ float phaseSawtooth(double bpm, double startTime, Subdivision subdivision, doubl
 //       ; shift = (p - n) / 2 / curvature, clamped to [-1, 1]
 //
 // and the phase is wrapped into [0, period) with `fmod`.
+//
+// THE CANDIDATE STEP. The listing builds it from the double literal
+// 0x3f60000000000000, which is 2^-9 = 1/512, NOT 0.5 (0.5 is 0x3fe0000000000000):
+//
+//   mov  x8, #0x3f60000000000000 / fmov d0, x8 / fmul d0, d8, d0
+//       ; d0 = period / 512
+//
+// so the 512 candidates span ONE beat period, sit 1/512 of a period apart, and the
+// curvature refinement below is measured in the same period/512 units.
+//
+// The first transcription read the step as half a period, which compiled and passed
+// the self-check but was behaviourally wrong. It was caught by a numerical
+// differential against the installed bundle, which returns 0.1500651091 for an onset
+// at frame 10 of a 100-frame envelope at 120 bpm where the half-period grid returns
+// 0. See RECOVERY-NOTES.md.
 // ---------------------------------------------------------------------------
 float estimatePhaseSeconds(const OnsetEnvelope& envelope, float bpm) {
   const std::vector<float>& values = envelope.values;
@@ -208,8 +223,14 @@ float estimatePhaseSeconds(const OnsetEnvelope& envelope, float bpm) {
   double bestTime = 0.0;
   size_t bestIndex = 0;
 
+  // The candidate grid. The listing's constant is 0x3f60000000000000, which is
+  // 2^-9 = 1/512, NOT 0.5: the 512 candidates therefore span ONE beat period,
+  // not 256 of them, and the refinement below is measured in the same steps.
+  constexpr double kPhaseSteps = 512.0;
+  constexpr double kPhaseStep = 1.0 / kPhaseSteps;
+
   for (size_t i = 0; i < 512; ++i) {
-    const double t0 = static_cast<double>(i) * period * 0.5;
+    const double t0 = static_cast<double>(i) * period * kPhaseStep;
     double score = 0.0;
     double t = t0;
     while (t < duration) {
@@ -251,7 +272,8 @@ float estimatePhaseSeconds(const OnsetEnvelope& envelope, float bpm) {
     if (shift > 1.0) shift = 1.0;
   }
 
-  double phase = std::fmod(bestTime + shift * (0.5 * period), period);
+  // The refinement is measured in the same 1/512-period steps as the grid.
+  double phase = std::fmod(bestTime + shift * (period * kPhaseStep), period);
   if (phase < 0.0) phase += period;
   return static_cast<float>(phase);
 }
@@ -568,7 +590,11 @@ TempoAnalysis estimateTempoBpm(const OnsetEnvelope& envelope, float minBpm, floa
 
   // The autocorrelation, one covariance per lag.
   std::vector<float> correlation(static_cast<size_t>(maxLag - minLag + 3), 0.0f);
-  for (int lag = minLag - 1; lag <= maxLag; ++lag) {
+  // The shipped loop fills BOTH neighbours of the searched range: lag minLag - 1
+  // through maxLag + 1. The `cmp x9, x26` sits after the covariance store and the
+  // increment, so maxLag + 1 is written before the branch exits. That final value is
+  // load-bearing for deciding whether maxLag itself is a peak.
+  for (int lag = minLag - 1; lag <= maxLag + 1; ++lag) {
     const int samples = count - lag;
     const size_t index = static_cast<size_t>(lag - (minLag - 1));
     if (samples < 1) {
@@ -610,7 +636,12 @@ TempoAnalysis estimateTempoBpm(const OnsetEnvelope& envelope, float minBpm, floa
     index = std::min(index, maxLag);
     index = std::max(index, minLag);
     index -= (minLag - 1);
-    const float confidence = std::min(correlation[static_cast<size_t>(index)] / variance, 1.0f);
+    // The listing clamps the confidence into [0, 1]: the upper clamp is the
+    // `fcsel s1, s1, s0, gt` against 1.0 and the lower clamp is the `fcsel` that
+    // follows the `fcmp s0, #0.0` -- the `movi.2d v0, #0` in between zeroes the
+    // register the lower clamp selects from, so a negative ratio becomes zero.
+    const float confidence = std::clamp(correlation[static_cast<size_t>(index)] / variance,
+                                        0.0f, 1.0f);
     const float phase = estimatePhaseSeconds(envelope, minBpm);
     return TempoAnalysis{minBpm, phase, confidence};
   }
@@ -621,36 +652,49 @@ TempoAnalysis estimateTempoBpm(const OnsetEnvelope& envelope, float minBpm, floa
     float value;
   };
   std::vector<Peak> peaks;
+
+  // The listing gives up on the search outright when the envelope is too short to
+  // hold the shortest lag twice over: `cmp w8, w24 / b.ge` with w8 = count - minLag
+  // and w24 = minLag, and the zeros it returns on the other branch.
+  if (count - minLag < minLag) return result;
+
   const long long roundedMaxLag = static_cast<long long>(std::round(maxLagFrames));
   const long long roundedMinLag = static_cast<long long>(std::round(minLagFrames));
-  for (int lag = minLag; lag < maxLag; ++lag) {
-    // The listing stops the scan once the lag is too long for the data left.
-    const long long k = lag - minLag;
-    if (!(static_cast<long long>(count) - minLag - 1 - k > lag)) break;
-
+  // The peak at maxLag is included: the listing tests `cmp x24, x26 / b.ge` at the
+  // BOTTOM of the loop, after it has tested and optionally stored the current peak.
+  for (int lag = minLag; lag <= maxLag; ++lag) {
     const int index = lag - minLag + 1;
     const float mid = correlation[static_cast<size_t>(index)];
     const float left = correlation[static_cast<size_t>(index - 1)];
     const float right = correlation[static_cast<size_t>(index + 1)];
-    if (!(mid > 0.0f && mid > left && mid >= right)) continue;
 
-    const double leftD = static_cast<double>(left);
-    const double midD = static_cast<double>(mid);
-    const double rightD = static_cast<double>(right);
-    const double curvature = (leftD - 2.0 * midD) + rightD;
-    double shift = 0.0;
-    if (std::fabs(curvature) >= kTempoCurvatureEpsilon) {
-      shift = ((leftD - rightD) * 0.5) / curvature;
-      shift = std::clamp(shift, -1.0, 1.0);
+    if (mid > 0.0f && mid > left && mid >= right) {
+      const double leftD = static_cast<double>(left);
+      const double midD = static_cast<double>(mid);
+      const double rightD = static_cast<double>(right);
+      const double curvature = (leftD - 2.0 * midD) + rightD;
+      double shift = 0.0;
+      if (std::fabs(curvature) >= kTempoCurvatureEpsilon) {
+        shift = ((leftD - rightD) * 0.5) / curvature;
+        shift = std::clamp(shift, -1.0, 1.0);
+      }
+      double position = shift + static_cast<double>(lag);
+      position = std::max(position, 1.0);
+
+      // The lag itself has to sit inside the ROUNDED lag range -- `cmp x11, x24`
+      // against the rounded maximum and the conditional `ccmp x10, x24` against the
+      // rounded minimum, which together accept the peak only when
+      // roundedMaxLag >= lag AND roundedMinLag <= lag.
+      const bool lagOk = (roundedMaxLag >= lag) && (roundedMinLag <= lag);
+      // ... or the interpolated position has to sit inside the lagged range.
+      const bool inRange = (position >= minLagFrames - margin) && (position <= maxLagFrames + margin2);
+      if (lagOk || inRange) peaks.push_back(Peak{position, mid});
     }
-    double position = shift + static_cast<double>(lag);
-    position = std::max(position, 1.0);
 
-    const bool inRange = (position >= minLagFrames - margin) && (position <= maxLagFrames + margin2);
-    const bool lagOk = (roundedMaxLag < lag) || (roundedMinLag <= lag);
-    if (!(lagOk || inRange)) continue;
-
-    peaks.push_back(Peak{position, mid});
+    // The listing stops the scan once the lag is too long for the data left. The
+    // test sits at the BOTTOM of the loop -- `cmp x9, x24 / b.gt` on the count
+    // that is still left -- so the lag that fails it is still scanned.
+    if (!(static_cast<long long>(count) - 1 - lag > lag)) break;
   }
 
   if (peaks.empty()) return result;
@@ -665,13 +709,15 @@ TempoAnalysis estimateTempoBpm(const OnsetEnvelope& envelope, float minBpm, floa
   // starts from only matters when every peak is negative.
   //
   // The best peak has to be worth at least a hundredth of the variance or the search
-  // gives up; the listing's `fccmp` only makes that test when the variance is
-  // POSITIVE, so a variance of zero carries on.
+  // gives up; the listing's `fccmp s1, s0, #0x8, gt` only makes that comparison when
+  // the variance is POSITIVE, and the `#0x8` it leaves behind makes the `b.mi` after
+  // it branch on a NEGATIVE variance too -- so a variance of zero gives up as well.
   float bestPeakValue = 0.0f;
   for (const Peak& peak : peaks) {
     if (peak.value > bestPeakValue) bestPeakValue = peak.value;
   }
-  if (variance > 0.0f && bestPeakValue < 0.01f * variance) return result;
+  if (!(variance > 0.0f)) return result;
+  if (bestPeakValue < 0.01f * variance) return result;
 
   // The peak to pick: the first one whose PREDECESSOR clears the threshold, and then
   // the strongest of that one and the ones after it, stopping as soon as a peak sits

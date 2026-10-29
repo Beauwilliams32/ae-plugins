@@ -19,8 +19,8 @@ All twelve `beatgrid::` symbols are recovered; four are instruction-identical.
 | `phaseSawtooth` | 31 | Recovered — 31 here |
 | `OnsetEnvelope::frameTimeSeconds` | 13 | Recovered — **identical** (see below) |
 | `computeOnsetEnvelope` | 436 | Recovered — **[partial]**, 434 here |
-| `estimateTempoBpm` | 578 | Recovered — **[partial]**, 503 here |
-| `estimatePhaseSeconds` | 138 | Recovered — **[partial]**, 135 here |
+| `estimateTempoBpm` | 578 | Recovered — **[partial]**, 508 here |
+| `estimatePhaseSeconds` | 138 | Recovered — **[partial]**, 137 here |
 | `generateBeatGrid` | 94 | Recovered — **[partial]**, 94 here |
 | `analyzeBeatGrid` | 57 | Recovered — **identical** |
 
@@ -103,11 +103,84 @@ The phase of the beat, in seconds, within one beat period. Read in full from
 
 It is a coarse-to-fine search, and both halves of that matter:
 
-* 512 candidates, **half a beat apart** (`t0 = i * period * 0.5`), each scored by
-  summing the envelope sampled every `period` seconds;
+* 512 candidates, **1/512 of a beat period apart** (`t0 = i * period / 512`), each
+  scored by summing the envelope sampled every `period` seconds;
 * the winner is then refined against its two neighbours — `shift = (p - n) / 2 /
-  (p - 2c + n)`, clamped to [-1, 1] — which buys a **sub-half-beat** resolution, and
+  (p - 2c + n)`, clamped to [-1, 1] — which buys a **sub-step** resolution, and
   the result is wrapped into `[0, period)` with `fmod`.
+
+### THE GRID RESOLUTION: 1/512 of a period, not half a period
+
+**This section corrects the recovery.** The first transcription read the candidate
+step as half a period (`t0 = i * period * 0.5`) and the refinement scale as `0.5 *
+period`. That was wrong, and it was wrong in a way the instruction counts could not
+see: the code compiled, the self-check passed, and the function still returned a
+plausible phase.
+
+The listing settles it. The step is built from the double literal
+`0x3f60000000000000`, and that is not 0.5 — 0.5 is `0x3fe0000000000000`.
+`0x3f60000000000000` is `2^-9`, i.e. **1/512**. The listing loads it with
+
+```
+mov  x8, #0x3f60000000000000
+fmov d0, x8
+fmul d0, d8, d0        ; d8 = period, so d0 = period / 512
+```
+
+so the 512 candidates span **one** beat period, not 256 of them, and the curvature
+refinement is measured in the same `period / 512` units.
+
+### How the error was found: a numerical differential against the shipped bundle
+
+Instruction counts and transcription prose could not catch this, so the recovered
+namespace was run **side by side with the installed plugin**. The bundle is opened
+with `dlopen` and the internal symbols are called by address — `estimatePhaseSeconds`
+at `0x1d00`, `estimateTempoBpm` at `0x13f8`, `computeOnsetEnvelope` at `0x0a78`,
+`analyzeBeatGrid` at `0x1f28`, `generateBeatGrid` at `0x202c` — so the shipped code
+is the oracle and the recovered code is the candidate.
+
+Two things had to be got right for that harness:
+
+* **the ABI.** `computeOnsetEnvelope` returns a 0x30-byte struct and
+  `generateBeatGrid` a 24-byte `std::vector`, both larger than 16 bytes, so on
+  AArch64 they come back through a hidden return pointer in `x8`. Declaring them
+  with out-parameters instead made the harness die with a bus error; declaring them
+  with their real C++ return types makes the compiler emit the `x8` store itself.
+* **the measurement.** The shipped envelope's `end - begin` is already a count of
+  floats and must NOT be divided by `sizeof(float)` again; the recovered vector's
+  is already an element count. Dividing the shipped one gave a spurious 4× size
+  difference that looked like a real envelope mismatch and was not.
+
+With those fixed, the differential reported **`estimatePhaseSeconds` mismatching on
+all 200 cases** while the envelope producer, the grid writer and the top-level
+entry point all matched. A direct probe of the shipped function then established
+the step: with the candidate grid at `i * period * 0.5` the shipped bundle returns
+`0.1500651091` for an onset at frame 10 of a 100-frame envelope at 120 bpm, and the
+old half-period grid returns `0.0` for the same input — the half-period grid cannot
+represent 0.10 s at all, so every candidate scores zero.
+
+The fix was two expressions: `t0 = i * period / 512` and `shift * (period / 512)`
+in place of `i * period * 0.5` and `shift * (0.5 * period)`.
+
+### The result
+
+After the fix, a randomised differential over **400 trials** — random frame counts,
+sample rates, window and hop sizes, signal shapes (noise, click trains, sine,
+sparse impulses), random bpm ranges including degenerate ones, `maxBpm < minBpm`,
+zero bpm bounds and varying `thresholdScale` — reports **zero mismatches**, and
+every worst-case delta is exactly 0:
+
+```
+  computeOnsetEnvelope : 400 cases, 0 mismatching
+  estimatePhaseSeconds : worst delta 0
+  estimateTempoBpm     : worst bpm 0, phase 0, conf 0
+  analyzeBeatGrid      : worst phase 0
+  generateBeatGrid     : 0 mismatching
+TOTAL MISMATCHES: 0
+```
+
+The harness was checked for teeth by reverting the grid to half-period steps: the
+same run then reports 13 mismatches, so it does detect this class of error.
 
 Three details the listing pins and a paraphrase would lose:
 
@@ -120,10 +193,12 @@ Three details the listing pins and a paraphrase would lose:
   the frame position truncated toward zero (`fcvtms`);
 * the neighbour indices **wrap**: `511` and `0` are the neighbours of `0`.
 
-**Why it is `[partial]` and not `[exact]`: 135 instructions here against the bundle's
-138.** The three are the empty-and-tempo guards: this build folds the two early exits
+**Why it is `[partial]` and not `[exact]`: 137 instructions here against the bundle's
+138.** The one is the empty-and-tempo guards: this build folds the two early exits
 into a single `cmp`/`ccmp` pair where the shipped code tests them separately. The
-BEHAVIOUR is the same — the self-check pins the phase of a known onset to 1e-5 s.
+BEHAVIOUR is the same — and now it is the same to the last bit, measured against the
+bundle itself rather than argued from the listing. The self-check pins the phase of
+a known onset to 1e-6 s against the bundle's own answer.
 
 ## `generateBeatGrid` (94 instructions) — [partial]
 
@@ -239,7 +314,7 @@ worth recording because they are the kind of thing a paraphrase loses:
 
 ## `estimateTempoBpm` (578 instructions) — [partial]
 
-The tempo search. Read in full from `/tmp/ae/beatgrid.asm` lines 826–1404. **503
+The tempo search. Read in full from `/tmp/ae/beatgrid.asm` lines 826–1404. **508
 instructions here against the bundle's 578** — see the closing note on why.
 
 ### The one bug this recovery nearly shipped
@@ -281,7 +356,9 @@ position.
   products, the two series and the count, and forms `meanXY - meanX * meanY`
   (`fmadd d0, d1, d0, d2` with `d1` already negated). The window **shrinks** with the
   lag: at lag `L` the two series are `signal[0 .. count-L-1]` and `signal[L .. count-1]`,
-  so the two means are taken over different numbers of samples.
+  so the two means are taken over different numbers of samples. The correlation loop
+  fills `minLag - 1` through **`maxLag + 1`**, because the peak search needs both
+  neighbours at the range edges.
 * **The peak test** is `mid > 0 && mid > left && mid >= right`, chained through three
   `fccmp`s so that a mid of exactly zero fails the `> 0` test. The sub-lag
   interpolation is `shift = (left - right) * 0.5 / (left - 2*mid + right)`, clamped to
@@ -290,7 +367,10 @@ position.
   at one frame.
 * **A peak is accepted** when the lag itself is inside the rounded lag range **or** when
   the interpolated position is inside the lagged range — the listing tests the two and
-  keeps the peak if **either** holds.
+  keeps the peak if **either** holds. The search includes **`maxLag` itself**: its loop
+  condition is at the bottom, after the current lag has been tested. This boundary was
+  established by the shipped differential: two of 400 tempo cases had their only peak
+  at `maxLag`; excluding it returned zero where the bundle returned the lower BPM bound.
 * **The degenerate range** `minBpm == maxBpm` has its own branch (`fcmp s8, s11` /
   `b.ne` at 0x1774): the correlation is indexed directly at the clamped rounded lag,
   the bpm is the requested one, the phase comes from `estimatePhaseSeconds`, and the
@@ -299,10 +379,10 @@ position.
   the phase from `estimatePhaseSeconds(envelope, bpm)`, and the confidence is
   `min(peakValue / variance, 1)`.
 
-### Why it is `[partial]` and not `[exact]`: 503 instructions here against the bundle's
+### Why it is `[partial]` and not `[exact]`: 508 instructions here against the bundle's
 ### 578.
 
-The seventy-five missing instructions are not behavioural. Two source-level choices
+The seventy missing instructions are not behavioural. Two source-level choices
 account for them:
 
 * the shipped build computes the signal's **variance twice** — once for the degenerate

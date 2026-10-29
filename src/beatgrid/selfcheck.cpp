@@ -185,11 +185,46 @@ int main() {
     env.values.assign(100, 0.0f);
     env.values[20] = 1.0f;
 
-    // At 120 bpm the beat is half a second and the candidates are half a beat apart, so
-    // the onset at 0.25 s is exactly one of them.
+    // At 120 bpm the beat is half a second. The candidate grid is 1/512 of a period
+    // apart, so the onset at 0.25 s is candidate 256 of the period — exactly one of
+    // them.
     const float phase = beatgrid::estimatePhaseSeconds(env, 120.0f);
     checkNear(phase, 0.25, 1e-5, "the onset at 0.25 s is the phase at 120 bpm");
     check(phase >= 0.0f && phase < 0.5f, "the phase is inside one beat period");
+
+    // THE GRID RESOLUTION. The listing's constant is 0x3f60000000000000, which is
+    // 2^-9 = 1/512, so the 512 candidates span ONE beat period and sit 1/512 of a
+    // period apart — NOT half a period apart. This is the assertion that pins it:
+    //
+    // An onset at frame 10 is at t = 0.10 s, which is NOT a multiple of a half-period
+    // (0.25 s), so a half-period grid cannot land on it and scores the whole candidate
+    // set at zero. The 1/512 grid can: 0.10 s is candidate 102 or 103 of the period.
+    //
+    // The value below is the SHIPPED BUNDLE's own answer, measured by calling
+    // `estimatePhaseSeconds` in the installed BeatGridRuler plugin at its address
+    // 0x1d00 — not a snapshot of this implementation. The old half-period grid
+    // returned 0.0 for this input, so this assertion fails if the resolution is
+    // wrong.
+    beatgrid::OnsetEnvelope fine{};
+    fine.sampleRate = 1000.0;
+    fine.windowSize = 100;
+    fine.hopSize = 10;
+    fine.framesPerSecond = 100.0;
+    fine.values.assign(100, 0.0f);
+    fine.values[10] = 1.0f;
+    const float finePhase = beatgrid::estimatePhaseSeconds(fine, 120.0f);
+    checkNear(finePhase, 0.1500651091, 1e-6,
+              "the 1/512-phase grid resolves an onset a half-period grid cannot reach");
+    check(finePhase > 0.05f && finePhase < 0.25f,
+          "and it lands on the onset, not on a grid boundary");
+
+    // The grid resolution is what makes the phase FINER than a half beat: two onsets
+    // a beat apart but off the half-period boundary still agree on one phase.
+    beatgrid::OnsetEnvelope pair = fine;
+    pair.values[60] = 1.0f;   // a second onset, 0.60 s in — one beat later
+    const float pairPhase = beatgrid::estimatePhaseSeconds(pair, 120.0f);
+    checkNear(pairPhase, 0.1500651091, 1e-6,
+              "two onsets a beat apart resolve to the same phase");
 
     // The guards.
     beatgrid::OnsetEnvelope empty{};
@@ -369,6 +404,34 @@ int main() {
     flat.values.assign(500, 0.25f);
     const auto level = beatgrid::estimateTempoBpm(flat, 60.0f, 180.0f, 0.85f);
     check(level.bpm == 0.0f, "a flat envelope finds no beat");
+
+    // THE UPPER LAG BOUND. This 126.882 bpm pulse train is searched only over
+    // [85.1544, 119.896] bpm, so the shipped estimator's only accepted covariance
+    // peak is at maxLag itself. The bundle returns the clamped lower BPM bound. A
+    // peak loop written `lag < maxLag` instead of the shipped bottom-tested
+    // `lag <= maxLag` misses it and returns all zeroes.
+    beatgrid::OnsetEnvelope boundary{};
+    boundary.sampleRate = 44100.0;
+    boundary.windowSize = 1024;
+    boundary.hopSize = 441;
+    boundary.framesPerSecond = 100.0;
+    boundary.values.resize(283, 0.0f);
+    const double targetPeriod = 60.0 / 126.882 * boundary.framesPerSecond;
+    for (size_t i = 0; i < boundary.values.size(); ++i) {
+      const double phase = std::fmod(static_cast<double>(i), targetPeriod);
+      float value = phase < 1.0 ? 1.0f : (phase < 2.0 ? 0.72f : 0.0f);
+      const double offbeat = std::fmod(static_cast<double>(i) - targetPeriod * 0.5,
+                                      targetPeriod);
+      if (offbeat >= 0.0 && offbeat < 1.0) value = std::max(value, 0.44f);
+      boundary.values[i] = value;
+    }
+    const auto edgePeak = beatgrid::estimateTempoBpm(boundary, 85.1544f, 119.896f, 0.85f);
+    checkNear(edgePeak.bpm, 85.1544037, 1e-6,
+              "a covariance peak at maxLag is included and clamps to the lower BPM bound");
+    checkNear(edgePeak.phaseSeconds, 0.502104342, 1e-6,
+              "the maxLag boundary peak carries the shipped phase");
+    checkNear(edgePeak.confidence, 0.221498251, 1e-6,
+              "the maxLag boundary peak carries the shipped confidence");
   }
 
   std::printf("beatgrid::analyzeBeatGrid\n");

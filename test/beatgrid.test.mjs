@@ -143,8 +143,8 @@ test("the recovered and outstanding sets are exactly the ones this file lists", 
   // The three BIG ones are behavioural recoveries: they are close, but not the same
   // instruction stream, and the counts are pinned so a regression is visible.
   for (const [fn, shipped, mine] of [["computeOnsetEnvelope", 436, 434],
-                                     ["estimateTempoBpm", 578, 503],
-                                     ["estimatePhaseSeconds", 138, 135]]) {
+                                     ["estimateTempoBpm", 578, 508],
+                                     ["estimatePhaseSeconds", 138, 137]]) {
     assert.match(out, new RegExp(`DIFFER\\s+beatgrid::${fn}\\s+shipped=${shipped} mine=${mine}`),
       `${fn} should compile to ${mine} instructions against the bundle's ${shipped}`);
   }

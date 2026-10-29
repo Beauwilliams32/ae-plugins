@@ -9,7 +9,7 @@
 // (57 instructions, 2026-10-28), which is instruction-identical to the bundle. All twelve are
 // here; four compile instruction-identical (`clampf`, `isPowerOfTwo`,
 // `OnsetEnvelope::frameTimeSeconds` and `analyzeBeatGrid`) and the other eight are one to
-// seventy-five instructions off, so treat the BEHAVIOUR (pinned by 95 self-check assertions) as the recovered
+// seventy instructions off, so treat the BEHAVIOUR (pinned by 101 self-check assertions) as the recovered
 // fact rather than the instruction stream.
 //
 //   recovered: clampf, isPowerOfTwo, downmixToMono (shared),
@@ -204,11 +204,17 @@ double phaseInLayerTime(double bpm, double a, double b, double c);
  *     period  = 60 / bpm
  *     half    = (sampleRate > 0) ? (windowSize / 2) / sampleRate : 0
  *
- * It scores 512 candidate offsets, half a beat apart, and each candidate is the sum of
- * the envelope sampled every `period` seconds — linearly interpolated between frames,
- * and offset by the half-window so the score reads the window CENTRE rather than its
- * start. The winner is then refined by the curvature of its two neighbours, which
- * recovers a sub-half-beat offset, and the result is wrapped into [0, period).
+ * It scores 512 candidate offsets, 1/512 of a beat period apart, and each candidate
+ * is the sum of the envelope sampled every `period` seconds — linearly interpolated
+ * between frames, and offset by the half-window so the score reads the window CENTRE
+ * rather than its start. The winner is then refined by the curvature of its two
+ * neighbours, which recovers a sub-step offset, and the result is wrapped into
+ * [0, period).
+ *
+ * The step is 1/512, NOT half a period: the listing builds it from the double
+ * literal 0x3f60000000000000, which is 2^-9. The first transcription read it as
+ * 0.5 and was wrong; the differential against the shipped bundle caught it. See
+ * RECOVERY-NOTES.md.
  */
 float estimatePhaseSeconds(const OnsetEnvelope& envelope, float bpm);
 
