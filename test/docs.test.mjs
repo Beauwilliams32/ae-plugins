@@ -171,6 +171,32 @@ test("the README's headline figures match the generated coverage table", () => {
     + `(${instrRecovered} of ${instrTotal}, ${instrPct}%)`);
 });
 
+test("the repo guide's namespace counts match the coverage table", () => {
+  // AGENTS.md is the file every agent reads before touching this repo, and it used to
+  // say "16 effects, 15 with a recovered source namespace, 1 (MotionCurveX) with none"
+  // while the table said all sixteen namespaces were present. A count in prose that
+  // nothing checks is a count that goes stale, so it is checked against the table
+  // rather than trusted - and the check is on the NUMBER, so it does not depend on
+  // how the sentence is worded.
+  const table = read("RECOVERY-STATUS.md");
+  const effects = table.match(/\| Effects in the fleet \| (\d+) \|/);
+  assert.ok(effects, "RECOVERY-STATUS.md has no 'Effects in the fleet' row");
+  const total = Number(effects[1]);
+
+  const guide = read("AGENTS.md");
+  const claimedEffects = guide.match(/(\d+) effects,/);
+  assert.ok(claimedEffects, "AGENTS.md no longer states how many effects there are");
+  assert.equal(Number(claimedEffects[1]), total,
+    `AGENTS.md says ${claimedEffects[1]} effects; the table says ${total}`);
+
+  const claimedNamespaces = guide.match(/all (\d+) with a recovered source namespace/);
+  assert.ok(claimedNamespaces,
+    "AGENTS.md no longer says how many effects have a recovered namespace");
+  assert.equal(Number(claimedNamespaces[1]), total,
+    `AGENTS.md says ${claimedNamespaces[1]} effects have a recovered namespace; ` +
+    `the table says all ${total} of them do`);
+});
+
 test("the README does not claim an effect is missing a recovered namespace", () => {
   // A stale sentence of the shape "X has no recovered source" survives every edit that
   // touches the code, because nothing reads it. When the fleet reached full coverage

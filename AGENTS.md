@@ -6,16 +6,19 @@ repo, which is unusual enough to need it.
 
 ## What this repo is
 
-An After Effects C++ plugin fleet recovered from **shipped compiled binaries**. 16 effects, 15
-with a recovered source namespace, 1 (MotionCurveX) with none. `src/<ns>/` is the recovered
-source; `specs/` and `PARAMETERS.md` describe the wiring; `RECOVERY-STATUS.md` is the measured
-coverage table.
+An After Effects C++ plugin fleet recovered from **shipped compiled binaries**. 16 effects,
+all 16 with a recovered source namespace. Fifteen are transcriptions of the shipped code;
+**MotionCurveX is a model** - its original source was destroyed and only its symbols
+survived, so its namespace was built from scratch on 2026-10-27 from the exact signatures
+and reads as differing in codegen rather than instruction-identical. `src/<ns>/` is the
+recovered source; `specs/` and `PARAMETERS.md` describe the wiring; `RECOVERY-STATUS.md` is
+the measured coverage table.
 
 ## Gate
 
 ```bash
 npm run check   # node --check over tools/, tools/demo/ and test/
-npm test        # node --test test/*.test.mjs  (92 tests)
+npm test        # node --test test/*.test.mjs
 npm run status  # re-measures recovery coverage (tools/codegen-diff.mjs)
 ```
 
